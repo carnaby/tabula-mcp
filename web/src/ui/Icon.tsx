@@ -132,6 +132,7 @@ const ICONS = {
       <path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7M7 3v4a1 1 0 0 0 1 1h7" />
     </>
   ),
+  download: <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />,
   more: (
     <>
       <circle cx="5" cy="12" r="1" />

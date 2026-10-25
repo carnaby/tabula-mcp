@@ -1,16 +1,76 @@
 {
+  "id": "/",
   "name": "Tabula",
   "short_name": "Tabula",
   "description": "Memory for AI agents and your personal notebook.",
-  "start_url": "./#/thoughts",
-  "scope": "./",
+  "start_url": "/#/thoughts",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#0f0e0d",
   "theme_color": "#1c1917",
   "icons": [
-    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
-    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
-    { "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml" }
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ],
+  "display_override": [
+    "window-controls-overlay",
+    "standalone"
+  ],
+  "categories": [
+    "productivity",
+    "utilities"
+  ],
+  "shortcuts": [
+    {
+      "name": "New thought",
+      "short_name": "New",
+      "url": "/#/thoughts/new",
+      "icons": [
+        {
+          "src": "icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Search",
+      "url": "/#/search",
+      "icons": [
+        {
+          "src": "icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "All memories",
+      "short_name": "Memories",
+      "url": "/#/memories",
+      "icons": [
+        {
+          "src": "icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    }
   ]
 }

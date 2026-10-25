@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { clearToken } from '../api';
+import { promptInstall, useCanInstall } from '../pwa';
 import { href, type Route } from '../router';
 import type { Project } from '../types';
-import { Icon, type IconName, IconButton, Input, Kbd, Logo, Segmented, useConfirm, useTheme } from '../ui';
+import { Button, Icon, type IconName, IconButton, Input, Kbd, Logo, Segmented, useConfirm, useTheme } from '../ui';
 
 function NavItem({ to, icon, label, count, active }: { to: string; icon: IconName; label: string; count?: number; active: boolean }) {
   return (
@@ -20,6 +21,7 @@ export function Sidebar({
   route, projects, onClose, onNewProject,
 }: { route: Route; projects: Project[] | undefined; onClose: () => void; onNewProject: () => void }) {
   const [theme, setTheme] = useTheme();
+  const canInstall = useCanInstall();
   const [filter, setFilter] = useState('');
   const { confirm } = useConfirm();
   const activeProject = route.name === 'project' || route.name === 'note' ? route.project : null;
@@ -69,6 +71,11 @@ export function Sidebar({
         {!projects && <div className="nav-item t-subtle">Loading…</div>}
       </div>
 
+      {canInstall && (
+        <Button icon="download" block onClick={() => void promptInstall()} style={{ marginBottom: 8 }}>
+          Install app
+        </Button>
+      )}
       <div className="sidebar__foot">
         <Segmented
           label="Theme"

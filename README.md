@@ -110,6 +110,8 @@ A responsive React app with its own small UI kit (`web/src/ui`: tokens, buttons,
 - **Project** — tabs for its memories, notes (Markdown editor; pin with a token-budget warning), the **recall preview** (the exact digest with a budget meter) and **setup** (name, description, the CLAUDE.md section and client commands to copy).
 - **Search** (Ctrl/⌘ K) — memories, notes and thoughts at once; words match as prefixes.
 
+**Install it as an app.** Tabula is a PWA: in Chrome or Edge use *Install app* in the sidebar (or the install icon in the address bar); on iPhone use Share → *Add to Home Screen*. The installed app opens in its own window, has shortcuts for *New thought* and *Search*, and its shell loads offline. A service worker caches only the app shell and the hashed build assets — `/api` and `/mcp` always go to the network, so data is never stale and the token never ends up in a cache. Installation needs HTTPS (or `localhost`).
+
 Lists refresh when the window regains focus, so what an agent wrote meanwhile shows up. The UI asks once for the bearer token and keeps it in `localStorage`.
 
 ## Architecture

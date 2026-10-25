@@ -1,7 +1,8 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import {
-  type AgentContext, agentDeprecate, agentGet, agentListProjects, agentRecall, agentRemember, agentSearch,
+  type AgentContext, agentDeprecate, agentFindThoughts, agentGet, agentListProjects, agentRecall, agentRemember,
+  agentSaveThought, agentSearch, agentUpdateThought,
 } from '../agent/operations.js';
 import { badRequest, DomainError } from '../domain/errors.js';
 import { createProject } from '../domain/projects.js';
@@ -11,7 +12,8 @@ import { claudeMdSection } from './snippet.js';
 
 const SERVER_INSTRUCTIONS = `Tabula is a backup memory shared across machines and clients. It ranks below the code and the client's own local memory: on a conflict they win, and the Tabula record gets fixed.
 Use Tabula only in a project whose CLAUDE.md (or project instructions) has a "Memory (Tabula)" section naming its Tabula project. Without that section do not call recall, search or remember, and never guess a project slug.
-When the user explicitly asks to start using Tabula in a project: call setup_project with the project folder name as the slug, put the section it returns into CLAUDE.md (create the file if it is missing; replace an older "Memory (Tabula)" section), then call recall.`;
+When the user explicitly asks to start using Tabula in a project: call setup_project with the project folder name as the slug, put the section it returns into CLAUDE.md (create the file if it is missing; replace an older "Memory (Tabula)" section), then call recall.
+Thoughts are the user's personal notebook, separate from projects, and need no such section: when the user explicitly asks to save something to Tabula, or to find or change a saved thought, use find_thoughts, save_thought and update_thought.`;
 
 const idParam = z.string().describe('Full uuid or the short #xxxx id shown in recall and search.');
 const projectParam = z.string().describe('Project slug, e.g. "acme". Global records are always included.');
@@ -115,6 +117,50 @@ export function buildMcpServer(ctx: McpContext): McpServer {
         const project = await createProject(ctx.db, { id, name: a.name ?? id, description: a.description });
         return { created: true, project, claude_md_section: claudeMdSection(id) };
       }),
+  );
+
+  const tagsParam = z.array(z.string()).optional().describe('Free lowercase tags, e.g. topic words.');
+
+  server.registerTool(
+    'save_thought',
+    {
+      description: D.save_thought,
+      inputSchema: z.object({
+        title: z.string().describe('Specific one-line title, max 200 characters.'),
+        body: z.string().describe('Markdown, max 50 000 characters.'),
+        tags: tagsParam,
+      }),
+    },
+    (a) => run(() => agentSaveThought(ctx, a)),
+  );
+
+  server.registerTool(
+    'update_thought',
+    {
+      description: D.update_thought,
+      inputSchema: z.object({
+        id: idParam,
+        title: z.string().optional(),
+        body: z.string().optional().describe('Replaces the whole body.'),
+        append: z.string().optional().describe('Markdown added at the end after a blank line.'),
+        tags: z.array(z.string()).optional().describe('Replaces all tags.'),
+        expected_version: z.number().int().positive().optional().describe('The version you read; the update fails if it changed since.'),
+      }),
+    },
+    (a) => run(() => agentUpdateThought(ctx, a)),
+  );
+
+  server.registerTool(
+    'find_thoughts',
+    {
+      description: D.find_thoughts,
+      inputSchema: z.object({
+        query: z.string().optional().describe('Words to look for (prefix match). Omit for the newest thoughts.'),
+        tag: z.string().optional(),
+        limit: z.number().int().min(1).max(50).default(10),
+      }),
+    },
+    (a) => run(() => agentFindThoughts(ctx, a)),
   );
 
   return server;

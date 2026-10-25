@@ -1,7 +1,8 @@
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { memories } from '../db/schema.js';
 import { badRequest, conflict, notFound } from './errors.js';
+import { matchesPrefix, type Page, type PageQuery, pageWindow, prefixTsQuery } from './paging.js';
 import { requireProject } from './projects.js';
 import { type MemoryKind, normalizeTags, validateMemoryText } from './validation.js';
 
@@ -145,6 +146,40 @@ export async function listMemories(
     )
     .orderBy(desc(memories.createdAt))
     .limit(500);
+}
+
+export const MEMORY_SORTS = ['createdAt', 'updatedAt', 'title', 'kind', 'projectId', 'status', 'source'] as const;
+export type MemorySort = (typeof MEMORY_SORTS)[number];
+
+export type MemoryFilter = {
+  projectId?: string;
+  kind?: MemoryKind;
+  status?: 'active' | 'deprecated' | 'all';
+  source?: 'agent' | 'human';
+  /** Prefix search: every word must match the start of a word in title, tags or body. */
+  q?: string;
+};
+
+/** The UI table: filter, sort and paginate on the server so no list is silently truncated. */
+export async function pageMemories(db: Db, f: MemoryFilter & PageQuery<MemorySort>): Promise<Page<Memory>> {
+  const { page, pageSize, limit, offset } = pageWindow(f);
+  const status = f.status ?? 'active';
+  const tsq = prefixTsQuery(f.q);
+  const where = and(
+    f.projectId ? eq(memories.projectId, f.projectId) : undefined,
+    f.kind ? eq(memories.kind, f.kind) : undefined,
+    f.source ? eq(memories.source, f.source) : undefined,
+    status !== 'all' ? eq(memories.status, status) : undefined,
+    tsq ? matchesPrefix(memories.search, tsq) : undefined,
+  );
+  const order = (f.dir ?? 'desc') === 'asc' ? asc : desc;
+  const [items, [total]] = await Promise.all([
+    db.select(cols).from(memories).where(where)
+      .orderBy(order(memories[f.sort ?? 'createdAt']), desc(memories.createdAt), asc(memories.id))
+      .limit(limit).offset(offset),
+    db.select({ n: count() }).from(memories).where(where),
+  ]);
+  return { items, total: total?.n ?? 0, page, pageSize };
 }
 
 export async function supersedesChain(db: Db, id: string): Promise<Memory[]> {

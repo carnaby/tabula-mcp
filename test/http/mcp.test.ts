@@ -6,6 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Db } from '../../src/db/client.js';
 import { projects } from '../../src/db/schema.js';
 import { createMemory, getMemory } from '../../src/domain/memories.js';
+import { createThought, getThought, HUMAN, listRevisions } from '../../src/domain/thoughts.js';
 import { buildApp } from '../../src/http/app.js';
 import { claudeMdSection } from '../../src/mcp/snippet.js';
 import { seedProject, TEST_SECRET, TEST_TOKEN, testConfig, useTestDb } from '../helpers.js';
@@ -32,11 +33,12 @@ type Content = Array<{ type: string; text: string }>;
 const textOf = (r: { content?: unknown }) => (r.content as Content)[0]!.text;
 
 describe('MCP endpoint', () => {
-  it('exposes exactly the seven tools', async () => {
+  it('exposes exactly the ten tools', async () => {
     const client = await connect('/mcp', bearer);
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
-      'deprecate', 'get', 'list_projects', 'recall', 'remember', 'search', 'setup_project',
+      'deprecate', 'find_thoughts', 'get', 'list_projects', 'recall', 'remember', 'save_thought', 'search',
+      'setup_project', 'update_thought',
     ]);
     expect(tools.find((t) => t.name === 'recall')!.description).toMatch(/^Call at the start of a session/);
     await client.close();
@@ -101,6 +103,46 @@ describe('MCP endpoint', () => {
     expect(await getMemory(db, id)).toMatchObject({ source: 'agent', agentLabel: 'claude-code' });
     const digest = textOf(await client.callTool({ name: 'recall', arguments: { project: 'demo' } }));
     expect(digest).toContain('## Gotchas\n- Cold start kills migrations');
+    await client.close();
+  });
+
+  it('saves, finds, appends to and reads back a thought, keeping the old version', async () => {
+    const client = await connect('/mcp', bearer);
+    const saved = JSON.parse(textOf(await client.callTool({
+      name: 'save_thought', arguments: { title: 'Rock radio jingles', body: '## Idea\nShort stingers.', tags: ['radio'] },
+    }))) as { id: string; version: number };
+    expect(saved.version).toBe(1);
+
+    const hits = JSON.parse(textOf(await client.callTool({ name: 'find_thoughts', arguments: { query: 'jingl' } })));
+    expect(hits).toMatchObject([{ id: saved.id, title: 'Rock radio jingles', version: 1, edited_by: 'claude-code' }]);
+
+    const up = JSON.parse(textOf(await client.callTool({
+      name: 'update_thought', arguments: { id: saved.id, append: '## Next\nTry Suno.', expected_version: 1 },
+    })));
+    expect(up.version).toBe(2);
+    const stale = await client.callTool({ name: 'update_thought', arguments: { id: saved.id, body: 'x', expected_version: 1 } });
+    expect(stale.isError).toBe(true);
+    expect(textOf(stale)).toMatch(/^409: thought was changed meanwhile by claude-code/);
+
+    const got = JSON.parse(textOf(await client.callTool({ name: 'get', arguments: { id: saved.id.slice(0, 8) } })));
+    expect(got).toMatchObject({ type: 'thought', version: 2, body: '## Idea\nShort stingers.\n\n## Next\nTry Suno.' });
+    expect((await listRevisions(db, saved.id)).map((r) => r.body)).toEqual(['## Idea\nShort stingers.']);
+
+    // A thought is not a memory, and a memory is not a thought.
+    const dep = await client.callTool({ name: 'deprecate', arguments: { id: saved.id, reason: 'x' } });
+    expect(textOf(dep)).toMatch(/^400: .* is a thought, not a memory; use update_thought/);
+    const m = await createMemory(db, { projectId: 'demo', kind: 'fact', title: 'F', body: 'b', source: 'agent' });
+    const wrong = await client.callTool({ name: 'update_thought', arguments: { id: m.id, append: 'x' } });
+    expect(textOf(wrong)).toMatch(/^400: .* is a memory, not a thought/);
+    await client.close();
+  });
+
+  it('lets an agent edit a human thought', async () => {
+    const t = await createThought(db, { title: 'Mine', body: 'human text' }, HUMAN);
+    const client = await connect('/mcp', bearer);
+    const r = await client.callTool({ name: 'update_thought', arguments: { id: t.id, title: 'Mine, refined' } });
+    expect(r.isError).toBeFalsy();
+    expect(await getThought(db, t.id)).toMatchObject({ title: 'Mine, refined', editedBy: 'claude-code', source: 'human' });
     await client.close();
   });
 

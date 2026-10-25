@@ -1,6 +1,6 @@
 import { badRequest } from './errors.js';
 
-export const LIMITS = { title: 120, body: 2000, noteSummary: 200 } as const;
+export const LIMITS = { title: 120, body: 2000, noteSummary: 200, thoughtTitle: 200, thoughtBody: 50_000 } as const;
 
 /** The order is also the order of sections in the digest. */
 export const MEMORY_KINDS = ['rule', 'gotcha', 'decision', 'fact'] as const;
@@ -42,6 +42,19 @@ export function validateNoteText(input: { title: string; summary: string }): { t
   const s = charCount(summary);
   if (s > LIMITS.noteSummary) throw badRequest(`summary is ${s} characters; the limit is ${LIMITS.noteSummary}.`);
   return { title, summary };
+}
+
+export function validateThoughtText(input: { title: string; body: string }): { title: string; body: string } {
+  const title = requireTitle(input.title);
+  const t = charCount(title);
+  if (t > LIMITS.thoughtTitle) throw badRequest(`title is ${t} characters; the limit is ${LIMITS.thoughtTitle}.`);
+  const body = input.body.trim();
+  rejectNul(body, 'body');
+  const b = charCount(body);
+  if (b > LIMITS.thoughtBody) {
+    throw badRequest(`body is ${b} characters; the limit is ${LIMITS.thoughtBody}. Split it into several thoughts.`);
+  }
+  return { title, body };
 }
 
 export function normalizeTags(tags?: readonly string[]): string[] {

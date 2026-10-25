@@ -7,7 +7,7 @@ import { projects } from '../src/db/schema.js';
 export function useTestDb(): Db {
   const { db, close } = createDb(inject('databaseUrl'));
   beforeEach(async () => {
-    await db.execute(sql`TRUNCATE memories, notes`);
+    await db.execute(sql`TRUNCATE memories, notes, thoughts CASCADE`);
     await db.execute(sql`DELETE FROM projects WHERE id <> 'global'`);
   });
   afterAll(close);

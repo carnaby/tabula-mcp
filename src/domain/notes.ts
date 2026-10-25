@@ -1,7 +1,8 @@
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { notes } from '../db/schema.js';
 import { notFound } from './errors.js';
+import { matchesPrefix, type Page, type PageQuery, pageWindow, prefixTsQuery } from './paging.js';
 import { requireProject } from './projects.js';
 import { normalizeTags, rejectNul, validateNoteText } from './validation.js';
 
@@ -94,4 +95,27 @@ export async function listNotes(db: Db, f: { projectId?: string; q?: string }): 
       ),
     )
     .orderBy(desc(notes.pinned), desc(notes.updatedAt));
+}
+
+export const NOTE_SORTS = ['updatedAt', 'createdAt', 'title', 'pinned'] as const;
+export type NoteSort = (typeof NOTE_SORTS)[number];
+
+/** The UI table. Pinned notes stay on top unless another order is asked for. */
+export async function pageNotes(
+  db: Db,
+  f: { projectId?: string; q?: string } & PageQuery<NoteSort>,
+): Promise<Page<Note>> {
+  const { page, pageSize, limit, offset } = pageWindow(f);
+  const tsq = prefixTsQuery(f.q);
+  const where = and(
+    f.projectId ? eq(notes.projectId, f.projectId) : undefined,
+    tsq ? matchesPrefix(notes.search, tsq) : undefined,
+  );
+  const order = (f.dir ?? 'desc') === 'asc' ? asc : desc;
+  const primary = f.sort ? [order(notes[f.sort])] : [desc(notes.pinned), desc(notes.updatedAt)];
+  const [items, [total]] = await Promise.all([
+    db.select(cols).from(notes).where(where).orderBy(...primary, desc(notes.updatedAt), asc(notes.id)).limit(limit).offset(offset),
+    db.select({ n: count() }).from(notes).where(where),
+  ]);
+  return { items, total: total?.n ?? 0, page, pageSize };
 }

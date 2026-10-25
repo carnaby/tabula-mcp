@@ -2,6 +2,7 @@ import { type SQL, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { badRequest } from './errors.js';
 import { requireProject } from './projects.js';
+import { prefixTsQuery } from './paging.js';
 import type { MemoryKind } from './validation.js';
 
 export type SearchHit = {
@@ -80,4 +81,43 @@ export async function search(db: Db, p: SearchParams): Promise<SearchHit[]> {
     status: r.status,
     updated_at: new Date(r.updated_at).toISOString(),
   }));
+}
+
+export type QuickHit = {
+  id: string;
+  type: 'memory' | 'note' | 'thought';
+  project: string | null;
+  kind: MemoryKind | null;
+  title: string;
+  snippet: string;
+  status: 'active' | 'deprecated';
+  updated_at: string;
+};
+
+/** The UI's global search box: prefix match over memories, notes and thoughts, best match first. */
+export async function quickSearch(db: Db, p: { q: string; limit?: number }): Promise<QuickHit[]> {
+  const tsq = prefixTsQuery(p.q);
+  if (!tsq) return [];
+  const limit = Math.min(Math.max(Math.trunc(p.limit ?? 20), 1), 50);
+  const rows = await db.execute<Omit<QuickHit, 'updated_at'> & { updated_at: Date | string }>(sql`
+    WITH q AS (SELECT to_tsquery('simple', ${tsq}) AS tsq)
+    SELECT id, type, project, kind, title, snippet, status, updated_at FROM (
+      SELECT m.id, 'memory' AS type, m.project_id AS project, m.kind::text AS kind, m.title,
+        ts_headline('simple', m.body, q.tsq, ${HEADLINE}) AS snippet, m.status::text AS status, m.updated_at,
+        ts_rank(m.search, q.tsq) AS rank
+      FROM memories m, q WHERE m.search @@ q.tsq
+      UNION ALL
+      SELECT n.id, 'note', n.project_id, NULL, n.title,
+        ts_headline('simple', n.summary || ' ' || n.body, q.tsq, ${HEADLINE}), 'active', n.updated_at,
+        ts_rank(n.search, q.tsq)
+      FROM notes n, q WHERE n.search @@ q.tsq
+      UNION ALL
+      SELECT t.id, 'thought', NULL, NULL, t.title,
+        ts_headline('simple', t.body, q.tsq, ${HEADLINE}), 'active', t.updated_at,
+        ts_rank(t.search, q.tsq)
+      FROM thoughts t, q WHERE t.search @@ q.tsq AND NOT t.archived
+    ) hits
+    ORDER BY (status = 'active') DESC, rank DESC, updated_at DESC
+    LIMIT ${limit}`);
+  return [...rows].map((r) => ({ ...r, updated_at: new Date(r.updated_at).toISOString() }));
 }

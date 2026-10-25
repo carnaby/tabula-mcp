@@ -8,7 +8,7 @@ Call it when you are unsure which project slug to use. Never invent a slug; proj
 check whether a similar record already exists, and when you need something
 specific that the recall digest did not contain.`,
 
-  get: `Fetch the full body of one memory or note by id. Notes can be long;
+  get: `Fetch the full body of one memory, note or thought by id. Notes can be long;
 fetch them only when the summary in recall is not enough.`,
 
   remember: `Persist a durable rule, decision, fact or gotcha for a project.
@@ -28,4 +28,13 @@ code or a decision has changed. You cannot deprecate human-authored records
 or notes; instead, remember a fact describing the discrepancy.`,
 
   setup_project: `Onboard a project into Tabula. Call it ONLY when the user explicitly asks to start using Tabula in this project — never on your own initiative. Slug = the project folder name in lowercase (letters, digits, dashes). Creates the project if it does not exist yet (name defaults to the slug; give a one-sentence description of the project) and returns the "Memory (Tabula)" section to put into the project's CLAUDE.md. If the project already exists it is left unchanged and the section is returned again.`,
+
+  save_thought: `Save a new thought to the user's personal notebook in Tabula ("Thoughts"), which belongs to no project and never appears in recall. Call it ONLY when the user explicitly asks to save something to Tabula (e.g. "save this to Tabula", "ulož mi to do tabule") — never on your own initiative.
+Call find_thoughts first; if a thought on the same topic exists, tell the user and use update_thought instead of creating a duplicate.
+Write it so the user can reread it months later without the conversation: a specific title; a Markdown body with the key ideas, conclusions, reasons and open questions in the user's language; no chat transcript and no filler. Never store secrets.`,
+
+  update_thought: `Change an existing thought in the user's Tabula notebook when the user asks to add to it or fix it. Use append to add a section at the end; use body only to rewrite the whole text. The previous version is always kept and the user can restore it.
+Pass expected_version (from find_thoughts or get) so you never overwrite the user's own edit; on a 409 conflict call get and apply the change again.`,
+
+  find_thoughts: `List or search the user's personal Tabula notebook ("Thoughts"). Without query it returns the newest thoughts. Use it when the user refers to something saved earlier, and before save_thought to avoid duplicates. Returns ids and versions for get and update_thought. Works in any project; it needs no "Memory (Tabula)" section.`,
 } as const;

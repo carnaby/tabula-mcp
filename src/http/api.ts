@@ -4,7 +4,7 @@ import type { Config } from '../config.js';
 import type { Db } from '../db/client.js';
 import { badRequest, notFound } from '../domain/errors.js';
 import {
-  createMemory, deleteMemory, deprecateMemory, MEMORY_SORTS, pageMemories, supersedesChain, updateMemory,
+  createMemory, deleteMemory, deprecateMemory, getMemory, MEMORY_SORTS, pageMemories, supersedesChain, updateMemory,
 } from '../domain/memories.js';
 import { createNote, deleteNote, getNote, NOTE_SORTS, type Note, pageNotes, updateNote } from '../domain/notes.js';
 import { MAX_PAGE_SIZE } from '../domain/paging.js';
@@ -96,6 +96,12 @@ export const apiRoutes: FastifyPluginAsync<{ db: Db; config: Config }> = async (
   app.delete('/memories/:id', async (req, reply) => {
     await deleteMemory(db, parse(idParams, req.params).id);
     return reply.code(204).send();
+  });
+  app.get('/memories/:id', async (req) => {
+    const { id } = parse(idParams, req.params);
+    const m = await getMemory(db, id);
+    if (!m) throw notFound(`memory ${id} does not exist`);
+    return m;
   });
   app.get('/memories/:id/chain', (req) => supersedesChain(db, parse(idParams, req.params).id));
 

@@ -2,8 +2,27 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#fafaf9" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="description" content="Memory for AI agents and your personal notebook." />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Tabula" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/icon-192.png" type="image/png" sizes="192x192" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
     <title>Tabula</title>
+    <script>
+      // Apply the saved theme before the first paint (no light flash in dark mode).
+      try {
+        var t = localStorage.getItem('tabula.theme');
+        if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+        var dark = t === 'dark' || (t !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
+        document.querySelector('meta[name="theme-color"]').setAttribute('content', dark ? '#0f0e0d' : '#fafaf9');
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -10,12 +10,15 @@ It is deliberately modest. Tabula stores **rules, decisions, facts and gotchas**
 
 ## How it works
 
-### Two kinds of records
+### Three kinds of records
 
 | | Written by | Agents can | Shape |
 |---|---|---|---|
 | **Memory** | agents (and the human) | create, supersede, deprecate | `kind` + one-line `title` (≤ 120 chars) + `body` (≤ 2 000 chars) + tags |
 | **Note** | the human only | read | longer Markdown with a short summary; can be *pinned* |
+| **Thought** | the human, and agents on request | create, edit, append | Markdown notebook entry (≤ 50 000 chars) + tags; **no project**, never in `recall` |
+
+Memories and notes belong to a project and feed the recall digest. **Thoughts** are a personal notebook next to them: ideas, summaries of a chat worth keeping, things to come back to. Say *"save this to Tabula"* in a claude.ai chat and the agent writes a thought; say *"add the conclusion to that thought"* and it appends to it. Every change to a thought's text keeps the previous version (the last 50), so an agent's edit can always be undone in the UI, and edits use optimistic locking (`expected_version`) so an agent never silently overwrites what you are typing.
 
 A memory has one of four kinds, and the kind decides how prominently it is shown to the agent:
 
@@ -72,6 +75,9 @@ The digest is built to change what the agent *does* while leaving room in its co
 | `deprecate(id, reason)` | Marks a memory as no longer valid. Idempotent; refuses human-written records. |
 | `list_projects()` | Slugs, descriptions and record counts. |
 | `setup_project(id, name?, description?)` | Onboards a project — only when the user explicitly asks (see below). |
+| `save_thought(title, body, tags?)` | Saves a new thought to the personal notebook — only when the user asks. |
+| `update_thought(id, title?, body? \| append?, tags?, expected_version?)` | Rewrites or appends to a thought; the previous version is kept. |
+| `find_thoughts(query?, tag?, limit?)` | Newest thoughts, or a prefix search over them; returns ids and versions. |
 
 The tool descriptions are part of the design, not an implementation detail: they are the only thing an agent reads before deciding whether to write. They tell it to search before writing, to supersede instead of duplicating, to expect 0–3 records per session, and never to store secrets.
 
@@ -96,13 +102,15 @@ The section encodes how Tabula is meant to be used: as a **backup memory** that 
 
 ### The web UI
 
-Three screens, built for curation rather than browsing:
+A responsive React app with its own small UI kit (`web/src/ui`: tokens, buttons, fields, tag input, dialogs and bottom sheets, toasts, a data table that turns into cards on phones, Markdown editor), light and dark themes (follows the OS, or pick one), and an installable icon for the home screen.
 
-- **Memories** — a filterable table (project, kind, status, full-text). Inline edit, deprecate with a reason, delete, add a human record, follow a supersede chain. By default it shows active records, newest first, so the last thing an agent wrote is at the top.
-- **Notes** — Markdown editor with preview, pin/unpin with a warning when the digest would grow too large, word and token counts.
-- **Recall preview** — the exact digest an agent would receive for a project, with its token count. This is the main tuning tool.
+- **Sidebar** — Thoughts, all memories across projects, and the projects with their record counts. On phones it is a drawer.
+- **Thoughts** — card grid with search, tag chips, sort, author filter (you / AI), archive and pinning. The editor has Write / Split / Preview modes, Ctrl/⌘ S, a warning when an agent changed the thought while you were typing, and a version history with restore.
+- **Memories** — a server-side paginated, sortable table (project, kind, author, status, prefix search). Edit, deprecate with a reason, replace with a new version (supersede), delete, follow the supersede chain.
+- **Project** — tabs for its memories, notes (Markdown editor; pin with a token-budget warning), the **recall preview** (the exact digest with a budget meter) and **setup** (name, description, the CLAUDE.md section and client commands to copy).
+- **Search** (Ctrl/⌘ K) — memories, notes and thoughts at once; words match as prefixes.
 
-The UI asks once for the bearer token and keeps it in `localStorage`.
+Lists refresh when the window regains focus, so what an agent wrote meanwhile shows up. The UI asks once for the bearer token and keeps it in `localStorage`.
 
 ## Architecture
 
@@ -198,6 +206,7 @@ A `502 Bad Gateway` on `/api` in the browser means the server isn't running — 
 ```bash
 pnpm typecheck              # server and UI
 pnpm test                   # Vitest; starts a throwaway Postgres via Testcontainers (needs Docker)
+TEST_DATABASE_URL=postgres://… pnpm test   # or use an existing throwaway database (it is wiped)
 ```
 
 The tests cover the domain rules, the digest builder, the REST API and the MCP endpoint end to end through a real MCP client.
@@ -212,7 +221,7 @@ src/
   http/        Fastify app, REST API, bearer auth, static UI
   db/          Drizzle schema, client, migrations runner
 drizzle/       SQL migrations (generated search column, GIN indexes, the global project)
-web/           React UI
+web/           React UI (web/src/ui is the UI kit)
 templates/     protocol snippets for CLAUDE.md, claude.ai and a SessionStart hook
 deploy/        example production stack and backup script
 ```

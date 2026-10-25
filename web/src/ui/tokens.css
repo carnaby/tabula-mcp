@@ -1,0 +1,185 @@
+/*
+ * Tabula UI kit — design tokens.
+ * Monochrome "ink" base with an amber accent (the wax of a writing tablet).
+ * Light is the default; dark follows the OS unless the user picked a theme (data-theme on <html>).
+ */
+:root {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-full: 999px;
+
+  --sidebar-w: 268px;
+  --topbar-h: 56px;
+  --content-max: 1180px;
+  --control-h: 36px;
+  --control-h-sm: 30px;
+
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --dur: 160ms;
+
+  /* light */
+  --bg: #fafaf9;
+  --surface: #ffffff;
+  --surface-2: #f5f5f4;
+  --surface-hover: #f2f1ef;
+  --surface-active: #ebe9e6;
+  --border: #e7e5e4;
+  --border-strong: #d6d3d1;
+  --text: #1c1917;
+  --text-muted: #57534e;
+  --text-subtle: #78716c;
+
+  --primary: #1c1917;
+  --primary-hover: #322d2a;
+  --primary-fg: #fafaf9;
+
+  --accent: #b45309;
+  --accent-strong: #d97706;
+  --accent-soft: #fef3c7;
+  --accent-soft-fg: #92400e;
+  --ring: rgba(217, 119, 6, 0.42);
+
+  --danger: #b91c1c;
+  --danger-hover: #991b1b;
+  --danger-soft: #fee2e2;
+  --danger-soft-fg: #991b1b;
+  --success: #15803d;
+  --success-soft: #dcfce7;
+  --success-soft-fg: #166534;
+  --warn-soft: #fef3c7;
+  --warn-soft-fg: #92400e;
+  --info-soft: #e0f2fe;
+  --info-soft-fg: #075985;
+
+  --kind-rule: #1d4ed8;
+  --kind-rule-soft: #dbeafe;
+  --kind-gotcha: #be123c;
+  --kind-gotcha-soft: #ffe4e6;
+  --kind-decision: #6d28d9;
+  --kind-decision-soft: #ede9fe;
+  --kind-fact: #0f766e;
+  --kind-fact-soft: #ccfbf1;
+
+  --overlay: rgba(12, 10, 9, 0.42);
+  --shadow-sm: 0 1px 2px rgba(28, 25, 23, 0.06);
+  --shadow: 0 1px 3px rgba(28, 25, 23, 0.08), 0 4px 12px rgba(28, 25, 23, 0.05);
+  --shadow-lg: 0 10px 30px rgba(28, 25, 23, 0.14), 0 2px 6px rgba(28, 25, 23, 0.06);
+
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #0f0e0d;
+    --surface: #181614;
+    --surface-2: #1f1c1a;
+    --surface-hover: #252220;
+    --surface-active: #2e2a27;
+    --border: #2c2826;
+    --border-strong: #3d3835;
+    --text: #f5f5f4;
+    --text-muted: #c4bfbb;
+    --text-subtle: #9a938e;
+
+    --primary: #f5f5f4;
+    --primary-hover: #e7e5e4;
+    --primary-fg: #1c1917;
+
+    --accent: #fbbf24;
+    --accent-strong: #f59e0b;
+    --accent-soft: rgba(251, 191, 36, 0.14);
+    --accent-soft-fg: #fcd34d;
+    --ring: rgba(251, 191, 36, 0.45);
+
+    --danger: #f87171;
+    --danger-hover: #fca5a5;
+    --danger-soft: rgba(248, 113, 113, 0.14);
+    --danger-soft-fg: #fca5a5;
+    --success: #4ade80;
+    --success-soft: rgba(74, 222, 128, 0.13);
+    --success-soft-fg: #86efac;
+    --warn-soft: rgba(251, 191, 36, 0.14);
+    --warn-soft-fg: #fcd34d;
+    --info-soft: rgba(56, 189, 248, 0.14);
+    --info-soft-fg: #7dd3fc;
+
+    --kind-rule: #93c5fd;
+    --kind-rule-soft: rgba(96, 165, 250, 0.15);
+    --kind-gotcha: #fda4af;
+    --kind-gotcha-soft: rgba(251, 113, 133, 0.15);
+    --kind-decision: #c4b5fd;
+    --kind-decision-soft: rgba(167, 139, 250, 0.16);
+    --kind-fact: #5eead4;
+    --kind-fact-soft: rgba(45, 212, 191, 0.14);
+
+    --overlay: rgba(0, 0, 0, 0.6);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.45), 0 4px 12px rgba(0, 0, 0, 0.3);
+    --shadow-lg: 0 12px 34px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.35);
+
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme='dark'] {
+  --bg: #0f0e0d;
+  --surface: #181614;
+  --surface-2: #1f1c1a;
+  --surface-hover: #252220;
+  --surface-active: #2e2a27;
+  --border: #2c2826;
+  --border-strong: #3d3835;
+  --text: #f5f5f4;
+  --text-muted: #c4bfbb;
+  --text-subtle: #9a938e;
+
+  --primary: #f5f5f4;
+  --primary-hover: #e7e5e4;
+  --primary-fg: #1c1917;
+
+  --accent: #fbbf24;
+  --accent-strong: #f59e0b;
+  --accent-soft: rgba(251, 191, 36, 0.14);
+  --accent-soft-fg: #fcd34d;
+  --ring: rgba(251, 191, 36, 0.45);
+
+  --danger: #f87171;
+  --danger-hover: #fca5a5;
+  --danger-soft: rgba(248, 113, 113, 0.14);
+  --danger-soft-fg: #fca5a5;
+  --success: #4ade80;
+  --success-soft: rgba(74, 222, 128, 0.13);
+  --success-soft-fg: #86efac;
+  --warn-soft: rgba(251, 191, 36, 0.14);
+  --warn-soft-fg: #fcd34d;
+  --info-soft: rgba(56, 189, 248, 0.14);
+  --info-soft-fg: #7dd3fc;
+
+  --kind-rule: #93c5fd;
+  --kind-rule-soft: rgba(96, 165, 250, 0.15);
+  --kind-gotcha: #fda4af;
+  --kind-gotcha-soft: rgba(251, 113, 133, 0.15);
+  --kind-decision: #c4b5fd;
+  --kind-decision-soft: rgba(167, 139, 250, 0.16);
+  --kind-fact: #5eead4;
+  --kind-fact-soft: rgba(45, 212, 191, 0.14);
+
+  --overlay: rgba(0, 0, 0, 0.6);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.45), 0 4px 12px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 12px 34px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.35);
+
+  color-scheme: dark;
+}

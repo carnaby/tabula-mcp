@@ -37,6 +37,7 @@ describe('REST API', () => {
     expect(m).toMatchObject({ source: 'human', agentLabel: null });
 
     expect((await call('PATCH', `/api/memories/${m.id}`, { title: 'T2' })).json()).toMatchObject({ title: 'T2' });
+    expect((await call('GET', `/api/memories/${m.id}`)).json()).toMatchObject({ id: m.id, title: 'T2' });
     expect((await call('PATCH', `/api/memories/${m.id}`, { title: 'x'.repeat(121) })).statusCode).toBe(400);
 
     const v2 = (await call('POST', '/api/memories', { projectId: 'demo', kind: 'rule', title: 'T3', body: 'B', supersedesId: m.id })).json();

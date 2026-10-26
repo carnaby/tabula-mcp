@@ -1,4 +1,6 @@
 import { execFileSync } from 'node:child_process';
+import { createServer as createHttpServer } from 'node:http';
+import { type AddressInfo, createServer, type Server, type Socket } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
@@ -12,6 +14,8 @@ type CliModule = {
   classify(e: { local: string | null; base: string | null; server: string | null }): Status;
   checkText(bytes: Uint8Array): { ok: true; text: string } | { ok: false; reason: string };
   parseArgs(argv: string[]): { cmd: string | undefined; args: string[]; flags: Set<string> };
+  pullFailure(error: unknown, o: { hook: boolean; deadline?: number; now?: number }): 'deadline' | 'stop' | 'skip' | 'failed';
+  makeApi(conn: { url: string; token: string }, deadline?: number): (method: string, path: string) => Promise<unknown>;
 };
 
 const CLI_URL = new URL('../../cli/tabula.mjs', import.meta.url);
@@ -93,5 +97,49 @@ describe('command line', () => {
     const file = fileURLToPath(CLI_URL);
     expect(execFileSync(process.execPath, [file, '--version'], { encoding: 'utf8' }).trim()).toBe(cli.VERSION);
     expect(() => execFileSync(process.execPath, [file, 'bogus'], { encoding: 'utf8', stdio: 'pipe' })).toThrow(/unknown command "bogus"/);
+  });
+});
+
+describe('pull failures', () => {
+  const tagged = (tags: object) => Object.assign(new Error('x'), tags);
+
+  it.each([
+    // A timeout in hook mode is the deadline's even when it fires a millisecond before Date.now() reaches it.
+    [tagged({ unreachable: true, timedOut: true }), true, 999, 'deadline'],
+    [tagged({ unreachable: true }), true, 1000, 'deadline'],
+    [new Error('EPERM'), true, 1001, 'deadline'],
+    [tagged({ unreachable: true, timedOut: true }), false, 999, 'stop'],
+    [tagged({ unreachable: true, timedOut: false }), true, 500, 'stop'],
+    [tagged({ rejected: true }), true, 500, 'stop'],
+    [tagged({ rejected: true }), false, 500, 'stop'],
+    [tagged({ refusal: true }), false, 500, 'skip'],
+    [new Error('EPERM'), false, 500, 'failed'],
+    [new Error('EPERM'), true, 500, 'failed'],
+  ] as const)('error %j in hook mode %s at %i (deadline 1000) → %s', (error, hook, now, expected) => {
+    expect(cli.pullFailure(error, { hook, deadline: 1000, now })).toBe(expected);
+  });
+
+  const listen = async (s: Server | ReturnType<typeof createHttpServer>) => {
+    await new Promise<void>((r) => s.listen(0, '127.0.0.1', r));
+    return `http://127.0.0.1:${(s.address() as AddressInfo).port}`;
+  };
+
+  it('makeApi tags a timeout, a refused connection and a rejected token', async () => {
+    const sockets = new Set<Socket>();
+    const hang = createServer((s) => void sockets.add(s));
+    const reject = createHttpServer((_, res) => res.writeHead(401, { 'content-type': 'application/json' }).end('{}'));
+    try {
+      const hangUrl = await listen(hang);
+      await expect(cli.makeApi({ url: hangUrl, token: 't' }, Date.now() + 100)('GET', '/x'))
+        .rejects.toMatchObject({ unreachable: true, timedOut: true });
+      const rejectUrl = await listen(reject);
+      await expect(cli.makeApi({ url: rejectUrl, token: 't' })('GET', '/x')).rejects.toMatchObject({ rejected: true });
+      await new Promise<void>((r) => reject.close(() => r()));
+      await expect(cli.makeApi({ url: rejectUrl, token: 't' })('GET', '/x')).rejects.toMatchObject({ unreachable: true, timedOut: false });
+    } finally {
+      for (const s of sockets) s.destroy();
+      hang.close();
+      if (reject.listening) reject.close();
+    }
   });
 });

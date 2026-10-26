@@ -298,8 +298,11 @@ function writeAtomic(repo, path, bytes) {
 
 // ------------------------------------------------------------------ server
 
-/** fetch with the token and a timeout; network failures become a CliError. In hook mode every call ends by the deadline. */
-function makeApi(conn, deadline) {
+/**
+ * fetch with the token and a timeout; network failures become a CliError. In hook mode every call ends by the deadline.
+ * Errors are tagged for the pull loop: `unreachable` (no answer; `timedOut` when the timeout fired) and `rejected` (401).
+ */
+export function makeApi(conn, deadline) {
   return async (method, path, body) => {
     const ms = deadline ? Math.max(1, deadline - Date.now()) : 60000;
     try {
@@ -314,12 +317,15 @@ function makeApi(conn, deadline) {
         signal: AbortSignal.timeout(ms),
       });
       const data = await res.json().catch(() => null);
-      if (res.status === 401) throw new CliError('Tabula rejected the token; run tabula login <url> again');
+      if (res.status === 401) {
+        throw Object.assign(new CliError('Tabula rejected the token; run tabula login <url> again'), { rejected: true });
+      }
       return { status: res.status, data };
     } catch (e) {
       if (e instanceof CliError) throw e;
-      const why = e.name === 'TimeoutError' || e.name === 'AbortError' ? 'timed out' : (e.cause?.code ?? e.message);
-      throw Object.assign(new CliError(`cannot reach ${conn.url}: ${why}`), { unreachable: true });
+      const timedOut = e.name === 'TimeoutError' || e.name === 'AbortError';
+      const why = timedOut ? 'timed out' : (e.cause?.code ?? e.message);
+      throw Object.assign(new CliError(`cannot reach ${conn.url}: ${why}`), { unreachable: true, timedOut });
     }
   };
 }
@@ -563,6 +569,18 @@ async function push(repo, api, { force }) {
 }
 
 /**
+ * What one failed download or write means for the pull loop: 'deadline' (the hook ran out of time: stop and keep what
+ * came), 'stop' (server gone or token rejected: the other files would fail the same way), 'skip' (a path this clone
+ * refuses to write) or 'failed'. In hook mode every timeout is the deadline's: AbortSignal.timeout runs on another
+ * clock than Date.now() and can fire a millisecond before `now >= deadline` holds.
+ */
+export function pullFailure(error, { hook, deadline, now = Date.now() }) {
+  if (hook && (error?.timedOut || now >= deadline)) return 'deadline';
+  if (error?.unreachable || error?.rejected) return 'stop';
+  return error?.refusal ? 'skip' : 'failed';
+}
+
+/**
  * Downloads missing and newer files, state files first. One file that cannot be fetched or written is reported and
  * skipped; the rest still come. In hook mode the loop stops at the deadline and keeps what it restored.
  */
@@ -609,19 +627,20 @@ async function pull(repo, api, { force, hook }) {
       pulled++;
       if (!hook) out(`pulled ${e.path}`);
     } catch (error) {
-      if (hook && Date.now() >= repo.deadline) {
+      const kind = pullFailure(error, { hook, deadline: repo.deadline });
+      if (kind === 'deadline') {
         timedOut = true; // the download was cut off by the deadline, not a failure of this file
         break;
       }
       const message = String(error?.message ?? error).split('\n')[0];
-      if (error?.unreachable) {
-        // The server is gone: waiting out the same timeout once per remaining file would only add minutes.
+      if (kind === 'stop') {
+        // Server gone or token rejected: every other file would fail the same way, after the same wait.
         const left = todo.length - index;
         failed += left;
         if (!hook) err(`failed ${e.path}: ${message}; stopped, ${left} file${left === 1 ? '' : 's'} not pulled`);
         break;
       }
-      if (error?.refusal) {
+      if (kind === 'skip') {
         if (!hook) err(`skip ${e.path}: ${message}`);
       } else {
         failed++;

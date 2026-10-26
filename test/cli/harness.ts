@@ -77,17 +77,18 @@ export function makeRepo(dir: string, tabulaJson: object, files: Record<string, 
 }
 
 /**
- * A proxy in front of the test server for the CLI's GET requests. `delay` returns how many ms to hold a request back,
- * or 'drop' to close the connection without an answer.
+ * A proxy in front of the test server for the CLI's GET requests. `behave` returns how many ms to hold a request back,
+ * 'drop' to close the connection without an answer, or { status } to answer that status itself.
  */
 export async function startProxy(
   target: string,
-  delay: (url: string) => number | 'drop',
+  behave: (url: string) => number | 'drop' | { status: number },
 ): Promise<{ url: string; close: () => void }> {
   const proxy = createServer((req, res) => {
     void (async () => {
-      const d = delay(req.url ?? '');
+      const d = behave(req.url ?? '');
       if (d === 'drop') return void res.destroy();
+      if (typeof d === 'object') return void res.writeHead(d.status, { 'content-type': 'application/json' }).end('{}');
       if (d > 0) await new Promise((r) => setTimeout(r, d));
       try {
         const r = await fetch(target + req.url, { method: req.method, headers: { authorization: String(req.headers.authorization) } });

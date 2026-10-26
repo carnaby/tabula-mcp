@@ -247,6 +247,24 @@ describe('tabula pull and push: failures, case collisions and what --force leave
     }
   });
 
+  it('stops with one line when the token is rejected part way through a pull', async () => {
+    const a = makeRepo(tempDir('tabula-q-'), cfg);
+    for (const path of ['docs/a.md', 'docs/b.md', 'docs/c.md']) {
+      await putFile(db, 'demo', { path, content: path, baseSha256: null }, 'test');
+    }
+    const revoked = await startProxy(server.url, (url) => (url.includes('/files/content') ? { status: 401 } : 0));
+    try {
+      const pull = await runCli(['pull'], { cwd: a, env: { ...env(), TABULA_URL: revoked.url } });
+      expect(pull.code).toBe(1);
+      expect(pull.stderr.trim().split('\n')).toEqual([
+        'failed docs/a.md: Tabula rejected the token; run tabula login <url> again; stopped, 3 files not pulled',
+      ]);
+      expect(pull.stdout).toMatch(/0 pulled, 0 conflicts, 3 failed/);
+    } finally {
+      revoked.close();
+    }
+  });
+
   it('skips paths that differ only in letter case, on the server or against a local file, in pull and push', async () => {
     const a = makeRepo(tempDir('tabula-k-'), cfg, { 'docs/Notes.md': 'local notes\n' });
     for (const path of ['docs/Plan.md', 'docs/plan.md', 'docs/notes.md', 'docs/ok.md']) {

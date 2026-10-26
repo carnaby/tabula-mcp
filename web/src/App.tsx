@@ -5,6 +5,7 @@ import { Sidebar } from './layout/Sidebar';
 import { MemoriesPage } from './pages/MemoriesPage';
 import { NewProjectDialog } from './pages/NewProjectDialog';
 import { NoteEditorPage } from './pages/NoteEditorPage';
+import { NotesPage } from './pages/NotesPage';
 import { ProjectPage } from './pages/ProjectPage';
 import { SearchPage } from './pages/SearchPage';
 import { ThoughtEditorPage } from './pages/ThoughtEditorPage';
@@ -19,8 +20,9 @@ function title(route: Route, projects: Project[] | undefined): string {
     case 'thought': return route.id === 'new' ? 'New thought' : 'Thought';
     case 'memories': return 'All memories';
     case 'search': return 'Search';
-    case 'project':
-    case 'note': {
+    case 'notes': return 'Notes';
+    case 'note': return route.id === 'new' ? 'New note' : 'Note';
+    case 'project': {
       const p = projects?.find((x) => x.id === route.project);
       return route.project === 'global' ? 'Global' : (p?.name ?? route.project);
     }
@@ -84,7 +86,8 @@ function Page({ route, projects }: { route: Route; projects: Project[] | undefin
     case 'memories': return <MemoriesPage projects={projects} />;
     case 'search': return <SearchPage q={route.q} projects={projects} />;
     case 'project': return <ProjectPage project={route.project} tab={route.tab} projects={projects} />;
-    case 'note': return <NoteEditorPage project={route.project} id={route.id} />;
+    case 'notes': return <NotesPage />;
+    case 'note': return <NoteEditorPage id={route.id} />;
     default:
       return (
         <main className="content">

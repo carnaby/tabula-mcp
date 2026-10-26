@@ -1,12 +1,11 @@
 import { MemoriesTable } from '../features/MemoriesTable';
-import { NotesTable } from '../features/NotesTable';
 import { RecallPanel } from '../features/RecallPanel';
 import { SetupPanel } from '../features/SetupPanel';
 import { href } from '../router';
 import type { Project } from '../types';
 import { Badge, ButtonLink, EmptyState, Skeleton, Tabs } from '../ui';
 
-type Tab = 'memories' | 'notes' | 'recall' | 'setup';
+type Tab = 'memories' | 'recall' | 'setup';
 
 export function ProjectPage({ project, tab, projects }: { project: string; tab: Tab; projects: Project[] | undefined }) {
   const p = projects?.find((x) => x.id === project);
@@ -37,13 +36,11 @@ export function ProjectPage({ project, tab, projects }: { project: string; tab: 
         current={tab}
         items={[
           { id: 'memories', label: 'Memories', href: href.project(project), icon: 'layers', count: p?.memory_count },
-          { id: 'notes', label: 'Notes', href: href.project(project, 'notes'), icon: 'fileText' },
           { id: 'recall', label: 'Recall preview', href: href.project(project, 'recall'), icon: 'eye' },
           { id: 'setup', label: 'Setup', href: href.project(project, 'setup'), icon: 'sliders' },
         ]}
       />
       {tab === 'memories' && <MemoriesTable project={project} projects={projects} />}
-      {tab === 'notes' && <NotesTable project={project} />}
       {tab === 'recall' && <RecallPanel project={project} />}
       {tab === 'setup' && <SetupPanel project={p} />}
     </main>

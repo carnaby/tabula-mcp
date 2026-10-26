@@ -24,7 +24,7 @@ export function Sidebar({
   const canInstall = useCanInstall();
   const [filter, setFilter] = useState('');
   const { confirm } = useConfirm();
-  const activeProject = route.name === 'project' || route.name === 'note' ? route.project : null;
+  const activeProject = route.name === 'project' ? route.project : null;
   const shown = (projects ?? []).filter(
     (p) => !filter || p.id.includes(filter.toLowerCase()) || p.name.toLowerCase().includes(filter.toLowerCase()),
   );
@@ -45,6 +45,7 @@ export function Sidebar({
 
         <div className="nav-section">Notebook</div>
         <NavItem to={href.thoughts()} icon="lightbulb" label="Thoughts" active={route.name === 'thoughts' || route.name === 'thought'} />
+        <NavItem to={href.notes()} icon="fileText" label="Notes" active={route.name === 'notes' || route.name === 'note'} />
 
         <div className="nav-section">Agent memory</div>
         <NavItem to={href.memories()} icon="layers" label="All memories" active={route.name === 'memories'} />

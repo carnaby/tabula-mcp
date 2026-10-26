@@ -1,22 +1,25 @@
 import { useEffect, useState } from 'react';
 
+export type ProjectTab = 'memories' | 'recall' | 'setup';
 export type Route =
   | { name: 'thoughts' }
   | { name: 'thought'; id: string | 'new' }
+  | { name: 'notes' }
+  | { name: 'note'; id: string | 'new' }
   | { name: 'memories' }
   | { name: 'search'; q: string }
-  | { name: 'project'; project: string; tab: 'memories' | 'notes' | 'recall' | 'setup' }
-  | { name: 'note'; project: string; id: string | 'new' }
+  | { name: 'project'; project: string; tab: ProjectTab }
   | { name: 'notFound' };
 
 export const href = {
   thoughts: () => '#/thoughts',
   thought: (id: string) => `#/thoughts/${id}`,
+  notes: () => '#/notes',
+  note: (id: string) => `#/notes/${id}`,
   memories: () => '#/memories',
   search: (q = '') => `#/search${q ? `?q=${encodeURIComponent(q)}` : ''}`,
-  project: (p: string, tab: 'memories' | 'notes' | 'recall' | 'setup' = 'memories') =>
+  project: (p: string, tab: ProjectTab = 'memories') =>
     `#/p/${encodeURIComponent(p)}${tab === 'memories' ? '' : `/${tab}`}`,
-  note: (p: string, id: string) => `#/p/${encodeURIComponent(p)}/notes/${id}`,
 };
 
 export function parse(hash: string): Route {
@@ -30,15 +33,16 @@ export function parse(hash: string): Route {
   const params = new URLSearchParams(query);
   const [a, b, c, d] = parts;
   if (!a || a === 'thoughts') return b ? { name: 'thought', id: b } : { name: 'thoughts' };
+  if (a === 'notes') return b ? { name: 'note', id: b } : { name: 'notes' };
   if (a === 'memories' && !b) return { name: 'memories' };
   if (a === 'search') return { name: 'search', q: params.get('q') ?? '' };
   // Links from the old UI.
-  if (a === 'notes') return { name: 'project', project: 'global', tab: 'notes' };
   if (a === 'recall') return { name: 'project', project: 'global', tab: 'recall' };
   if (a === 'p' && b) {
     if (!c) return { name: 'project', project: b, tab: 'memories' };
-    if (c === 'notes' && d) return { name: 'note', project: b, id: d };
-    if (c === 'notes' || c === 'recall' || c === 'setup') return { name: 'project', project: b, tab: c };
+    // Notes used to belong to projects; they are one notebook now.
+    if (c === 'notes') return d ? { name: 'note', id: d } : { name: 'notes' };
+    if (c === 'recall' || c === 'setup') return { name: 'project', project: b, tab: c };
   }
   return { name: 'notFound' };
 }

@@ -32,7 +32,7 @@ export type MemorySort = 'createdAt' | 'updatedAt' | 'title' | 'kind' | 'project
 
 export type Note = {
   id: string;
-  projectId: string;
+  projectId: string | null;
   title: string;
   summary: string;
   body: string;

@@ -50,7 +50,7 @@ const qs = (params: Record<string, string | number | boolean | undefined | null>
 
 type Paging<S> = { page?: number; pageSize?: number; sort?: S; dir?: 'asc' | 'desc' };
 type MemoryInput = { projectId: string; kind: MemoryKind; title: string; body: string; tags?: string[]; supersedesId?: string | null };
-type NoteInput = { title: string; summary?: string; body?: string; tags?: string[]; pinned?: boolean };
+type NoteInput = { title: string; body?: string; tags?: string[]; pinned?: boolean };
 type ThoughtInput = { title: string; body?: string; tags?: string[]; pinned?: boolean };
 type S = AbortSignal | undefined;
 
@@ -69,9 +69,10 @@ export const api = {
   deleteMemory: (id: string) => request<void>('DELETE', `/memories/${id}`),
   chain: (id: string, signal?: S) => request<Memory[]>('GET', `/memories/${id}/chain`, undefined, signal),
 
-  notes: (f: { project?: string; q?: string } & Paging<NoteSort>, signal?: S) => request<Page<Note>>('GET', `/notes${qs(f)}`, undefined, signal),
+  notes: (f: { q?: string; tag?: string } & Paging<NoteSort>, signal?: S) => request<Page<Note>>('GET', `/notes${qs(f)}`, undefined, signal),
+  noteTags: (signal?: S) => request<{ tag: string; count: number }[]>('GET', '/notes/tags', undefined, signal),
   note: (id: string, signal?: S) => request<Note>('GET', `/notes/${id}`, undefined, signal),
-  createNote: (n: NoteInput & { projectId: string }) => request<Note>('POST', '/notes', n),
+  createNote: (n: NoteInput) => request<Note>('POST', '/notes', n),
   updateNote: (id: string, p: Partial<NoteInput>) => request<Note>('PATCH', `/notes/${id}`, p),
   deleteNote: (id: string) => request<void>('DELETE', `/notes/${id}`),
 

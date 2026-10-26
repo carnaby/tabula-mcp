@@ -1,21 +1,25 @@
 import { describe, expect, it } from 'vitest';
-import { memories, notes } from '../../src/db/schema.js';
+import { memories, projectFiles } from '../../src/db/schema.js';
 import { createProject, listProjects, requireProject, updateProject } from '../../src/domain/projects.js';
 import { seedProject, useTestDb } from '../helpers.js';
 
 const db = useTestDb();
 
 describe('projects', () => {
-  it('lists global first with active-only memory counts', async () => {
+  it('lists global first with active memory counts and live file counts', async () => {
     await seedProject(db, 'alpha');
     await db.insert(memories).values([
-      { projectId: 'alpha', kind: 'rule', title: 'a', body: 'b', source: 'human' },
-      { projectId: 'alpha', kind: 'rule', title: 'c', body: 'd', source: 'human', status: 'deprecated' },
+      { projectId: 'global', kind: 'rule', title: 'a', body: 'b', source: 'human' },
+      { projectId: 'global', kind: 'rule', title: 'c', body: 'd', source: 'human', status: 'deprecated' },
     ]);
-    await db.insert(notes).values({ projectId: 'alpha', title: 'n' });
+    const file = { projectId: 'alpha', content: 'x', sha256: 'h', size: 1, updatedBy: 'cli' };
+    await db.insert(projectFiles).values([
+      { ...file, path: 'a.md' },
+      { ...file, path: 'b.md', deletedAt: new Date() },
+    ]);
     expect(await listProjects(db)).toEqual([
-      { id: 'global', name: 'Global', description: 'Rules and notes that apply to every project.', memory_count: 0, note_count: 0 },
-      { id: 'alpha', name: 'alpha', description: 'alpha project', memory_count: 1, note_count: 1 },
+      { id: 'global', name: 'Global', description: 'Rules and notes that apply to every project.', memory_count: 1, file_count: 0 },
+      { id: 'alpha', name: 'alpha', description: 'alpha project', memory_count: 0, file_count: 1 },
     ]);
   });
 

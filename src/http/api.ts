@@ -6,7 +6,7 @@ import { notFound } from '../domain/errors.js';
 import {
   createMemory, deleteMemory, deprecateMemory, getMemory, MEMORY_SORTS, pageMemories, supersedesChain, updateMemory,
 } from '../domain/memories.js';
-import { createNote, deleteNote, getNote, NOTE_SORTS, type Note, pageNotes, updateNote } from '../domain/notes.js';
+import { createNote, deleteNote, getNote, NOTE_SORTS, type Note, noteTags, pageNotes, updateNote } from '../domain/notes.js';
 import { MAX_PAGE_SIZE } from '../domain/paging.js';
 import { createProject, listProjects, requireProject, updateProject } from '../domain/projects.js';
 import { quickSearch } from '../domain/search.js';
@@ -105,11 +105,12 @@ export const apiRoutes: FastifyPluginAsync<{ db: Db; config: Config }> = async (
 
   // Notes
   app.get('/notes', async (req) => {
-    const q = parse(z.object({ project: z.string().optional(), q: z.string().optional(), ...paging(NOTE_SORTS) }), req.query);
+    const q = parse(z.object({ project: z.string().optional(), q: z.string().optional(), tag: z.string().optional(), ...paging(NOTE_SORTS) }), req.query);
     const { project, ...rest } = q;
     const page = await pageNotes(db, { ...rest, projectId: project });
     return { ...page, items: page.items.map(withSize) };
   });
+  app.get('/notes/tags', () => noteTags(db));
   app.get('/notes/:id', async (req) => {
     const { id } = parse(idParams, req.params);
     const n = await getNote(db, id);
@@ -120,7 +121,7 @@ export const apiRoutes: FastifyPluginAsync<{ db: Db; config: Config }> = async (
     title: z.string(), summary: z.string().optional(), body: z.string().optional(), tags, pinned: z.boolean().optional(),
   };
   app.post('/notes', async (req, reply) => {
-    const b = parse(z.object({ projectId: z.string(), ...noteFields }), req.body);
+    const b = parse(z.object({ projectId: z.string().nullable().optional(), ...noteFields }), req.body);
     return reply.code(201).send(withSize(await createNote(db, b)));
   });
   app.patch('/notes/:id', async (req) => {

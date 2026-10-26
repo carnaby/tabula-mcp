@@ -24,7 +24,7 @@ export function NewProjectDialog({ open, onClose, onCreated }: { open: boolean; 
       setDraft({ id: '', name: '', description: '' });
       setSlugTouched(false);
       setError('');
-      onCreated({ ...p, memory_count: 0, note_count: 0 });
+      onCreated({ ...p, memory_count: 0, file_count: 0 });
     } catch (e) {
       setError((e as Error).message);
     } finally {

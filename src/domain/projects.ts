@@ -5,13 +5,13 @@ import { conflict, notFound } from './errors.js';
 import { validateProjectSlug } from './validation.js';
 
 export type Project = typeof projects.$inferSelect;
-export type ProjectSummary = { id: string; name: string; description: string; memory_count: number; note_count: number };
+export type ProjectSummary = { id: string; name: string; description: string; memory_count: number; file_count: number };
 
 export async function listProjects(db: Db): Promise<ProjectSummary[]> {
   const rows = await db.execute<ProjectSummary>(sql`
     SELECT p.id, p.name, p.description,
       (SELECT count(*)::int FROM memories m WHERE m.project_id = p.id AND m.status = 'active') AS memory_count,
-      (SELECT count(*)::int FROM notes n WHERE n.project_id = p.id) AS note_count
+      (SELECT count(*)::int FROM project_files f WHERE f.project_id = p.id AND f.deleted_at IS NULL) AS file_count
     FROM projects p
     ORDER BY (p.id = 'global') DESC, p.id`);
   return [...rows];

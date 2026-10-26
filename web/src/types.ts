@@ -9,7 +9,7 @@ export const KIND_INFO: Record<MemoryKind, { label: string; hint: string }> = {
 
 export type Source = 'agent' | 'human';
 
-export type Project = { id: string; name: string; description: string; memory_count: number; note_count: number };
+export type Project = { id: string; name: string; description: string; memory_count: number; file_count: number };
 
 export type Page<T> = { items: T[]; total: number; page: number; pageSize: number };
 

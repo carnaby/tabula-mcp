@@ -135,4 +135,12 @@ describe('REST API', () => {
     expect(res.json()).toEqual({ error: 'internal', message: 'internal error' });
     expect(res.body).not.toContain('secret');
   });
+
+  it('keeps notebook notes without a project and lists their tags', async () => {
+    const n = await call('POST', '/api/notes', { title: 'Loose idea', body: 'x', tags: ['Music'] });
+    expect(n.statusCode).toBe(201);
+    expect(n.json()).toMatchObject({ projectId: null, tags: ['music'] });
+    expect((await call('GET', '/api/notes?tag=music')).json()).toMatchObject({ total: 1 });
+    expect((await call('GET', '/api/notes/tags')).json()).toEqual([{ tag: 'music', count: 1 }]);
+  });
 });

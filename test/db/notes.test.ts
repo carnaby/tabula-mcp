@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createNote, deleteNote, getNote, listNotes, updateNote } from '../../src/domain/notes.js';
+import { createNote, deleteNote, findNotes, getNote, listNotes, noteTags, pageNotes, updateNote } from '../../src/domain/notes.js';
 import { seedProject, useTestDb } from '../helpers.js';
 
 const db = useTestDb();
@@ -36,5 +36,22 @@ describe('notes', () => {
     expect((await listNotes(db, { q: 'naming' })).map((n) => n.id)).toEqual([a.id]);
     await deleteNote(db, a.id);
     await expect(deleteNote(db, a.id)).rejects.toMatchObject({ code: 'not_found' });
+  });
+
+  it('creates notebook notes without a project and filters them by tag', async () => {
+    const a = await createNote(db, { title: 'Ambient ideas', tags: ['Music'], body: 'pads and drones' });
+    expect(a.projectId).toBeNull();
+    await createNote(db, { title: 'Other' });
+    expect((await pageNotes(db, { tag: 'music' })).items.map((n) => n.id)).toEqual([a.id]);
+    expect(await noteTags(db)).toEqual([{ tag: 'music', count: 1 }]);
+  });
+
+  it('finds notes newest first without a query and by prefix with one', async () => {
+    const a = await createNote(db, { title: 'Ambient ideas', body: 'pads and drones' });
+    const b = await createNote(db, { title: 'Postgres paging', body: 'keyset vs offset' });
+    expect((await findNotes(db, {})).map((h) => h.id)).toEqual([b.id, a.id]);
+    const hits = await findNotes(db, { query: 'keys' });
+    expect(hits).toMatchObject([{ id: b.id, title: 'Postgres paging', project: null }]);
+    expect(hits[0]!.snippet).toContain('**keyset**');
   });
 });

@@ -37,7 +37,7 @@ export function ProjectPage({ project, tab, projects }: { project: string; tab: 
         current={tab}
         items={[
           { id: 'memories', label: 'Memories', href: href.project(project), icon: 'layers', count: p?.memory_count },
-          { id: 'notes', label: 'Notes', href: href.project(project, 'notes'), icon: 'fileText', count: p?.note_count },
+          { id: 'notes', label: 'Notes', href: href.project(project, 'notes'), icon: 'fileText' },
           { id: 'recall', label: 'Recall preview', href: href.project(project, 'recall'), icon: 'eye' },
           { id: 'setup', label: 'Setup', href: href.project(project, 'setup'), icon: 'sliders' },
         ]}

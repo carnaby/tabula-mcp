@@ -64,7 +64,7 @@ export function Sidebar({
             to={href.project(p.id)}
             icon={p.id === 'global' ? 'globe' : 'folder'}
             label={p.id === 'global' ? 'Global' : p.name || p.id}
-            count={p.memory_count + p.note_count}
+            count={p.id === 'global' ? p.memory_count : p.file_count}
             active={activeProject === p.id}
           />
         ))}

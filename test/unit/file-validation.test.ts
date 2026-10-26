@@ -20,7 +20,8 @@ describe('validateFilePath', () => {
   it.each([
     ['', /empty/], ['/etc/passwd', /relative/], ['C:/x.md', /relative/], ['docs\\a.md', /forward slashes/],
     ['../a.md', /segments/], ['docs/../a.md', /segments/], ['docs//a.md', /segments/], ['docs/./a.md', /segments/],
-    ['docs/', /segments/], ['.git/config', /segments/], ['node_modules/x/a.md', /segments/],
+    ['docs/', /segments/], ['.git/config', /segments/], ['.GIT/hooks/x', /segments/], ['.git./config', /segments/], ['.git /x', /segments/],
+    ['Node_Modules/x', /segments/], ['node_modules/x/a.md', /segments/],
     ['.env', /\.env files/], ['docs/.env.local', /\.env files/],
     [`docs/a${String.fromCharCode(10)}b.md`, /control characters/], ['x'.repeat(513), /limit is 512/],
   ])('rejects %j', (p, msg) => expect(() => validateFilePath(p)).toThrow(msg));

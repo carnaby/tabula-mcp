@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { and, asc, desc, eq, inArray, isNull, lte, notInArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, notInArray, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { projectFileRevisions, projectFiles } from '../db/schema.js';
 import { badRequest, notFound, tooLarge } from './errors.js';
@@ -23,7 +23,8 @@ export function validateFilePath(raw: string): string {
   if (raw.includes('\\')) throw badRequest('path must use forward slashes (a POSIX path relative to the repository root)');
   if (raw.startsWith('/') || /^[A-Za-z]:/.test(raw)) throw badRequest('path must be relative to the repository root');
   const segments = raw.split('/');
-  if (segments.some((s) => BLOCKED_SEGMENTS.has(s))) {
+  // Case-insensitive and ignoring trailing dots/spaces: on Windows and macOS these resolve into the real directory.
+  if (segments.some((s) => BLOCKED_SEGMENTS.has(s.toLowerCase().replace(/[. ]+$/, '')))) {
     throw badRequest('path must not contain empty, ".", "..", ".git" or "node_modules" segments');
   }
   if (isEnvFileName(segments[segments.length - 1]!)) throw badRequest('.env files are never stored in Tabula');
@@ -148,16 +149,22 @@ export async function getFile(db: Db, projectId: string, rawPath: string): Promi
 
 export async function deleteFile(db: Db, projectId: string, path: string): Promise<{ changed: boolean }> {
   const f = await getFile(db, projectId, path);
-  if (f.deletedAt) return { changed: false };
-  await db.update(projectFiles).set({ deletedAt: sql`now()`, ...keepUpdatedAt }).where(eq(projectFiles.id, f.id));
-  return { changed: true };
+  const rows = await db
+    .update(projectFiles)
+    .set({ deletedAt: sql`now()`, ...keepUpdatedAt })
+    .where(and(eq(projectFiles.id, f.id), isNull(projectFiles.deletedAt)))
+    .returning({ id: projectFiles.id });
+  return { changed: rows.length > 0 };
 }
 
 export async function restoreFile(db: Db, projectId: string, path: string): Promise<{ changed: boolean }> {
   const f = await getFile(db, projectId, path);
-  if (!f.deletedAt) return { changed: false };
-  await db.update(projectFiles).set({ deletedAt: null, ...keepUpdatedAt }).where(eq(projectFiles.id, f.id));
-  return { changed: true };
+  const rows = await db
+    .update(projectFiles)
+    .set({ deletedAt: null, ...keepUpdatedAt })
+    .where(and(eq(projectFiles.id, f.id), isNotNull(projectFiles.deletedAt)))
+    .returning({ id: projectFiles.id });
+  return { changed: rows.length > 0 };
 }
 
 export async function listFileRevisions(db: Db, projectId: string, path: string): Promise<FileRevisionMeta[]> {

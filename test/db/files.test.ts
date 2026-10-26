@@ -61,6 +61,13 @@ describe('project files', () => {
     await expect(getFileRevision(db, 'demo', 'docs/a.md', 4)).rejects.toMatchObject({ code: 'not_found' });
   });
 
+  it('revives a soft-deleted file when identical content is put with base null', async () => {
+    await put('docs/a.md', 'same', null);
+    await deleteFile(db, 'demo', 'docs/a.md');
+    expect(await put('docs/a.md', 'same', null)).toMatchObject({ ok: true, version: 1, changed: true });
+    expect((await listFiles(db, 'demo')).map((f) => f.path)).toEqual(['docs/a.md']);
+  });
+
   it('soft-deletes and restores; a write to a deleted path revives it as a new version', async () => {
     await put('docs/a.md', 'one', null);
     expect(await deleteFile(db, 'demo', 'docs/a.md')).toEqual({ changed: true });

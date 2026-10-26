@@ -71,7 +71,8 @@ const LABEL = /^[a-z0-9._-]{1,40}$/;
 export function sanitizeAgentLabel(raw: unknown): string {
   if (typeof raw !== 'string') return 'unknown';
   const v = raw.trim().toLowerCase();
-  return LABEL.test(v) ? v : 'unknown';
+  // An agent must never pose as the human: that label is reserved for the UI.
+  return LABEL.test(v) && v !== 'human' ? v : 'unknown';
 }
 
 const SLUG = /^[a-z0-9][a-z0-9-]{0,39}$/;

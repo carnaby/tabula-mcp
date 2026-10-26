@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import {
   createMemory, deleteMemory, deprecateMemory, getMemory, listMemories, supersedesChain, updateMemory,
@@ -50,10 +51,13 @@ describe('memories', () => {
 
   it('updates fields with validation and bumps updatedAt', async () => {
     await seedProject(db, 'demo');
-    const m = await createMemory(db, base);
+    const created = await createMemory(db, base);
+    // Backdate in the DB so the comparison involves DB timestamps only (no Node clock, no sleeps).
+    await db.execute(sql`UPDATE memories SET updated_at = now() - interval '1 hour' WHERE id = ${created.id}`);
+    const m = (await getMemory(db, created.id))!;
     const u = await updateMemory(db, m.id, { title: 'New title', tags: ['X'] });
     expect(u).toMatchObject({ title: 'New title', tags: ['x'], body: base.body });
-    expect(u.updatedAt.getTime()).toBeGreaterThanOrEqual(m.updatedAt.getTime());
+    expect(u.updatedAt.getTime()).toBeGreaterThan(m.updatedAt.getTime());
     await expect(updateMemory(db, m.id, { title: 'x'.repeat(121) })).rejects.toMatchObject({ code: 'bad_request' });
   });
 

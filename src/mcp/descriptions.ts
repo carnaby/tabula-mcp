@@ -34,7 +34,7 @@ Call find_thoughts first; if a thought on the same topic exists, tell the user a
 Write it so the user can reread it months later without the conversation: a specific title; a Markdown body with the key ideas, conclusions, reasons and open questions in the user's language; no chat transcript and no filler. Never store secrets.`,
 
   update_thought: `Change an existing thought in the user's Tabula notebook when the user asks to add to it or fix it. Use append to add a section at the end; use body only to rewrite the whole text. The previous version is always kept and the user can restore it.
-Pass expected_version (from find_thoughts or get) so you never overwrite the user's own edit; on a 409 conflict call get and apply the change again.`,
+expected_version (from find_thoughts or get) is REQUIRED when you pass body or title, so you never overwrite the user's own edit; append alone may omit it; on a 409 conflict call get and apply the change again.`,
 
   find_thoughts: `List or search the user's personal Tabula notebook ("Thoughts"). Without query it returns the newest thoughts. Use it when the user refers to something saved earlier, and before save_thought to avoid duplicates. Returns ids and versions for get and update_thought. Works in any project; it needs no "Memory (Tabula)" section.`,
 } as const;

@@ -6,6 +6,10 @@ describe('prefixTsQuery', () => {
     expect(prefixTsQuery('Drizz  pri')).toBe('drizz:* & pri:*');
     expect(prefixTsQuery('ťažká úloha')).toBe('ťažká:* & úloha:*');
   });
+  it('keeps combining marks of decomposed letters (NFC-normalized)', () => {
+    expect(prefixTsQuery('cafe\u0301')).toBe('caf\u00e9:*');
+    expect(prefixTsQuery('cafe\u0301 au')).toBe('caf\u00e9:* & au:*');
+  });
   it('drops tsquery syntax so user input can never break the query', () => {
     expect(prefixTsQuery("a:* & !(b | 'c')")).toBe('a:* & b:* & c:*');
     expect(prefixTsQuery('  !&| ')).toBeUndefined();

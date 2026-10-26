@@ -141,8 +141,18 @@ describe('MCP endpoint', () => {
     const t = await createThought(db, { title: 'Mine', body: 'human text' }, HUMAN);
     const client = await connect('/mcp', bearer);
     const r = await client.callTool({ name: 'update_thought', arguments: { id: t.id, title: 'Mine, refined' } });
-    expect(r.isError).toBeFalsy();
+    expect(r.isError).toBe(true);
+    expect(textOf(r)).toMatch(/^400: expected_version is required/);
+    const ok = await client.callTool({ name: 'update_thought', arguments: { id: t.id, title: 'Mine, refined', expected_version: 1 } });
+    expect(ok.isError).toBeFalsy();
     expect(await getThought(db, t.id)).toMatchObject({ title: 'Mine, refined', editedBy: 'claude-code', source: 'human' });
+    await client.close();
+  });
+
+  it('does not let an agent label itself human', async () => {
+    const client = await connect('/mcp', { ...bearer, 'X-Tabula-Agent': 'human' });
+    const { id } = JSON.parse(textOf(await client.callTool({ name: 'save_thought', arguments: { title: 'T', body: 'b' } }))) as { id: string };
+    expect((await getThought(db, id))?.editedBy).toBe('unknown');
     await client.close();
   });
 

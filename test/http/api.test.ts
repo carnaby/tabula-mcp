@@ -22,6 +22,12 @@ describe('REST API', () => {
     expect((await app.inject({ method: 'GET', url: '/api/projects' })).statusCode).toBe(401);
   });
 
+  it('requires the token on the search, thoughts and snippet routes too', async () => {
+    for (const url of ['/api/search?q=x', '/api/thoughts', '/api/projects/global/snippet']) {
+      expect((await app.inject({ method: 'GET', url })).statusCode).toBe(401);
+    }
+  });
+
   it('manages projects', async () => {
     expect((await call('POST', '/api/projects', { id: 'demo', name: 'Demo' })).statusCode).toBe(201);
     expect((await call('POST', '/api/projects', { id: 'Bad Slug', name: 'x' })).statusCode).toBe(400);

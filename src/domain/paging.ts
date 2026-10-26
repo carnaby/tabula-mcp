@@ -14,10 +14,10 @@ export function pageWindow(p: { page?: number; pageSize?: number }) {
 
 /**
  * Search-as-you-type query: every word must match as a prefix ("drizz ord" finds "Drizzle over Prisma").
- * Only letters and digits survive, so user input can never produce invalid tsquery syntax.
+ * Only letters, combining marks and digits survive (input is NFC-normalized first), so user input can never produce invalid tsquery syntax.
  */
 export function prefixTsQuery(q: string | undefined): string | undefined {
-  const words = q?.toLowerCase().match(/[\p{L}\p{N}]+/gu);
+  const words = q?.normalize('NFC').toLowerCase().match(/[\p{L}\p{M}\p{N}]+/gu);
   return words?.length ? words.map((w) => `${w}:*`).join(' & ') : undefined;
 }
 

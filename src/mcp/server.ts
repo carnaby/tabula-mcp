@@ -144,7 +144,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
         body: z.string().optional().describe('Replaces the whole body.'),
         append: z.string().optional().describe('Markdown added at the end after a blank line.'),
         tags: z.array(z.string()).optional().describe('Replaces all tags.'),
-        expected_version: z.number().int().positive().optional().describe('The version you read; the update fails if it changed since.'),
+        expected_version: z.number().int().positive().optional().describe('The version you read (from get or find_thoughts). Required with body or title; optional with append only.'),
       }),
     },
     (a) => run(() => agentUpdateThought(ctx, a)),

@@ -36,7 +36,8 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(req)
         .then((res) => {
-          if (res.ok) {
+          // Only the app shell (root document) is stored; other paths may be 404 pages or non-HTML.
+          if (res.ok && url.pathname === '/' && (res.headers.get('content-type') || '').includes('text/html')) {
             const copy = res.clone();
             caches.open(SHELL).then((c) => c.put('/', copy));
           }

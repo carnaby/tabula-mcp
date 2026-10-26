@@ -122,6 +122,11 @@ export async function agentUpdateThought(
 ): Promise<{ id: string; version: number }> {
   const r = await resolveRecord(ctx.db, input.id);
   if (r.type !== 'thought') throw badRequest(`${r.record.id} is a ${r.type}, not a thought`);
+  if ((input.body !== undefined || input.title !== undefined) && input.expected_version === undefined) {
+    throw badRequest(
+      `expected_version is required when you pass body or title (a full replace). Call get or find_thoughts first to read the current version of ${r.record.id}, then pass it as expected_version. Only append may be sent without it.`,
+    );
+  }
   if (input.body !== undefined && input.append !== undefined) throw badRequest('pass either body (replace) or append, not both');
   const t = await updateThought(
     ctx.db,

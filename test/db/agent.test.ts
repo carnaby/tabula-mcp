@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { agentDeprecate, agentGet, agentRemember, type AgentContext } from '../../src/agent/operations.js';
+import { agentDeprecate, agentGet, agentRemember, agentUpdateThought, type AgentContext } from '../../src/agent/operations.js';
 import { memories } from '../../src/db/schema.js';
 import { AGENT_READ_ONLY } from '../../src/domain/errors.js';
 import { createMemory, getMemory, listMemories } from '../../src/domain/memories.js';
 import { createNote } from '../../src/domain/notes.js';
+import { createThought, HUMAN } from '../../src/domain/thoughts.js';
 import { seedProject, useTestDb } from '../helpers.js';
 
 const db = useTestDb();
@@ -27,6 +28,33 @@ describe('agent operations', () => {
     const { id: oldId } = await agentRemember(ctx, input);
     const { id: newId } = await agentRemember(ctx, { ...input, supersedes_id: `#${oldId.slice(0, 8)}` });
     expect(await getMemory(db, oldId)).toMatchObject({ status: 'deprecated', deprecatedReason: `superseded by ${newId}` });
+  });
+
+  it('deprecate and remember(supersedes_id) reject a thought id', async () => {
+    const t = await createThought(db, { title: 'A thought' }, HUMAN);
+    await expect(agentDeprecate(ctx, { id: t.id, reason: 'x' })).rejects.toMatchObject({
+      code: 'bad_request', message: expect.stringMatching(/is a thought, not a memory/),
+    });
+    await expect(agentRemember(ctx, { ...input, supersedes_id: t.id })).rejects.toMatchObject({ code: 'bad_request' });
+    expect(await listMemories(db, { status: 'all' })).toHaveLength(0);
+  });
+
+  it('update_thought requires expected_version for body or title, not for append', async () => {
+    const t = await createThought(db, { title: 'T', body: 'b' }, HUMAN);
+    await expect(agentUpdateThought(ctx, { id: t.id, body: 'x' })).rejects.toMatchObject({
+      code: 'bad_request', message: expect.stringMatching(/expected_version is required.*get or find_thoughts/),
+    });
+    await expect(agentUpdateThought(ctx, { id: t.id, title: 'x' })).rejects.toMatchObject({ code: 'bad_request' });
+    expect(await agentUpdateThought(ctx, { id: t.id, append: 'more' })).toEqual({ id: t.id, version: 2 });
+    expect(await agentUpdateThought(ctx, { id: t.id, body: 'new', expected_version: 2 })).toEqual({ id: t.id, version: 3 });
+    await expect(agentUpdateThought(ctx, { id: t.id, body: 'stale', expected_version: 2 })).rejects.toMatchObject({ code: 'conflict' });
+  });
+
+  it('update_thought rejects a memory or note id', async () => {
+    const m = await agentRemember(ctx, input);
+    await expect(agentUpdateThought(ctx, { id: m.id, append: 'x' })).rejects.toMatchObject({ code: 'bad_request' });
+    const n = await createNote(db, { projectId: 'demo', title: 'Note' });
+    await expect(agentUpdateThought(ctx, { id: n.id, append: 'x' })).rejects.toMatchObject({ code: 'bad_request' });
   });
 
   it('remember cannot supersede human records or notes', async () => {

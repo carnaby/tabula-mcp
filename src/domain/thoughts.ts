@@ -1,11 +1,11 @@
-import { and, asc, count, desc, eq, lte, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, lte, ne, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { thoughtRevisions, thoughts } from '../db/schema.js';
 import { conflict, notFound } from './errors.js';
 import { matchesPrefix, type Page, type PageQuery, pageWindow, prefixTsQuery } from './paging.js';
 import { normalizeTags, validateThoughtText } from './validation.js';
 
-/** Older revisions beyond this many are dropped. */
+/** Older agent revisions beyond this many are dropped; revisions written by the human are never pruned. */
 export const KEEP_REVISIONS = 50;
 
 const cols = {
@@ -114,7 +114,13 @@ export async function updateThought(db: Db, id: string, patch: ThoughtPatch, edi
       });
       await tx
         .delete(thoughtRevisions)
-        .where(and(eq(thoughtRevisions.thoughtId, cur.id), lte(thoughtRevisions.version, cur.version - KEEP_REVISIONS)));
+        .where(
+          and(
+            eq(thoughtRevisions.thoughtId, cur.id),
+            lte(thoughtRevisions.version, cur.version - KEEP_REVISIONS),
+            ne(thoughtRevisions.editedBy, HUMAN.label),
+          ),
+        );
     }
 
     const [row] = await tx

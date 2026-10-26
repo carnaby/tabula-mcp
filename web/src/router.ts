@@ -21,7 +21,12 @@ export const href = {
 
 export function parse(hash: string): Route {
   const [path = '', query = ''] = hash.replace(/^#/, '').split('?');
-  const parts = path.split('/').filter(Boolean).map(decodeURIComponent);
+  let parts: string[];
+  try {
+    parts = path.split('/').filter(Boolean).map(decodeURIComponent);
+  } catch {
+    return { name: 'notFound' };
+  }
   const params = new URLSearchParams(query);
   const [a, b, c, d] = parts;
   if (!a || a === 'thoughts') return b ? { name: 'thought', id: b } : { name: 'thoughts' };

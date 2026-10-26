@@ -101,23 +101,26 @@ export async function quickSearch(db: Db, p: { q: string; limit?: number }): Pro
   const limit = Math.min(Math.max(Math.trunc(p.limit ?? 20), 1), 50);
   const rows = await db.execute<Omit<QuickHit, 'updated_at'> & { updated_at: Date | string }>(sql`
     WITH q AS (SELECT to_tsquery('simple', ${tsq}) AS tsq)
-    SELECT id, type, project, kind, title, snippet, status, updated_at FROM (
-      SELECT m.id, 'memory' AS type, m.project_id AS project, m.kind::text AS kind, m.title,
-        ts_headline('simple', m.body, q.tsq, ${HEADLINE}) AS snippet, m.status::text AS status, m.updated_at,
-        ts_rank(m.search, q.tsq) AS rank
-      FROM memories m, q WHERE m.search @@ q.tsq
-      UNION ALL
-      SELECT n.id, 'note', n.project_id, NULL, n.title,
-        ts_headline('simple', n.summary || ' ' || n.body, q.tsq, ${HEADLINE}), 'active', n.updated_at,
-        ts_rank(n.search, q.tsq)
-      FROM notes n, q WHERE n.search @@ q.tsq
-      UNION ALL
-      SELECT t.id, 'thought', NULL, NULL, t.title,
-        ts_headline('simple', t.body, q.tsq, ${HEADLINE}), 'active', t.updated_at,
-        ts_rank(t.search, q.tsq)
-      FROM thoughts t, q WHERE t.search @@ q.tsq AND NOT t.archived
-    ) hits
-    ORDER BY (status = 'active') DESC, rank DESC, updated_at DESC
-    LIMIT ${limit}`);
+    SELECT id, type, project, kind, title,
+      ts_headline('simple', doc, (SELECT tsq FROM q), ${HEADLINE}) AS snippet, status, updated_at
+    FROM (
+      -- Rank and limit first; the expensive headline runs only for the rows that survive.
+      SELECT id, type, project, kind, title, doc, status, updated_at, rank FROM (
+        SELECT m.id, 'memory' AS type, m.project_id AS project, m.kind::text AS kind, m.title,
+          m.body AS doc, m.status::text AS status, m.updated_at, ts_rank(m.search, q.tsq) AS rank
+        FROM memories m, q WHERE m.search @@ q.tsq
+        UNION ALL
+        SELECT n.id, 'note', n.project_id, NULL, n.title,
+          n.summary || ' ' || n.body, 'active', n.updated_at, ts_rank(n.search, q.tsq)
+        FROM notes n, q WHERE n.search @@ q.tsq
+        UNION ALL
+        SELECT t.id, 'thought', NULL, NULL, t.title,
+          t.body, 'active', t.updated_at, ts_rank(t.search, q.tsq)
+        FROM thoughts t, q WHERE t.search @@ q.tsq AND NOT t.archived
+      ) hits
+      ORDER BY (status = 'active') DESC, rank DESC, updated_at DESC
+      LIMIT ${limit}
+    ) top
+    ORDER BY (status = 'active') DESC, rank DESC, updated_at DESC`);
   return [...rows].map((r) => ({ ...r, updated_at: new Date(r.updated_at).toISOString() }));
 }

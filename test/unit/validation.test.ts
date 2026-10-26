@@ -51,6 +51,11 @@ describe('sanitizeAgentLabel', () => {
     expect(sanitizeAgentLabel('bad label!')).toBe('unknown');
     expect(sanitizeAgentLabel(['a', 'b'])).toBe('unknown');
   });
+  it('never lets an agent pose as the human', () => {
+    expect(sanitizeAgentLabel('human')).toBe('unknown');
+    expect(sanitizeAgentLabel(' Human ')).toBe('unknown');
+    expect(sanitizeAgentLabel('humans')).toBe('humans');
+  });
 });
 
 describe('validateProjectSlug', () => {

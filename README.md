@@ -27,7 +27,7 @@ A memory has one of four kinds, and the kind decides how prominently it is shown
 - **decision** — what was decided and why (*"Drizzle over Prisma, because…"*)
 - **fact** — the state of the world that the code doesn't show (*"Production runs on a single VPS, not in a managed cloud"*)
 
-Records belong to a **project** (a flat slug such as `music-creator`) or to the reserved project **`global`**, whose records are included everywhere. A memory is never edited by an agent in place: a newer one *supersedes* it (the old one is deprecated in the same transaction, so the history stays visible), or the agent *deprecates* it with a reason. Human-written records are read-only for agents.
+Records belong to a **project** (a flat slug such as `music-creator`) or to the reserved project **`global`**, whose records are included everywhere. A memory is never edited by an agent in place: a newer one *supersedes* it (the old one is deprecated in the same transaction, so the history stays visible), or the agent *deprecates* it with a reason. Human-written memories and notes are read-only for agents; thoughts are the exception (agents edit them on request, and the previous version is always kept).
 
 ### The recall digest
 
@@ -208,7 +208,7 @@ A `502 Bad Gateway` on `/api` in the browser means the server isn't running — 
 ```bash
 pnpm typecheck              # server and UI
 pnpm test                   # Vitest; starts a throwaway Postgres via Testcontainers (needs Docker)
-TEST_DATABASE_URL=postgres://… pnpm test   # or use an existing throwaway database (it is wiped)
+TEST_DATABASE_URL=postgres://… pnpm test   # or use an existing throwaway database (it is wiped; the database name must contain "test", e.g. tabula_test, and must differ from DATABASE_URL)
 ```
 
 The tests cover the domain rules, the digest builder, the REST API and the MCP endpoint end to end through a real MCP client.

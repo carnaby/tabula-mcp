@@ -3,7 +3,7 @@ import { type AddressInfo, createServer, type Socket } from 'node:net';
 import { dirname, join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { seedProject, TEST_TOKEN, useTestDb } from '../helpers.js';
-import { CLI, git, makeRepo, readText, runCli, tempDir, useServer } from './harness.js';
+import { CLI, git, makeRepo, readText, runCli, startProxy, tempDir, useServer } from './harness.js';
 
 const db = useTestDb();
 const server = useServer(db);
@@ -75,6 +75,38 @@ describe('tabula pull --hook', { timeout: 60_000 }, () => {
     } finally {
       for (const s of sockets) s.destroy();
       hang.close();
+    }
+  });
+
+  it('stops at the deadline with state files first, keeps what it restored and says how many are missing', async () => {
+    const root = tempDir('tabula-h8-');
+    const files: Record<string, string> = { 'docs/handoff/state.md': 'state' };
+    // These sort before docs/handoff/, so only the state-first order gets the state file in before the deadline.
+    for (let i = 10; i < 22; i++) files[`docs/a/f${i}.md`] = `f${i}`;
+    const a = makeRepo(join(root, 'a'), cfg, files);
+    expect((await runCli(['push'], { cwd: a, env: env() })).code).toBe(0);
+    const b = join(root, 'b');
+    git(root, 'clone', '-q', a, b);
+    // A proxy that answers every file download slowly, so the hook runs out of time part way.
+    const slow = await startProxy(server.url, (url) => (url.includes('/files/content') ? 500 : 0));
+    try {
+      const r = await runCli(['pull', '--hook'], { cwd: b, env: { ...env(), TABULA_URL: slow.url, TABULA_HOOK_DEADLINE_MS: '2500' } });
+      expect(r.code).toBe(0);
+      expect(r.stderr).toBe('');
+      const m = /^tabula: restored (\d+) of 13 files from Tabula project demo; run tabula pull for the rest$/.exec(r.stdout.trim());
+      expect(m, r.stdout).not.toBeNull();
+      const restored = Number(m![1]);
+      expect(restored).toBeGreaterThanOrEqual(1);
+      expect(restored).toBeLessThan(13);
+      expect(readText(b, 'docs/handoff/state.md')).toBe('state');
+      const saved = JSON.parse(readFileSync(join(b, '.git', 'tabula-sync.json'), 'utf8'));
+      expect(Object.keys(saved.files)).toHaveLength(restored);
+      expect(saved.files).toHaveProperty(['docs/handoff/state.md']);
+      const rest = await runCli(['pull'], { cwd: b, env: env() });
+      expect(rest.code, rest.stderr).toBe(0);
+      expect(rest.stdout).toContain(`${13 - restored} pulled, 0 conflicts`);
+    } finally {
+      slow.close();
     }
   });
 

@@ -22,7 +22,11 @@ const isBlockedSegment = (segment: string): boolean => {
   return BLOCKED_SEGMENTS.has(s) || /^git~\d+$/.test(s);
 };
 
-export const isEnvFileName = (name: string): boolean => name === '.env' || name.startsWith('.env.');
+/** .env and .env.*, case-insensitive and without trailing dots and spaces (one file on Windows); .envrc is allowed. */
+export const isEnvFileName = (name: string): boolean => {
+  const n = name.toLowerCase().replace(/[. ]+$/, '');
+  return n === '.env' || n.startsWith('.env.');
+};
 
 export function validateFilePath(raw: string): string {
   if (typeof raw !== 'string' || raw.length === 0) throw badRequest('path must not be empty');

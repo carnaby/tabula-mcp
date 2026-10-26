@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, symlinkSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { projectFiles } from '../../src/db/schema.js';
 import { getFile, listFiles, putFile } from '../../src/domain/files.js';
 import { seedProject, TEST_TOKEN, useTestDb } from '../helpers.js';
-import { git, makeRepo, readText, runCli, tempDir, useServer, writeFile } from './harness.js';
+import { git, makeRepo, readText, runCli, startProxy, tempDir, useServer, writeFile } from './harness.js';
 
 const db = useTestDb();
 const server = useServer(db);
@@ -211,6 +211,114 @@ describe('tabula push and pull', { timeout: 60_000 }, () => {
   });
 });
 
+describe('tabula pull and push: failures, case collisions and what --force leaves alone', { timeout: 60_000 }, () => {
+  it('keeps pulling when one file cannot be written, exits 1 and leaves no temporary file in .git', async () => {
+    const a = makeRepo(tempDir('tabula-f-'), cfg);
+    for (const path of ['docs/a.md', 'docs/blocked.md', 'docs/z.md']) {
+      await putFile(db, 'demo', { path, content: `${path}\n`, baseSha256: null }, 'test');
+    }
+    mkdirSync(join(a, 'docs', 'blocked.md', 'inner'), { recursive: true }); // a folder where the server has a file
+    const pull = await runCli(['pull'], { cwd: a, env: env() });
+    expect(pull.code).toBe(1);
+    expect(pull.stderr).toMatch(/^failed docs\/blocked\.md: a folder of that name is in the way$/m);
+    expect(pull.stderr).not.toMatch(/unexpected error/);
+    expect(pull.stdout).toMatch(/2 pulled, 0 conflicts, 1 failed/);
+    expect(readText(a, 'docs/a.md')).toBe('docs/a.md\n');
+    expect(readText(a, 'docs/z.md')).toBe('docs/z.md\n');
+    expect(readdirSync(join(a, '.git')).filter((n) => n.startsWith('tabula-pull-'))).toEqual([]);
+    const saved = JSON.parse(readFileSync(join(a, '.git', 'tabula-sync.json'), 'utf8'));
+    expect(Object.keys(saved.files).sort()).toEqual(['docs/a.md', 'docs/z.md']);
+  });
+
+  it('stops after the first download when the server goes away, instead of waiting once per file', async () => {
+    const a = makeRepo(tempDir('tabula-g-'), cfg);
+    for (const path of ['docs/a.md', 'docs/b.md', 'docs/c.md']) {
+      await putFile(db, 'demo', { path, content: path, baseSha256: null }, 'test');
+    }
+    const gone = await startProxy(server.url, (url) => (url.includes('/files/content') ? 'drop' : 0));
+    try {
+      const pull = await runCli(['pull'], { cwd: a, env: { ...env(), TABULA_URL: gone.url } });
+      expect(pull.code).toBe(1);
+      expect(pull.stderr).toMatch(/^failed docs\/a\.md: cannot reach .*; stopped, 3 files not pulled$/m);
+      expect(pull.stderr).not.toMatch(/docs\/b\.md/);
+      expect(pull.stdout).toMatch(/0 pulled, 0 conflicts, 3 failed/);
+    } finally {
+      gone.close();
+    }
+  });
+
+  it('skips paths that differ only in letter case, on the server or against a local file, in pull and push', async () => {
+    const a = makeRepo(tempDir('tabula-k-'), cfg, { 'docs/Notes.md': 'local notes\n' });
+    for (const path of ['docs/Plan.md', 'docs/plan.md', 'docs/notes.md', 'docs/ok.md']) {
+      await putFile(db, 'demo', { path, content: `server ${path}\n`, baseSha256: null }, 'test');
+    }
+    for (const args of [['pull'], ['pull', '--force']]) {
+      const pull = await runCli(args, { cwd: a, env: env() });
+      expect(pull.code, pull.stderr).toBe(0);
+      expect(pull.stderr).toMatch(/^skip docs\/Plan\.md: differs only in letter case from docs\/plan\.md/m);
+      expect(pull.stderr).toMatch(/^skip docs\/plan\.md: differs only in letter case from docs\/Plan\.md/m);
+      expect(pull.stderr).toMatch(/^skip docs\/notes\.md: differs only in letter case from docs\/Notes\.md/m);
+    }
+    expect(readText(a, 'docs/ok.md')).toBe('server docs/ok.md\n');
+    expect(readText(a, 'docs/Notes.md')).toBe('local notes\n');
+    expect(readdirSync(join(a, 'docs')).sort()).toEqual(['Notes.md', 'ok.md']);
+
+    const push = await runCli(['push', '--force'], { cwd: a, env: env() });
+    expect(push.code, push.stderr).toBe(0);
+    expect(push.stderr).toMatch(/^skip docs\/Notes\.md: differs only in letter case from docs\/notes\.md/m);
+    expect(push.stderr).toMatch(/^skip docs\/notes\.md: differs only in letter case from docs\/Notes\.md/m);
+    expect((await serverPaths()).sort()).toEqual(['docs/Plan.md', 'docs/notes.md', 'docs/ok.md', 'docs/plan.md']);
+    expect((await getFile(db, 'demo', 'docs/notes.md')).content).toBe('server docs/notes.md\n');
+  });
+
+  it('warns before uploading more than 100 new files, and still uploads them', async () => {
+    const files = Object.fromEntries(Array.from({ length: 101 }, (_, i) => [`docs/many/f${i}.md`, `f${i}`]));
+    const a = makeRepo(tempDir('tabula-b-'), cfg, files);
+    const push = await runCli(['push'], { cwd: a, env: env() });
+    expect(push.code, push.stderr).toBe(0);
+    expect(push.stderr).toMatch(/^warning: about to upload 101 new files to Tabula project demo/m);
+    expect(await serverPaths()).toHaveLength(101);
+    writeFile(a, 'docs/many/f101.md', 'one more');
+    const again = await runCli(['push'], { cwd: a, env: env() });
+    expect(again.code).toBe(0);
+    expect(again.stderr).not.toMatch(/about to upload/);
+  });
+
+  it('--force overwrites only conflicts, and deletions on either side never propagate', async () => {
+    const root = tempDir('tabula-d-');
+    const a = makeRepo(join(root, 'a'), cfg, { 'docs/plan.md': 'v1\n', 'docs/notes.md': 'n1\n' });
+    expect((await runCli(['push'], { cwd: a, env: env() })).code).toBe(0);
+    const b = join(root, 'b');
+    git(root, 'clone', '-q', a, b);
+    expect((await runCli(['pull'], { cwd: b, env: env() })).code).toBe(0);
+
+    // Newer on the server: push --force must not replace it with this clone's older copy.
+    writeFile(a, 'docs/plan.md', 'v2\n');
+    expect((await runCli(['push'], { cwd: a, env: env() })).code).toBe(0);
+    const forcedPush = await runCli(['push', '--force'], { cwd: b, env: env() });
+    expect(forcedPush.code, forcedPush.stderr).toBe(0);
+    expect((await getFile(db, 'demo', 'docs/plan.md')).content).toBe('v2\n');
+    expect(readText(b, 'docs/plan.md')).toBe('v1\n');
+
+    // A local edit of a file the server has not changed: pull --force keeps it (and still takes plan.md v2).
+    writeFile(b, 'docs/notes.md', 'n2 local\n');
+    const forcedPull = await runCli(['pull', '--force'], { cwd: b, env: env() });
+    expect(forcedPull.code, forcedPull.stderr).toBe(0);
+    expect(readText(b, 'docs/notes.md')).toBe('n2 local\n');
+    expect(readText(b, 'docs/plan.md')).toBe('v2\n');
+
+    // Deleted on the server: pull keeps the local file.
+    expect((await runCli(['rm', 'docs/plan.md'], { cwd: a, env: env() })).code).toBe(0);
+    expect((await runCli(['pull'], { cwd: b, env: env() })).code).toBe(0);
+    expect(readText(b, 'docs/plan.md')).toBe('v2\n');
+
+    // Deleted locally: push keeps the server copy.
+    rmSync(join(a, 'docs', 'notes.md'));
+    expect((await runCli(['push'], { cwd: a, env: env() })).code).toBe(0);
+    expect((await getFile(db, 'demo', 'docs/notes.md')).content).toBe('n1\n');
+  });
+});
+
 describe('tabula login, status, rm and errors', { timeout: 60_000 }, () => {
   it('logs in with a token from stdin, refuses a wrong token, and works without the environment afterwards', async () => {
     const a = makeRepo(tempDir('tabula-l-'), cfg, { 'docs/a.md': 'a' });
@@ -218,6 +326,11 @@ describe('tabula login, status, rm and errors', { timeout: 60_000 }, () => {
     expect(bad.code).toBe(1);
     expect(bad.stderr).toMatch(/rejected the token/);
     expect(existsSync(join(home, 'config.json'))).toBe(false);
+    // Without a terminal and without --token-stdin it reads stdin too, and says so.
+    const piped = await runCli(['login', server.url], { cwd: a, env: noCreds(), input: `${TEST_TOKEN}\n` });
+    expect(piped.code, piped.stderr).toBe(0);
+    expect(piped.stderr).toContain('Reading the token from stdin (end with Ctrl+D)');
+    rmSync(join(home, 'config.json'));
     const ok = await runCli(['login', `${server.url}/`, '--token-stdin'], { cwd: a, env: noCreds(), input: `${TEST_TOKEN}\n` });
     expect(ok.code, ok.stderr).toBe(0);
     expect(JSON.parse(readFileSync(join(home, 'config.json'), 'utf8'))).toEqual({ url: server.url, token: TEST_TOKEN });

@@ -41,8 +41,8 @@ describe('glob matching', () => {
 });
 
 describe('path safety', () => {
-  it.each(['.env', 'docs/.env', 'a/b/.env.local', '.env.production'])('%s is an env file', (p) => expect(cli.isEnvFile(p)).toBe(true));
-  it.each(['.envrc', 'env.md', 'docs/my.env'])('%s is not an env file', (p) => expect(cli.isEnvFile(p)).toBe(false));
+  it.each(['.env', 'docs/.env', 'a/b/.env.local', '.env.production', '.ENV', 'docs/.Env.local', '.env.', '.env '])('%j is an env file', (p) => expect(cli.isEnvFile(p)).toBe(true));
+  it.each(['.envrc', '.ENVRC', 'env.md', 'docs/my.env'])('%s is not an env file', (p) => expect(cli.isEnvFile(p)).toBe(false));
   it.each(['docs/a.md', 'docs/plány/stav s medzerou.md', 'docs/git~notes.md', 'git~x/a'])('%s is safe', (p) => expect(cli.isSafeRelPath(p)).toBe(true));
   it.each([
     '', '/etc/passwd', 'C:/x', 'a\\b', '../a', 'a/../b', 'a//b', './a', '.git/hooks/pre-commit', 'node_modules/x',

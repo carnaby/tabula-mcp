@@ -1,5 +1,6 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -73,4 +74,36 @@ export function makeRepo(dir: string, tabulaJson: object, files: Record<string, 
   git(dir, 'commit', '-q', '-m', 'init');
   for (const [path, content] of Object.entries(files)) writeFile(dir, path, content);
   return dir;
+}
+
+/**
+ * A proxy in front of the test server for the CLI's GET requests. `delay` returns how many ms to hold a request back,
+ * or 'drop' to close the connection without an answer.
+ */
+export async function startProxy(
+  target: string,
+  delay: (url: string) => number | 'drop',
+): Promise<{ url: string; close: () => void }> {
+  const proxy = createServer((req, res) => {
+    void (async () => {
+      const d = delay(req.url ?? '');
+      if (d === 'drop') return void res.destroy();
+      if (d > 0) await new Promise((r) => setTimeout(r, d));
+      try {
+        const r = await fetch(target + req.url, { method: req.method, headers: { authorization: String(req.headers.authorization) } });
+        res.writeHead(r.status, { 'content-type': r.headers.get('content-type') ?? 'application/json' });
+        res.end(Buffer.from(await r.arrayBuffer()));
+      } catch {
+        res.destroy();
+      }
+    })();
+  });
+  await new Promise<void>((r) => proxy.listen(0, '127.0.0.1', r));
+  return {
+    url: `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`,
+    close: () => {
+      proxy.closeAllConnections();
+      proxy.close();
+    },
+  };
 }

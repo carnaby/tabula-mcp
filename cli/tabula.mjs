@@ -5,7 +5,8 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
-  chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync,
+  chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync,
+  writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
@@ -50,9 +51,12 @@ export function matchesAny(path, patterns) {
   });
 }
 
-/** .env and .env.* in any folder are never uploaded, whatever the patterns say. */
+/**
+ * .env and .env.* in any folder are never uploaded, whatever the patterns say. Case-insensitive and without trailing
+ * dots and spaces, like the server (".ENV" and ".env " are the same file on Windows); .envrc stays allowed.
+ */
 export function isEnvFile(path) {
-  const name = path.slice(path.lastIndexOf('/') + 1);
+  const name = path.slice(path.lastIndexOf('/') + 1).toLowerCase().replace(/[. ]+$/, '');
   return name === '.env' || name.startsWith('.env.');
 }
 
@@ -231,28 +235,64 @@ function checkRealLocation(repo, dir, path) {
   let existing = dir;
   while (!existsSync(existing)) existing = dirname(existing);
   const real = realKey(existing);
-  if (!isWithin(real, realKey(repo.root))) throw new CliError(`refusing to write outside the repository: ${path}`);
+  if (!isWithin(real, realKey(repo.root))) throw refusal(`refusing to write outside the repository: ${path}`);
   for (const gitDir of [repo.gitDir, repo.commonDir ?? repo.gitDir]) {
-    if (isWithin(real, realKey(gitDir))) throw new CliError(`refusing to write inside the git directory: ${path}`);
+    if (isWithin(real, realKey(gitDir))) throw refusal(`refusing to write inside the git directory: ${path}`);
   }
 }
 
-/** Write through a temporary file in the git directory and rename, so an interrupted pull never leaves half a file. */
+/** A file-system error as one readable line; `abs` is the file that was being written. */
+function describeFsError(e, abs) {
+  let folder = false;
+  try {
+    folder = statSync(abs).isDirectory();
+  } catch {
+    // nothing there
+  }
+  if (folder) return 'a folder of that name is in the way';
+  const why = {
+    ENOTDIR: 'a file is in the way of one of its folders',
+    EEXIST: 'a file is in the way of one of its folders',
+    EPERM: 'the file is locked or read-only (open in another program?)',
+    EBUSY: 'the file is locked by another program',
+    EACCES: 'permission denied',
+    ENOSPC: 'the disk is full',
+  }[e?.code];
+  return why ? `${why} (${e.code})` : String(e?.message ?? e);
+}
+
+/** A path this clone will not write on purpose (unsafe, outside the repository): pull skips it, it is no failure. */
+const refusal = (message) => Object.assign(new CliError(message), { refusal: true });
+
+/**
+ * Write through a temporary file in the git directory and rename, so an interrupted pull never leaves half a file.
+ * Every failure is a CliError, and the temporary file never outlives the call.
+ */
 function writeAtomic(repo, path, bytes) {
-  if (!isSafeRelPath(path) || !withinPathLimits(path)) throw new CliError(`refusing to write the unsafe path ${path}`);
+  if (!isSafeRelPath(path) || !withinPathLimits(path)) throw refusal(`refusing to write the unsafe path ${path}`);
   const root = resolve(repo.root);
   const abs = resolve(root, ...path.split('/'));
-  if (!abs.startsWith(root + sep)) throw new CliError(`refusing to write outside the repository: ${path}`);
-  checkRealLocation(repo, dirname(abs), path);
-  mkdirSync(dirname(abs), { recursive: true });
+  if (!abs.startsWith(root + sep)) throw refusal(`refusing to write outside the repository: ${path}`);
   const tmp = join(repo.gitDir, `tabula-pull-${process.pid}.tmp`);
-  writeFileSync(tmp, bytes);
   try {
-    renameSync(tmp, abs);
+    checkRealLocation(repo, dirname(abs), path);
+    mkdirSync(dirname(abs), { recursive: true });
+    writeFileSync(tmp, bytes);
+    try {
+      renameSync(tmp, abs);
+    } catch (e) {
+      if (e.code !== 'EXDEV') throw e;
+      writeFileSync(abs, bytes);
+    }
   } catch (e) {
-    if (e.code !== 'EXDEV') throw e;
-    writeFileSync(abs, bytes);
-    rmSync(tmp, { force: true });
+    if (e instanceof CliError) throw e;
+    throw new CliError(describeFsError(e, abs));
+  } finally {
+    try {
+      rmSync(tmp, { force: true }); // already gone after a successful rename
+    } catch {
+      // a locked temporary file is the next run's to replace; never hide the real outcome behind it
+    }
   }
 }
 
@@ -279,7 +319,7 @@ function makeApi(conn, deadline) {
     } catch (e) {
       if (e instanceof CliError) throw e;
       const why = e.name === 'TimeoutError' || e.name === 'AbortError' ? 'timed out' : (e.cause?.code ?? e.message);
-      throw new CliError(`cannot reach ${conn.url}: ${why}`);
+      throw Object.assign(new CliError(`cannot reach ${conn.url}: ${why}`), { unreachable: true });
     }
   };
 }
@@ -307,6 +347,38 @@ const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const CONTROL_CHARS = /[\x00-\x1f\x7f]/;
 const MAX_PATH_CHARS = 512;
 const withinPathLimits = (path) => !CONTROL_CHARS.test(path) && [...path].length <= MAX_PATH_CHARS;
+
+const foldCase = (path) => path.toLowerCase();
+
+/**
+ * The spelling on disk when `path` exists here only in another letter case (a file or one of its folders), else null.
+ * `listings` caches one directory listing per folder for the whole scan.
+ */
+function caseTwinOnDisk(root, path, listings) {
+  const parts = path.split('/');
+  let dir = root;
+  for (let i = 0; i < parts.length; i++) {
+    let listing = listings.get(dir);
+    if (!listing) {
+      listing = { exact: new Set(), folded: new Map() };
+      try {
+        for (const n of readdirSync(dir)) {
+          listing.exact.add(n);
+          listing.folded.set(foldCase(n), n);
+        }
+      } catch {
+        // the folder does not exist (yet)
+      }
+      listings.set(dir, listing);
+    }
+    if (!listing.exact.has(parts[i])) {
+      const twin = listing.folded.get(foldCase(parts[i]));
+      return twin === undefined ? null : [...parts.slice(0, i), twin, ...parts.slice(i + 1)].join('/');
+    }
+    dir = join(dir, parts[i]);
+  }
+  return null;
+}
 
 /**
  * Every path this run cares about, classified: local candidates (untracked files matching "sync", only when
@@ -347,7 +419,10 @@ function scan(repo, state, server, { candidates }) {
       entries.set(path, { path, candidate: true, local: sha256(bytes), text: check.text });
     }
   }
-  const tracked = new Set(nulList(git(repo.root, ['ls-files', '-z', '--cached'], gitTimeout(repo))));
+  const tracked = new Map(
+    nulList(git(repo.root, ['ls-files', '-z', '--cached'], gitTimeout(repo))).map((p) => [foldCase(p), p]),
+  );
+  const fromServer = [];
   for (const f of server) {
     if (entries.has(f.path)) continue;
     // Checked before anything touches the disk: pull writes only paths that pass the same rules as push.
@@ -360,12 +435,40 @@ function scan(repo, state, server, { candidates }) {
       unmatched.push(f.path);
       continue;
     }
-    if (tracked.has(f.path)) {
-      issues.push({ path: f.path, reason: 'tracked by git here; the server copy is ignored' });
+    const trackedAs = tracked.get(foldCase(f.path));
+    if (trackedAs !== undefined) {
+      const reason = trackedAs === f.path ? 'tracked by git here' : `differs only in letter case from the tracked ${trackedAs}`;
+      issues.push({ path: f.path, reason: `${reason}; the server copy is ignored` });
       continue;
     }
-    const bytes = readLocal(repo.root, f.path);
-    entries.set(f.path, { path: f.path, candidate: false, local: bytes ? sha256(bytes) : null });
+    fromServer.push(f.path);
+  }
+  // Paths that differ only in letter case are one file on Windows and macOS: sync neither, so one never overwrites the
+  // other. Pairs among the server's and this clone's candidates, then server paths against what is on disk.
+  const twins = new Map();
+  const byFold = new Map();
+  for (const p of [...entries.keys(), ...fromServer]) {
+    const other = byFold.get(foldCase(p));
+    if (other === undefined) byFold.set(foldCase(p), p);
+    else {
+      if (!twins.has(other)) twins.set(other, p);
+      twins.set(p, other);
+    }
+  }
+  const listings = new Map();
+  for (const p of fromServer) {
+    if (twins.has(p)) continue;
+    const onDisk = caseTwinOnDisk(repo.root, p, listings);
+    if (onDisk) twins.set(p, onDisk);
+  }
+  for (const [path, other] of twins) {
+    issues.push({ path, reason: `differs only in letter case from ${other}; neither is synced, so one never overwrites the other` });
+    entries.delete(path);
+  }
+  for (const path of fromServer) {
+    if (twins.has(path)) continue;
+    const bytes = readLocal(repo.root, path);
+    entries.set(path, { path, candidate: false, local: bytes ? sha256(bytes) : null });
   }
   const onServer = new Map(server.map((f) => [f.path, f.sha256]));
   const list = [...entries.values()].map((e) => {
@@ -399,11 +502,19 @@ async function status(repo, api, conn) {
   return entries.some((e) => e.status === 'conflict') ? 2 : 0;
 }
 
+/** More new files than this in one push get a warning first. */
+const LARGE_PUSH = 100;
+
 async function push(repo, api, { force }) {
   const state = loadSyncState(repo);
   const server = await serverFiles(api, repo);
   const { entries, issues } = scan(repo, state, server, { candidates: true });
   for (const i of issues) err(`skip ${i.path}: ${i.reason}`);
+  // A broad "sync" pattern can sweep in far more than intended; say so before it lands on the server.
+  const fresh = entries.filter((e) => e.candidate && e.status === 'new').length;
+  if (fresh > LARGE_PUSH) {
+    err(`warning: about to upload ${fresh} new files to Tabula project ${repo.config.project}; if that is more than intended, narrow "sync" in .tabula.json (tabula status lists them) and remove the extra ones with tabula rm`);
+  }
   const onServer = new Set(server.map((f) => f.path));
   let pushed = 0;
   let conflicts = 0;
@@ -451,12 +562,18 @@ async function push(repo, api, { force }) {
   return failed ? 1 : conflicts ? 2 : 0;
 }
 
+/**
+ * Downloads missing and newer files, state files first. One file that cannot be fetched or written is reported and
+ * skipped; the rest still come. In hook mode the loop stops at the deadline and keeps what it restored.
+ */
 async function pull(repo, api, { force, hook }) {
   const state = loadSyncState(repo);
   const server = await serverFiles(api, repo);
   const { entries, issues } = scan(repo, state, server, { candidates: false });
   if (!hook) for (const i of issues) err(`skip ${i.path}: ${i.reason}`);
-  let pulled = 0;
+  const flaggedState = new Set(server.filter((f) => f.isState).map((f) => f.path));
+  const isState = (e) => flaggedState.has(e.path) || matchesAny(e.path, repo.config.state);
+  const todo = [];
   let conflicts = 0;
   for (const e of entries) {
     if (e.server === null) continue;
@@ -464,36 +581,69 @@ async function pull(repo, api, { force, hook }) {
       state.files[e.path] = e.server;
       continue;
     }
-    const take = e.status === 'missing-locally' || e.status === 'newer-on-server' || (force && e.status === 'conflict');
-    if (!take) {
-      if (e.status === 'conflict') {
-        conflicts++;
-        if (!hook) err(`conflict ${e.path}: changed here and on the server — merge by hand, or tabula pull --force to take the server copy`);
-      }
+    if (e.status === 'missing-locally' || e.status === 'newer-on-server' || (force && e.status === 'conflict')) {
+      todo.push(e);
       continue;
     }
-    const f = ok(await api('GET', `${projectPath(repo)}/files/content?path=${encodeURIComponent(e.path)}`), `reading ${e.path}`);
-    const bytes = Buffer.from(f.content, 'utf8');
+    if (e.status === 'conflict') {
+      conflicts++;
+      if (!hook) err(`conflict ${e.path}: changed here and on the server — merge by hand, or tabula pull --force to take the server copy`);
+    }
+  }
+  // State first: when the hook runs out of time, the handoff state is what the session needs most. The sort is stable,
+  // so the rest stays in path order.
+  todo.sort((a, b) => Number(isState(b)) - Number(isState(a)));
+  let pulled = 0;
+  let failed = 0;
+  let timedOut = false;
+  for (const [index, e] of todo.entries()) {
+    if (hook && Date.now() >= repo.deadline) {
+      timedOut = true;
+      break;
+    }
     try {
+      const f = ok(await api('GET', `${projectPath(repo)}/files/content?path=${encodeURIComponent(e.path)}`), `reading ${e.path}`);
+      const bytes = Buffer.from(f.content, 'utf8');
       writeAtomic(repo, e.path, bytes);
+      state.files[e.path] = sha256(bytes);
+      pulled++;
+      if (!hook) out(`pulled ${e.path}`);
     } catch (error) {
-      if (!(error instanceof CliError)) throw error;
-      if (!hook) err(`skip ${e.path}: ${error.message}`);
-      continue;
+      if (hook && Date.now() >= repo.deadline) {
+        timedOut = true; // the download was cut off by the deadline, not a failure of this file
+        break;
+      }
+      const message = String(error?.message ?? error).split('\n')[0];
+      if (error?.unreachable) {
+        // The server is gone: waiting out the same timeout once per remaining file would only add minutes.
+        const left = todo.length - index;
+        failed += left;
+        if (!hook) err(`failed ${e.path}: ${message}; stopped, ${left} file${left === 1 ? '' : 's'} not pulled`);
+        break;
+      }
+      if (error?.refusal) {
+        if (!hook) err(`skip ${e.path}: ${message}`);
+      } else {
+        failed++;
+        if (!hook) err(`failed ${e.path}: ${message}`);
+      }
     }
-    state.files[e.path] = sha256(bytes);
-    pulled++;
-    if (!hook) out(`pulled ${e.path}`);
   }
   saveSyncState(repo, state);
   if (hook) {
-    if (pulled || conflicts) {
-      out(`tabula: restored ${pulled} file${pulled === 1 ? '' : 's'} from Tabula project ${repo.config.project}${conflicts ? `; ${conflicts} in conflict — run tabula status` : ''}`);
-    }
+    const from = `from Tabula project ${repo.config.project}`;
+    const restored = timedOut
+      ? `restored ${pulled} of ${todo.length} files ${from}; run tabula pull for the rest`
+      : `restored ${pulled} file${pulled === 1 ? '' : 's'} ${from}`;
+    const notes = [
+      ...(failed ? [`${failed} could not be restored — run tabula pull`] : []),
+      ...(conflicts ? [`${conflicts} in conflict — run tabula status`] : []),
+    ];
+    if (pulled || timedOut || notes.length) out(`tabula: ${[restored, ...notes].join('; ')}`);
   } else {
-    out(`tabula pull ${repo.config.project}: ${pulled} pulled, ${conflicts} conflicts`);
+    out(`tabula pull ${repo.config.project}: ${pulled} pulled, ${conflicts} conflicts${failed ? `, ${failed} failed` : ''}`);
   }
-  return conflicts ? 2 : 0;
+  return failed ? 1 : conflicts ? 2 : 0;
 }
 
 async function rm(repo, api, arg) {
@@ -548,6 +698,8 @@ async function login(args, flags) {
   const url = (args[0] ?? '').replace(/\/+$/, '');
   if (!/^https?:\/\/[^/]+/.test(url)) throw new CliError('usage: tabula login <url>, e.g. tabula login https://tabula.example.com');
   const fromStdin = flags.has('--token-stdin') || !process.stdin.isTTY;
+  // Without a terminal and without the flag, a silent wait for input would look like a hang.
+  if (!flags.has('--token-stdin') && !process.stdin.isTTY) err('Reading the token from stdin (end with Ctrl+D)');
   const token = (fromStdin ? await readStdin() : await promptHidden('Tabula token: ')).trim();
   if (!token) throw new CliError('no token given');
   ok(await makeApi({ url, token })('GET', '/api/projects'), 'checking the token');
@@ -567,8 +719,11 @@ async function login(args, flags) {
 
 // ------------------------------------------------------------------ hook, install, update
 
-/** The hook stops working at this point so a session start never waits 5 s (Node start-up included). */
-const HOOK_DEADLINE_MS = 3500;
+/**
+ * The hook stops working at this point so a session start never waits 5 s (Node start-up included).
+ * TABULA_HOOK_DEADLINE_MS exists for the tests and can only shorten it.
+ */
+const HOOK_DEADLINE_MS = Math.min(3500, Number(process.env.TABULA_HOOK_DEADLINE_MS) || 3500);
 
 /** SessionStart mode: never fails the session and never holds it up for long. */
 async function runHook() {
@@ -612,7 +767,7 @@ function install() {
   out(
     process.platform === 'win32'
       ? `  PowerShell: [Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path', 'User') + ';${bin}', 'User')`
-      : `  echo 'export PATH="${bin}:$PATH"' >> ~/.profile`,
+      : `  echo 'export PATH="${bin}:$PATH"' >> ~/.profile\n  (zsh does not read ~/.profile: append the same line to ~/.zprofile or ~/.zshrc instead)`,
   );
   out('Then log in: tabula login <url>');
   out('SessionStart hook for ~/.claude/settings.json (merge it into the hooks you already have):');

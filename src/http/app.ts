@@ -7,6 +7,7 @@ import type { Db } from '../db/client.js';
 import { DomainError } from '../domain/errors.js';
 import { registerMcpRoutes } from '../mcp/routes.js';
 import { apiRoutes } from './api.js';
+import { registerCliRoutes } from './cli.js';
 
 // The secret in the /mcp/<secret> path must never reach the logs.
 const maskUrl = (url: string) => url.replace(/^\/mcp\/[^/?#]+/, '/mcp/***');
@@ -50,6 +51,7 @@ export async function buildApp(deps: {
   });
 
   app.get('/healthz', async () => ({ ok: true }));
+  registerCliRoutes(app);
   registerMcpRoutes(app, deps);
   await app.register(apiRoutes, { prefix: '/api', db: deps.db, config: deps.config });
 

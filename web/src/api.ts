@@ -72,7 +72,7 @@ export const api = {
   projects: (signal?: S) => request<Project[]>('GET', '/projects', undefined, signal),
   createProject: (p: { id: string; name: string; description?: string }) => request<Project>('POST', '/projects', p),
   updateProject: (id: string, p: { name?: string; description?: string }) => request<Project>('PATCH', `/projects/${encodeURIComponent(id)}`, p),
-  snippet: (id: string, signal?: S) => request<{ text: string }>('GET', `/projects/${encodeURIComponent(id)}/snippet`, undefined, signal),
+  snippet: (id: string, signal?: S) => request<{ text: string; tabulaJson: string }>('GET', `/projects/${encodeURIComponent(id)}/snippet`, undefined, signal),
 
   memories: (f: { project?: string; kind?: MemoryKind | ''; status?: string; source?: Source | ''; q?: string } & Paging<MemorySort>, signal?: S) =>
     request<Page<Memory>>('GET', `/memories${qs(f)}`, undefined, signal),

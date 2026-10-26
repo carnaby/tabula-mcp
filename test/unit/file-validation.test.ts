@@ -14,7 +14,7 @@ const thrown = (fn: () => unknown): unknown => {
 describe('validateFilePath', () => {
   it.each([
     'docs/a.md', 'docs/handoff/2026-10-26 stav.md', '.superpowers/sdd/x/progress.md', 'a', 'docs/plány/čítaj.md',
-    'docs/.envrc', 'env.md',
+    'docs/.envrc', 'env.md', 'docs/git~notes.md', 'git~x/a',
   ])('accepts %s', (p) => expect(validateFilePath(p)).toBe(p));
 
   it.each([
@@ -22,6 +22,8 @@ describe('validateFilePath', () => {
     ['../a.md', /segments/], ['docs/../a.md', /segments/], ['docs//a.md', /segments/], ['docs/./a.md', /segments/],
     ['docs/', /segments/], ['.git/config', /segments/], ['.GIT/hooks/x', /segments/], ['.git./config', /segments/], ['.git /x', /segments/],
     ['Node_Modules/x', /segments/], ['node_modules/x/a.md', /segments/],
+    ['GIT~1/hooks/x', /segments/], ['git~2/x', /segments/], ['docs/Git~12./x', /segments/],
+    ['.git::$INDEX_ALLOCATION/x', /':'/], ['a:b/c', /relative/], ['docs/a:b.md', /':'/],
     ['.env', /\.env files/], ['docs/.env.local', /\.env files/],
     [`docs/a${String.fromCharCode(10)}b.md`, /control characters/], ['x'.repeat(513), /limit is 512/],
   ])('rejects %j', (p, msg) => expect(() => validateFilePath(p)).toThrow(msg));

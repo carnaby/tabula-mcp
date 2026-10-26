@@ -4,7 +4,7 @@
 // Exit codes: 0 OK, 1 error, 2 finished with conflicts.
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -59,12 +59,16 @@ const BLOCKED_SEGMENTS = new Set(['', '.', '..', '.git', 'node_modules']);
 /**
  * A relative POSIX path that stays inside the repository and outside .git and node_modules.
  * Segments are compared the way the server does (src/domain/files.ts): case-insensitive and without trailing
- * dots and spaces, because on Windows and macOS ".GIT", ".git." and ".git " resolve into the real .git.
+ * dots and spaces, because on Windows and macOS ".GIT", ".git." and ".git " resolve into the real .git. Windows
+ * 8.3 short names ("GIT~1") and NTFS stream syntax (".git::$INDEX_ALLOCATION", any ":") can reach it as well.
  */
 export function isSafeRelPath(path) {
   if (typeof path !== 'string' || !path || path.includes('\\') || path.includes(String.fromCharCode(0))) return false;
-  if (path.startsWith('/') || /^[A-Za-z]:/.test(path)) return false;
-  return !path.split('/').some((s) => BLOCKED_SEGMENTS.has(s.toLowerCase().replace(/[. ]+$/, '')));
+  if (path.startsWith('/') || path.includes(':')) return false;
+  return !path.split('/').some((segment) => {
+    const s = segment.toLowerCase().replace(/[. ]+$/, '');
+    return BLOCKED_SEGMENTS.has(s) || /^git~\d+$/.test(s);
+  });
 }
 
 /**
@@ -145,12 +149,15 @@ const nulList = (s) => s.split(String.fromCharCode(0)).filter(Boolean);
 
 /** The repository around the current folder and its .tabula.json; null outside a git repository. */
 function loadRepo(timeout) {
-  const r = spawnSync('git', ['rev-parse', '--show-toplevel', '--absolute-git-dir'], { timeout, windowsHide: true });
+  const args = ['rev-parse', '--show-toplevel', '--absolute-git-dir', '--git-common-dir'];
+  const r = spawnSync('git', args, { timeout, windowsHide: true });
   if (r.error || r.status !== 0) return null;
-  const [top, gitDir] = r.stdout.toString('utf8').trim().split(/\r?\n/);
+  const [top, gitDir, common] = r.stdout.toString('utf8').trim().split(/\r?\n/);
   const root = realpathSync(top);
+  // --git-common-dir may be relative to the current folder; in a linked worktree it is the main repository's .git.
+  const commonDir = resolve(common);
   const file = join(root, '.tabula.json');
-  if (!existsSync(file)) return { root, gitDir, config: null };
+  if (!existsSync(file)) return { root, gitDir, commonDir, config: null };
   let raw;
   try {
     raw = JSON.parse(readFileSync(file, 'utf8'));
@@ -171,7 +178,7 @@ function loadRepo(timeout) {
   if (typeof project !== 'string' || !/^[a-z0-9][a-z0-9-]{0,39}$/.test(project)) {
     throw new CliError(`"${project}" is not a Tabula project slug; set "project" in .tabula.json`);
   }
-  return { root, gitDir, config: { project, sync, state: list('state') ?? DEFAULT_STATE } };
+  return { root, gitDir, commonDir, config: { project, sync, state: list('state') ?? DEFAULT_STATE } };
 }
 
 function openRepo() {
@@ -206,12 +213,35 @@ function readLocal(root, path) {
   }
 }
 
+/** fs.realpathSync.native, compared case-insensitively on Windows; it also expands 8.3 short names such as GIT~1. */
+function realKey(p) {
+  const real = realpathSync.native(p);
+  return process.platform === 'win32' ? real.toLowerCase() : real;
+}
+
+const isWithin = (p, dir) => p === dir || p.startsWith(dir.endsWith(sep) ? dir : dir + sep);
+
+/**
+ * The lexical check cannot see links, junctions or short names: resolve the deepest folder that already exists and
+ * require it to be inside the repository and outside its git directories.
+ */
+function checkRealLocation(repo, dir, path) {
+  let existing = dir;
+  while (!existsSync(existing)) existing = dirname(existing);
+  const real = realKey(existing);
+  if (!isWithin(real, realKey(repo.root))) throw new CliError(`refusing to write outside the repository: ${path}`);
+  for (const gitDir of [repo.gitDir, repo.commonDir ?? repo.gitDir]) {
+    if (isWithin(real, realKey(gitDir))) throw new CliError(`refusing to write inside the git directory: ${path}`);
+  }
+}
+
 /** Write through a temporary file in the git directory and rename, so an interrupted pull never leaves half a file. */
 function writeAtomic(repo, path, bytes) {
   if (!isSafeRelPath(path) || !withinPathLimits(path)) throw new CliError(`refusing to write the unsafe path ${path}`);
   const root = resolve(repo.root);
   const abs = resolve(root, ...path.split('/'));
   if (!abs.startsWith(root + sep)) throw new CliError(`refusing to write outside the repository: ${path}`);
+  checkRealLocation(repo, dirname(abs), path);
   mkdirSync(dirname(abs), { recursive: true });
   const tmp = join(repo.gitDir, `tabula-pull-${process.pid}.tmp`);
   writeFileSync(tmp, bytes);
@@ -283,14 +313,20 @@ const withinPathLimits = (path) => !CONTROL_CHARS.test(path) && [...path].length
 function scan(repo, state, server, { candidates }) {
   const issues = [];
   const entries = new Map();
+  const unmatched = [];
   if (candidates) {
     const untracked = new Set([
       ...nulList(git(repo.root, ['ls-files', '-z', '--others', '--exclude-standard'], gitTimeout(repo))),
       ...nulList(git(repo.root, ['ls-files', '-z', '--others', '--ignored', '--exclude-standard'], gitTimeout(repo))),
     ]);
     for (const path of untracked) {
-      if (!matchesAny(path, repo.config.sync) || !isSafeRelPath(path)) continue;
-      // A warning, not a failure: one odd file name must not make every push exit 1.
+      if (!matchesAny(path, repo.config.sync)) continue;
+      // Warnings, not failures: one odd file name must not make every push exit 1.
+      if (path.includes(':')) {
+        issues.push({ path, reason: "path not accepted by Tabula (contains ':')" });
+        continue;
+      }
+      if (!isSafeRelPath(path)) continue;
       if (!withinPathLimits(path)) {
         issues.push({ path, reason: `path not accepted by Tabula (control characters or over ${MAX_PATH_CHARS} characters)` });
         continue;
@@ -317,6 +353,11 @@ function scan(repo, state, server, { candidates }) {
       issues.push({ path: f.path, reason: 'unsafe path on the server, ignored' });
       continue;
     }
+    // Only what this clone's .tabula.json asks for: a token holder must not plant .envrc, .vscode/tasks.json, hooks…
+    if (!matchesAny(f.path, repo.config.sync)) {
+      unmatched.push(f.path);
+      continue;
+    }
     if (tracked.has(f.path)) {
       issues.push({ path: f.path, reason: 'tracked by git here; the server copy is ignored' });
       continue;
@@ -331,7 +372,7 @@ function scan(repo, state, server, { candidates }) {
     return { ...e, base, server: remote, status: classify({ local: e.local, base, server: remote }) };
   });
   list.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-  return { entries: list, issues };
+  return { entries: list, issues, unmatched };
 }
 
 const LABELS = {
@@ -346,11 +387,12 @@ const LABELS = {
 async function status(repo, api, conn) {
   const state = loadSyncState(repo);
   const server = await serverFiles(api, repo);
-  const { entries, issues } = scan(repo, state, server, { candidates: true });
+  const { entries, issues, unmatched } = scan(repo, state, server, { candidates: true });
   out(`Tabula project ${repo.config.project} at ${conn.url}`);
   const shown = entries.filter((e) => LABELS[e.status]);
   for (const e of shown) out(`  ${LABELS[e.status].padEnd(18)}${e.path}`);
   for (const i of issues) out(`  ${'skipped'.padEnd(18)}${i.path} (${i.reason})`);
+  for (const p of unmatched) out(`  ${'not matched'.padEnd(18)}${p} (on server, not matched by sync)`);
   if (!shown.length && !issues.length) out(`  everything in sync (${entries.length} files)`);
   return entries.some((e) => e.status === 'conflict') ? 2 : 0;
 }
@@ -430,7 +472,13 @@ async function pull(repo, api, { force, hook }) {
     }
     const f = ok(await api('GET', `${projectPath(repo)}/files/content?path=${encodeURIComponent(e.path)}`), `reading ${e.path}`);
     const bytes = Buffer.from(f.content, 'utf8');
-    writeAtomic(repo, e.path, bytes);
+    try {
+      writeAtomic(repo, e.path, bytes);
+    } catch (error) {
+      if (!(error instanceof CliError)) throw error;
+      if (!hook) err(`skip ${e.path}: ${error.message}`);
+      continue;
+    }
     state.files[e.path] = sha256(bytes);
     pulled++;
     if (!hook) out(`pulled ${e.path}`);
@@ -504,12 +552,13 @@ async function login(args, flags) {
   const home = tabulaHome();
   mkdirSync(home, { recursive: true, mode: 0o700 });
   const file = join(home, 'config.json');
-  writeFileSync(file, `${JSON.stringify({ url, token }, null, 2)}\n`, { mode: 0o600 });
-  try {
-    chmodSync(file, 0o600);
-  } catch {
-    // Windows has no POSIX modes; the user profile folder is private already.
-  }
+  // A fresh file created with 0600 and renamed over the old one: the token is never readable by others, not even
+  // for a moment when an older config.json had wider permissions (writeFileSync's mode applies only to new files).
+  const tmp = `${file}.${process.pid}.tmp`;
+  rmSync(tmp, { force: true });
+  // Windows ignores the mode; the user profile folder is private already.
+  writeFileSync(tmp, `${JSON.stringify({ url, token }, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
+  renameSync(tmp, file);
   out(`Logged in to ${url}. Saved ${file}`);
   return 0;
 }

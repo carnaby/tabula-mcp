@@ -13,6 +13,15 @@ export const KEEP_FILE_REVISIONS = 20;
 const BLOCKED_SEGMENTS = new Set(['', '.', '..', '.git', 'node_modules']);
 const CONTROL = /[\x00-\x1f\x7f]/;
 
+/**
+ * Case-insensitive and ignoring trailing dots/spaces: on Windows and macOS these resolve into the real directory.
+ * "git~1" and the like are Windows 8.3 short names, which can point at .git as well.
+ */
+const isBlockedSegment = (segment: string): boolean => {
+  const s = segment.toLowerCase().replace(/[. ]+$/, '');
+  return BLOCKED_SEGMENTS.has(s) || /^git~\d+$/.test(s);
+};
+
 export const isEnvFileName = (name: string): boolean => name === '.env' || name.startsWith('.env.');
 
 export function validateFilePath(raw: string): string {
@@ -22,10 +31,11 @@ export function validateFilePath(raw: string): string {
   if (CONTROL.test(raw)) throw badRequest('path must not contain control characters');
   if (raw.includes('\\')) throw badRequest('path must use forward slashes (a POSIX path relative to the repository root)');
   if (raw.startsWith('/') || /^[A-Za-z]:/.test(raw)) throw badRequest('path must be relative to the repository root');
+  // On Windows a colon starts an NTFS stream (".git::$INDEX_ALLOCATION" is the .git directory itself).
+  if (raw.includes(':')) throw badRequest("path must not contain ':'");
   const segments = raw.split('/');
-  // Case-insensitive and ignoring trailing dots/spaces: on Windows and macOS these resolve into the real directory.
-  if (segments.some((s) => BLOCKED_SEGMENTS.has(s.toLowerCase().replace(/[. ]+$/, '')))) {
-    throw badRequest('path must not contain empty, ".", "..", ".git" or "node_modules" segments');
+  if (segments.some(isBlockedSegment)) {
+    throw badRequest('path must not contain empty, ".", "..", ".git", "git~N" or "node_modules" segments');
   }
   if (isEnvFileName(segments[segments.length - 1]!)) throw badRequest('.env files are never stored in Tabula');
   return raw;

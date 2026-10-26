@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, symlinkSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { projectFiles } from '../../src/db/schema.js';
@@ -120,9 +120,11 @@ describe('tabula push and pull', { timeout: 60_000 }, () => {
     if (process.platform !== 'win32') expect(r.stderr).toContain(`skip ${tab}: ${reason}`);
   });
 
-  it('never writes a server path that is unsafe on disk (.GIT/hooks, control characters)', async () => {
-    const a = makeRepo(tempDir('tabula-u-'), cfg);
+  it('never writes a server path that is unsafe on disk (.GIT/hooks, the 8.3 name GIT~1, control characters)', async () => {
+    // "**" matches every path, so the safety check (not the sync filter) is what keeps these off the disk.
+    const a = makeRepo(tempDir('tabula-u-'), { project: 'demo', sync: ['**'] });
     const hook = '.GIT/hooks/post-checkout';
+    const shortName = 'GIT~1/hooks/post-checkout'; // on Windows, the 8.3 short name of .git
     const tab = `docs/tab${String.fromCharCode(9)}name.md`;
     const script = '#!/bin/sh\necho owned\n';
     // The server refuses such paths itself, so they can only come from a damaged or older database.
@@ -132,8 +134,14 @@ describe('tabula push and pull', { timeout: 60_000 }, () => {
       body: JSON.stringify({ path: hook, content: script, base_sha256: null }),
     });
     expect(put.status).toBe(400);
+    const putShort = await fetch(`${server.url}/api/projects/demo/files`, {
+      method: 'PUT',
+      headers: { authorization: `Bearer ${TEST_TOKEN}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ path: shortName, content: script, base_sha256: null }),
+    });
+    expect(putShort.status).toBe(400);
     const sha = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
-    await db.insert(projectFiles).values([hook, tab].map((path) => ({
+    await db.insert(projectFiles).values([hook, shortName, tab].map((path) => ({
       projectId: 'demo', path, content: script, sha256: sha(script), size: Buffer.byteLength(script), updatedBy: 'test',
     })));
     await putFile(db, 'demo', { path: 'docs/ok.md', content: 'ok', baseSha256: null }, 'test');
@@ -141,11 +149,46 @@ describe('tabula push and pull', { timeout: 60_000 }, () => {
     const pull = await runCli(['pull'], { cwd: a, env: env() });
     expect(pull.code, pull.stderr).toBe(0);
     expect(pull.stderr).toContain(`skip ${hook}: unsafe path on the server, ignored`);
+    expect(pull.stderr).toContain(`skip ${shortName}: unsafe path on the server, ignored`);
     expect(pull.stderr).toContain(`skip ${tab}: unsafe path on the server, ignored`);
     expect(readText(a, 'docs/ok.md')).toBe('ok');
     expect(existsSync(join(a, '.git', 'hooks', 'post-checkout'))).toBe(false);
     expect(existsSync(join(a, '.GIT', 'hooks', 'post-checkout'))).toBe(false);
+    expect(existsSync(join(a, 'GIT~1', 'hooks', 'post-checkout'))).toBe(false);
     expect(existsSync(join(a, ...tab.split('/')))).toBe(false);
+  });
+
+  it('refuses to write through a directory link into .git or out of the repository', async () => {
+    const root = tempDir('tabula-j-');
+    const a = makeRepo(join(root, 'a'), cfg, { 'docs/keep.md': 'keep' });
+    const outside = join(root, 'outside');
+    mkdirSync(outside);
+    // Junctions need no privileges on Windows; elsewhere the type is ignored and a directory symlink is made.
+    symlinkSync(join(a, '.git'), join(a, 'docs', 'gitlink'), 'junction');
+    symlinkSync(outside, join(a, 'docs', 'outlink'), 'junction');
+    for (const path of ['docs/gitlink/hooks/post-checkout', 'docs/outlink/x.md', 'docs/ok.md']) {
+      await putFile(db, 'demo', { path, content: '#!/bin/sh\n', baseSha256: null }, 'test');
+    }
+    const pull = await runCli(['pull'], { cwd: a, env: env() });
+    expect(pull.code, pull.stderr).toBe(0);
+    expect(pull.stderr).toMatch(/skip docs\/gitlink\/hooks\/post-checkout: .*inside the git directory/);
+    expect(pull.stderr).toMatch(/skip docs\/outlink\/x\.md: .*outside the repository/);
+    expect(readText(a, 'docs/ok.md')).toBe('#!/bin/sh\n');
+    expect(existsSync(join(a, '.git', 'hooks', 'post-checkout'))).toBe(false);
+    expect(existsSync(join(outside, 'x.md'))).toBe(false);
+  });
+
+  it('pulls only server files that match this clone\'s sync patterns', async () => {
+    const a = makeRepo(tempDir('tabula-m-'), cfg);
+    await putFile(db, 'demo', { path: '.vscode/tasks.json', content: '{"tasks":[]}', baseSha256: null }, 'test');
+    await putFile(db, 'demo', { path: 'docs/ok.md', content: 'ok', baseSha256: null }, 'test');
+    const pull = await runCli(['pull'], { cwd: a, env: env() });
+    expect(pull.code, pull.stderr).toBe(0);
+    expect(readText(a, 'docs/ok.md')).toBe('ok');
+    expect(existsSync(join(a, '.vscode', 'tasks.json'))).toBe(false);
+    expect(pull.stderr).not.toMatch(/tasks\.json/);
+    const st = await runCli(['status'], { cwd: a, env: env() });
+    expect(st.stdout).toMatch(/not matched\s+\.vscode\/tasks\.json \(on server, not matched by sync\)/);
   });
 
   it('gives each worktree its own project (the folder name) and its own sync state', async () => {
@@ -181,6 +224,17 @@ describe('tabula login, status, rm and errors', { timeout: 60_000 }, () => {
     if (process.platform !== 'win32') expect(statSync(join(home, 'config.json')).mode & 0o777).toBe(0o600);
     expect((await runCli(['push'], { cwd: a, env: noCreds() })).code).toBe(0);
     expect(await serverPaths()).toEqual(['docs/a.md']);
+  });
+
+  it('replaces an existing credentials file and makes it private again', async () => {
+    const a = makeRepo(tempDir('tabula-l2-'), cfg);
+    const file = join(home, 'config.json');
+    writeFile(home, 'config.json', JSON.stringify({ url: 'https://tabula.example.com', token: 'old' }));
+    if (process.platform !== 'win32') chmodSync(file, 0o644);
+    const ok = await runCli(['login', server.url, '--token-stdin'], { cwd: a, env: noCreds(), input: `${TEST_TOKEN}\n` });
+    expect(ok.code, ok.stderr).toBe(0);
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ url: server.url, token: TEST_TOKEN });
+    if (process.platform !== 'win32') expect(statSync(file).mode & 0o777).toBe(0o600);
   });
 
   it('shows the status, deletes on the server with rm (path relative to the current folder) and keeps the local file', async () => {

@@ -1,7 +1,8 @@
 import type { Db } from '../db/client.js';
-import { AGENT_READ_ONLY, badRequest, forbidden } from '../domain/errors.js';
+import { AGENT_READ_ONLY, badRequest, forbidden, notFound } from '../domain/errors.js';
+import { getFile, listFiles } from '../domain/files.js';
 import { createMemory, deprecateMemory, type Memory } from '../domain/memories.js';
-import type { Note } from '../domain/notes.js';
+import { findNotes, type Note, type NoteHit } from '../domain/notes.js';
 import { listProjects, type ProjectSummary } from '../domain/projects.js';
 import { recall } from '../domain/recall.js';
 import { resolveRecord } from '../domain/records.js';
@@ -10,6 +11,13 @@ import { createThought, findThoughts, type Thought, type ThoughtHit, updateThoug
 import type { MemoryKind } from '../domain/validation.js';
 
 export type AgentContext = { db: Db; agentLabel: string };
+
+/** Project memories were replaced by synced files; agents keep only the global rules, and only on request. */
+export const GLOBAL_ONLY =
+  'Tabula keeps no project memories: remember and deprecate work only on global rules (project "global"), and only when the user explicitly asks. Project knowledge belongs in the repository or in its synced files (tabula push).';
+
+/** read_file returns at most this many characters per call. */
+export const READ_CHUNK = 100_000;
 
 const memoryView = (m: Memory) => ({
   type: 'memory' as const,
@@ -58,19 +66,21 @@ const thoughtView = (t: Thought) => ({
 export type MemoryView = ReturnType<typeof memoryView>;
 export type NoteView = ReturnType<typeof noteView>;
 export type ThoughtView = ReturnType<typeof thoughtView>;
+export type AgentFile = { path: string; size: number; version: number; state: boolean; updated_at: string; updated_by: string };
 
-/** A record the agent may modify: only memories with source=agent. */
+/** A record the agent may modify: a global memory written by an agent. */
 async function requireAgentWritable(db: Db, id: string): Promise<Memory> {
   const r = await resolveRecord(db, id);
   if (r.type === 'thought') throw badRequest(`${r.record.id} is a thought, not a memory; use update_thought`);
   if (r.type === 'note' || r.record.source === 'human') throw forbidden(AGENT_READ_ONLY);
+  if (r.record.projectId !== 'global') throw badRequest(GLOBAL_ONLY);
   return r.record;
 }
 
 export const agentListProjects = (ctx: AgentContext): Promise<ProjectSummary[]> => listProjects(ctx.db);
 
-export async function agentRecall(ctx: AgentContext, project: string): Promise<string> {
-  return (await recall(ctx.db, project)).text;
+export async function agentRecall(ctx: AgentContext, project: string, includeState = true): Promise<string> {
+  return (await recall(ctx.db, project, { includeState })).text;
 }
 
 export const agentSearch = (ctx: AgentContext, p: SearchParams): Promise<SearchHit[]> => search(ctx.db, p);
@@ -85,9 +95,10 @@ export async function agentRemember(
   ctx: AgentContext,
   input: { project: string; kind: MemoryKind; title: string; body: string; tags?: string[]; supersedes_id?: string },
 ): Promise<{ id: string }> {
+  if (input.project !== 'global') throw badRequest(GLOBAL_ONLY);
   const supersedesId = input.supersedes_id ? (await requireAgentWritable(ctx.db, input.supersedes_id)).id : null;
   const m = await createMemory(ctx.db, {
-    projectId: input.project,
+    projectId: 'global',
     kind: input.kind,
     title: input.title,
     body: input.body,
@@ -104,6 +115,29 @@ export async function agentDeprecate(ctx: AgentContext, input: { id: string; rea
   await deprecateMemory(ctx.db, m.id, input.reason);
   return { ok: true };
 }
+
+export async function agentListFiles(ctx: AgentContext, project: string): Promise<AgentFile[]> {
+  return (await listFiles(ctx.db, project)).map((f) => ({
+    path: f.path, size: f.size, version: f.version, state: f.isState, updated_at: f.updatedAt.toISOString(), updated_by: f.updatedBy,
+  }));
+}
+
+/** The file's text from offset, at most READ_CHUNK characters, with a footer that names the next offset. */
+export async function agentReadFile(ctx: AgentContext, input: { project: string; path: string; offset?: number }): Promise<string> {
+  const f = await getFile(ctx.db, input.project, input.path);
+  if (f.deletedAt) throw notFound(`file "${f.path}" was deleted in project "${input.project}"; call list_files for the current files`);
+  const offset = Math.max(0, Math.trunc(input.offset ?? 0));
+  const total = f.content.length;
+  if (offset > 0 && offset >= total) return `[offset ${offset} is past the end of the file (${total} characters)]`;
+  const end = Math.min(total, offset + READ_CHUNK);
+  const part = f.content.slice(offset, end);
+  return end < total ? `${part}\n\n[… part ends at character ${end} of ${total} — call read_file again with offset: ${end}]` : part;
+}
+
+export const agentFindNotes = (
+  ctx: AgentContext,
+  p: { query?: string; tag?: string; limit?: number },
+): Promise<NoteHit[]> => findNotes(ctx.db, p);
 
 const agentEditor = (ctx: AgentContext) => ({ source: 'agent' as const, label: ctx.agentLabel });
 

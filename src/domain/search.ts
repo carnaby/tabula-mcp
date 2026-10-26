@@ -5,17 +5,6 @@ import { requireProject } from './projects.js';
 import { prefixTsQuery } from './paging.js';
 import type { MemoryKind } from './validation.js';
 
-export type SearchHit = {
-  id: string;
-  type: 'memory' | 'note';
-  project: string;
-  kind?: MemoryKind;
-  title: string;
-  snippet: string;
-  status: 'active' | 'deprecated';
-  updated_at: string;
-};
-
 export type SearchParams = {
   query: string;
   project?: string;
@@ -26,9 +15,22 @@ export type SearchParams = {
 
 const HEADLINE = 'MaxWords=30, MinWords=10, MaxFragments=1, StartSel=**, StopSel=**';
 
+export type SearchHit = {
+  id: string;
+  type: 'memory' | 'file';
+  project: string;
+  kind?: MemoryKind;
+  /** Files only: the path to pass to read_file. */
+  path?: string;
+  title: string;
+  snippet: string;
+  status: 'active' | 'deprecated';
+  updated_at: string;
+};
+
 type Row = {
   id: string;
-  type: 'memory' | 'note';
+  type: 'memory' | 'file';
   project: string;
   kind: MemoryKind | null;
   title: string;
@@ -37,45 +39,47 @@ type Row = {
   updated_at: Date | string;
 };
 
+/** For agents: global rules (never project memories) and live project files (of `project` when given). */
 export async function search(db: Db, p: SearchParams): Promise<SearchHit[]> {
   const query = p.query.trim();
   if (!query) throw badRequest('query must not be empty');
   if (p.project) await requireProject(db, p.project);
   const limit = Math.min(Math.max(Math.trunc(p.limit ?? 10), 1), 50);
 
-  const memProject = p.project ? sql`AND m.project_id IN (${p.project}, 'global')` : sql``;
-  const noteProject = p.project ? sql`AND n.project_id IN (${p.project}, 'global')` : sql``;
   const kind = p.kind ? sql`AND m.kind = ${p.kind}` : sql``;
   const status = p.includeDeprecated ? sql`` : sql`AND m.status = 'active'`;
+  const fileProject = p.project ? sql`AND f.project_id = ${p.project}` : sql``;
 
   const memoryPart = sql`
-    SELECT m.id, 'memory' AS type, m.project_id AS project, m.kind::text AS kind, m.title,
-      ts_headline('simple', m.body, q.tsq, ${HEADLINE}) AS snippet,
+    SELECT m.id, 'memory' AS type, m.project_id AS project, m.kind::text AS kind, m.title, m.body AS doc,
       m.status::text AS status, m.updated_at, ts_rank(m.search, q.tsq) AS rank
     FROM memories m, q
-    WHERE m.search @@ q.tsq ${memProject} ${kind} ${status}`;
+    WHERE m.search @@ q.tsq AND m.project_id = 'global' ${kind} ${status}`;
 
-  const notePart = sql`
-    SELECT n.id, 'note' AS type, n.project_id AS project, NULL AS kind, n.title,
-      ts_headline('simple', n.summary || ' ' || n.body, q.tsq, ${HEADLINE}) AS snippet,
-      'active' AS status, n.updated_at, ts_rank(n.search, q.tsq) AS rank
-    FROM notes n, q
-    WHERE n.search @@ q.tsq ${noteProject}`;
+  const filePart = sql`
+    SELECT f.id, 'file', f.project_id, NULL, f.path, left(f.content, 100000),
+      'active', f.updated_at, ts_rank(f.search, q.tsq)
+    FROM project_files f, q
+    WHERE f.search @@ q.tsq AND f.deleted_at IS NULL ${fileProject}`;
 
-  const parts: SQL = p.kind ? memoryPart : sql`${memoryPart} UNION ALL ${notePart}`;
+  const parts: SQL = p.kind ? memoryPart : sql`${memoryPart} UNION ALL ${filePart}`;
 
   const rows = await db.execute<Row>(sql`
     WITH q AS (SELECT websearch_to_tsquery('simple', ${query}) AS tsq)
-    SELECT id, type, project, kind, title, snippet, status, updated_at
-    FROM (${parts}) hits
-    ORDER BY rank DESC, updated_at DESC
-    LIMIT ${limit}`);
+    SELECT id, type, project, kind, title,
+      ts_headline('simple', doc, (SELECT tsq FROM q), ${HEADLINE}) AS snippet, status, updated_at
+    FROM (
+      -- Rank and limit first; the expensive headline runs only for the rows that survive.
+      SELECT * FROM (${parts}) hits ORDER BY rank DESC, updated_at DESC LIMIT ${limit}
+    ) top
+    ORDER BY rank DESC, updated_at DESC`);
 
   return [...rows].map((r) => ({
     id: r.id,
     type: r.type,
     project: r.project,
     ...(r.kind ? { kind: r.kind } : {}),
+    ...(r.type === 'file' ? { path: r.title } : {}),
     title: r.title,
     snippet: r.snippet,
     status: r.status,

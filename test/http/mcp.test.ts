@@ -163,7 +163,7 @@ describe('MCP endpoint', () => {
     expect(r.isError).toBe(true);
     expect(textOf(r)).toBe('403: human-authored records are read-only for agents');
     const long = await client.callTool({
-      name: 'remember', arguments: { project: 'demo', kind: 'fact', title: 'x'.repeat(121), body: 'b' },
+      name: 'remember', arguments: { project: 'global', kind: 'fact', title: 'x'.repeat(121), body: 'b' },
     });
     expect(textOf(long)).toMatch(/^400: title is 121 characters/);
     await client.close();
@@ -184,7 +184,7 @@ describe('MCP endpoint', () => {
   it('accepts the connector secret path and labels it claude-ai', async () => {
     const client = await connect(`/mcp/${TEST_SECRET}`);
     const r = await client.callTool({
-      name: 'remember', arguments: { project: 'demo', kind: 'fact', title: 'Via claude.ai', body: 'b' },
+      name: 'remember', arguments: { project: 'global', kind: 'fact', title: 'Via claude.ai', body: 'b' },
     });
     const { id } = JSON.parse(textOf(r)) as { id: string };
     expect((await getMemory(db, id))?.agentLabel).toBe('claude-ai');

@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { agentDeprecate, agentGet, agentRemember, agentUpdateThought, type AgentContext } from '../../src/agent/operations.js';
+import {
+  agentDeprecate, agentFindNotes, agentGet, agentListFiles, agentReadFile, agentRemember, agentUpdateThought,
+  type AgentContext, GLOBAL_ONLY, READ_CHUNK,
+} from '../../src/agent/operations.js';
 import { memories } from '../../src/db/schema.js';
 import { AGENT_READ_ONLY } from '../../src/domain/errors.js';
+import { deleteFile, putFile, setStatePaths } from '../../src/domain/files.js';
 import { createMemory, getMemory, listMemories } from '../../src/domain/memories.js';
 import { createNote } from '../../src/domain/notes.js';
 import { createThought, HUMAN } from '../../src/domain/thoughts.js';
@@ -9,19 +13,23 @@ import { seedProject, useTestDb } from '../helpers.js';
 
 const db = useTestDb();
 const ctx: AgentContext = { db, agentLabel: 'claude-code' };
-const input = { project: 'demo', kind: 'rule' as const, title: 'Run tests via pnpm', body: 'Setup lives there.' };
-const human = () => createMemory(db, { projectId: 'demo', kind: 'rule', title: 'Human rule', body: 'By hand.', source: 'human' });
+const input = { project: 'global', kind: 'rule' as const, title: 'Run tests via pnpm', body: 'Setup lives there.' };
+const human = () => createMemory(db, { projectId: 'global', kind: 'rule', title: 'Human rule', body: 'By hand.', source: 'human' });
 
 describe('agent operations', () => {
   beforeEach(() => seedProject(db, 'demo'));
 
-  it('remember writes source=agent with the agent label', async () => {
+  it('remember writes a global rule with source=agent and the agent label', async () => {
     const { id } = await agentRemember(ctx, input);
-    expect(await getMemory(db, id)).toMatchObject({ source: 'agent', agentLabel: 'claude-code', status: 'active' });
+    expect(await getMemory(db, id)).toMatchObject({ projectId: 'global', source: 'agent', agentLabel: 'claude-code', status: 'active' });
   });
 
-  it('remember on an unknown project lists known projects', async () => {
-    await expect(agentRemember(ctx, { ...input, project: 'nope' })).rejects.toThrow(/Known projects: global, demo/);
+  it('remember and deprecate refuse everything outside global and say why', async () => {
+    await expect(agentRemember(ctx, { ...input, project: 'demo' })).rejects.toMatchObject({ code: 'bad_request', message: GLOBAL_ONLY });
+    const legacy = await createMemory(db, { projectId: 'demo', kind: 'fact', title: 'Old project memory', body: 'b', source: 'agent' });
+    await expect(agentDeprecate(ctx, { id: legacy.id, reason: 'x' })).rejects.toMatchObject({ code: 'bad_request', message: GLOBAL_ONLY });
+    await expect(agentRemember(ctx, { ...input, supersedes_id: legacy.id })).rejects.toMatchObject({ message: GLOBAL_ONLY });
+    expect(await listMemories(db, { status: 'all' })).toHaveLength(1);
   });
 
   it('remember accepts a short supersedes id', async () => {
@@ -53,7 +61,7 @@ describe('agent operations', () => {
   it('update_thought rejects a memory or note id', async () => {
     const m = await agentRemember(ctx, input);
     await expect(agentUpdateThought(ctx, { id: m.id, append: 'x' })).rejects.toMatchObject({ code: 'bad_request' });
-    const n = await createNote(db, { projectId: 'demo', title: 'Note' });
+    const n = await createNote(db, { title: 'Note' });
     await expect(agentUpdateThought(ctx, { id: n.id, append: 'x' })).rejects.toMatchObject({ code: 'bad_request' });
   });
 
@@ -62,7 +70,7 @@ describe('agent operations', () => {
     await expect(agentRemember(ctx, { ...input, supersedes_id: h.id })).rejects.toMatchObject({
       code: 'forbidden', message: AGENT_READ_ONLY,
     });
-    const n = await createNote(db, { projectId: 'demo', title: 'Note' });
+    const n = await createNote(db, { title: 'Note' });
     await expect(agentRemember(ctx, { ...input, supersedes_id: n.id })).rejects.toMatchObject({ code: 'forbidden' });
     expect(await listMemories(db, { status: 'all' })).toHaveLength(1);
   });
@@ -70,7 +78,7 @@ describe('agent operations', () => {
   it('deprecate enforces read-only human records and notes, and is idempotent', async () => {
     const h = await human();
     await expect(agentDeprecate(ctx, { id: h.id, reason: 'x' })).rejects.toMatchObject({ code: 'forbidden', status: 403 });
-    const n = await createNote(db, { projectId: 'demo', title: 'Note' });
+    const n = await createNote(db, { title: 'Note' });
     await expect(agentDeprecate(ctx, { id: n.id, reason: 'x' })).rejects.toMatchObject({ code: 'forbidden' });
     const { id } = await agentRemember(ctx, input);
     expect(await agentDeprecate(ctx, { id, reason: 'changed' })).toEqual({ ok: true });
@@ -80,10 +88,10 @@ describe('agent operations', () => {
   it('get returns full memory and note views by prefix', async () => {
     const { id } = await agentRemember(ctx, { ...input, tags: ['ci'] });
     expect(await agentGet(ctx, `#${id.slice(0, 6)}`)).toMatchObject({
-      type: 'memory', id, project: 'demo', body: 'Setup lives there.', tags: ['ci'], agent_label: 'claude-code',
+      type: 'memory', id, project: 'global', body: 'Setup lives there.', tags: ['ci'], agent_label: 'claude-code',
     });
-    const n = await createNote(db, { projectId: 'demo', title: 'Arch', body: 'Long body' });
-    expect(await agentGet(ctx, n.id)).toMatchObject({ type: 'note', body: 'Long body', pinned: false });
+    const n = await createNote(db, { title: 'Arch', body: 'Long body' });
+    expect(await agentGet(ctx, n.id)).toMatchObject({ type: 'note', project: null, body: 'Long body', pinned: false });
   });
 
   it('get reports ambiguous prefixes and misses', async () => {
@@ -94,5 +102,28 @@ describe('agent operations', () => {
     ]);
     await expect(agentGet(ctx, '#abcd')).rejects.toThrow(/ambiguous.*First.*Second|ambiguous.*Second.*First/s);
     await expect(agentGet(ctx, '#ffff')).rejects.toMatchObject({ code: 'not_found' });
+  });
+
+  it('lists and reads synced files, long ones in parts, never deleted ones', async () => {
+    await putFile(db, 'demo', { path: 'docs/handoff/state.md', content: 'Next: ship', baseSha256: null }, 'cli');
+    await putFile(db, 'demo', { path: 'docs/long.md', content: 'a'.repeat(READ_CHUNK + 10), baseSha256: null }, 'cli');
+    await setStatePaths(db, 'demo', ['docs/handoff/state.md']);
+    expect(await agentListFiles(ctx, 'demo')).toMatchObject([
+      { path: 'docs/handoff/state.md', size: 10, version: 1, state: true, updated_by: 'cli' },
+      { path: 'docs/long.md', state: false },
+    ]);
+    expect(await agentReadFile(ctx, { project: 'demo', path: 'docs/handoff/state.md' })).toBe('Next: ship');
+    const first = await agentReadFile(ctx, { project: 'demo', path: 'docs/long.md' });
+    expect(first.endsWith(
+      `[… part ends at character ${READ_CHUNK} of ${READ_CHUNK + 10} — call read_file again with offset: ${READ_CHUNK}]`,
+    )).toBe(true);
+    expect(await agentReadFile(ctx, { project: 'demo', path: 'docs/long.md', offset: READ_CHUNK })).toBe('a'.repeat(10));
+    await deleteFile(db, 'demo', 'docs/handoff/state.md');
+    await expect(agentReadFile(ctx, { project: 'demo', path: 'docs/handoff/state.md' })).rejects.toMatchObject({ code: 'not_found' });
+  });
+
+  it('finds notebook notes', async () => {
+    const n = await createNote(db, { title: 'Suno prompts', body: 'short stingers' });
+    expect(await agentFindNotes(ctx, { query: 'stinger' })).toMatchObject([{ id: n.id, title: 'Suno prompts' }]);
   });
 });

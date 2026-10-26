@@ -2,7 +2,7 @@ import { type DependencyList, useCallback, useEffect, useRef, useState } from 'r
 import { addNavigationGuard } from '../router';
 
 /** What changed. Mutations call invalidate(); queries that listen to a topic reload. */
-export type Topic = 'projects' | 'memories' | 'notes' | 'thoughts';
+export type Topic = 'projects' | 'memories' | 'notes' | 'thoughts' | 'files';
 const subscribers = new Map<Topic, Set<() => void>>();
 
 export function invalidate(...topics: Topic[]) {

@@ -25,9 +25,10 @@ export function Sidebar({
   const [filter, setFilter] = useState('');
   const { confirm } = useConfirm();
   const activeProject = route.name === 'project' ? route.project : null;
-  const shown = (projects ?? []).filter(
-    (p) => !filter || p.id.includes(filter.toLowerCase()) || p.name.toLowerCase().includes(filter.toLowerCase()),
-  );
+  const global = projects?.find((p) => p.id === 'global');
+  const all = (projects ?? []).filter((p) => p.id !== 'global');
+  const f = filter.toLowerCase();
+  const shown = all.filter((p) => !f || p.id.includes(f) || p.name.toLowerCase().includes(f));
 
   return (
     <aside className="sidebar" aria-label="Navigation">
@@ -47,27 +48,20 @@ export function Sidebar({
         <NavItem to={href.thoughts()} icon="lightbulb" label="Thoughts" active={route.name === 'thoughts' || route.name === 'thought'} />
         <NavItem to={href.notes()} icon="fileText" label="Notes" active={route.name === 'notes' || route.name === 'note'} />
 
-        <div className="nav-section">Agent memory</div>
-        <NavItem to={href.memories()} icon="layers" label="All memories" active={route.name === 'memories'} />
+        <div className="nav-section">For agents</div>
+        <NavItem to={href.global()} icon="globe" label="Global" count={global?.memory_count} active={route.name === 'global'} />
 
         <div className="nav-section">
           <span>Projects</span>
           <IconButton size="sm" icon="plus" label="New project" onClick={onNewProject} />
         </div>
-        {(projects?.length ?? 0) > 8 && (
+        {all.length > 8 && (
           <div className="nav-filter">
             <Input size_="sm" placeholder="Filter projects" value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Filter projects" />
           </div>
         )}
         {shown.map((p) => (
-          <NavItem
-            key={p.id}
-            to={href.project(p.id)}
-            icon={p.id === 'global' ? 'globe' : 'folder'}
-            label={p.id === 'global' ? 'Global' : p.name || p.id}
-            count={p.id === 'global' ? p.memory_count : p.file_count}
-            active={activeProject === p.id}
-          />
+          <NavItem key={p.id} to={href.project(p.id)} icon="folder" label={p.name || p.id} count={p.file_count} active={activeProject === p.id} />
         ))}
         {!projects && <div className="nav-item t-subtle">Loading…</div>}
       </div>

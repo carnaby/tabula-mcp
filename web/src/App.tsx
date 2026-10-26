@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from './api';
 import { useQuery } from './hooks/data';
 import { Sidebar } from './layout/Sidebar';
-import { MemoriesPage } from './pages/MemoriesPage';
+import { GlobalPage } from './pages/GlobalPage';
 import { NewProjectDialog } from './pages/NewProjectDialog';
 import { NoteEditorPage } from './pages/NoteEditorPage';
 import { NotesPage } from './pages/NotesPage';
@@ -12,27 +12,24 @@ import { ThoughtEditorPage } from './pages/ThoughtEditorPage';
 import { ThoughtsPage } from './pages/ThoughtsPage';
 import { href, navigate, type Route, useRoute } from './router';
 import type { Project } from './types';
-import { EmptyState, IconButton, ButtonLink, LogoMark } from './ui';
+import { ButtonLink, EmptyState, IconButton, LogoMark } from './ui';
 
 function title(route: Route, projects: Project[] | undefined): string {
   switch (route.name) {
     case 'thoughts': return 'Thoughts';
     case 'thought': return route.id === 'new' ? 'New thought' : 'Thought';
-    case 'memories': return 'All memories';
-    case 'search': return 'Search';
     case 'notes': return 'Notes';
     case 'note': return route.id === 'new' ? 'New note' : 'Note';
-    case 'project': {
-      const p = projects?.find((x) => x.id === route.project);
-      return route.project === 'global' ? 'Global' : (p?.name ?? route.project);
-    }
+    case 'global': return 'Global';
+    case 'search': return 'Search';
+    case 'project': return projects?.find((x) => x.id === route.project)?.name ?? route.project;
     default: return 'Tabula';
   }
 }
 
 export function App() {
   const route = useRoute();
-  const projects = useQuery((s) => api.projects(s), [], { topics: ['projects', 'memories', 'notes'] });
+  const projects = useQuery((s) => api.projects(s), [], { topics: ['projects', 'memories', 'files'] });
   const [navOpen, setNavOpen] = useState(false);
   const [newProject, setNewProject] = useState(false);
   const routeKey = JSON.stringify(route);
@@ -83,11 +80,11 @@ function Page({ route, projects }: { route: Route; projects: Project[] | undefin
   switch (route.name) {
     case 'thoughts': return <ThoughtsPage />;
     case 'thought': return <ThoughtEditorPage id={route.id} />;
-    case 'memories': return <MemoriesPage projects={projects} />;
-    case 'search': return <SearchPage q={route.q} projects={projects} />;
-    case 'project': return <ProjectPage project={route.project} tab={route.tab} projects={projects} />;
     case 'notes': return <NotesPage />;
     case 'note': return <NoteEditorPage id={route.id} />;
+    case 'global': return <GlobalPage tab={route.tab} projects={projects} />;
+    case 'search': return <SearchPage q={route.q} projects={projects} />;
+    case 'project': return <ProjectPage project={route.project} tab={route.tab} projects={projects} />;
     default:
       return (
         <main className="content">

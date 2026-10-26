@@ -18,17 +18,15 @@ export function ProjectPage({ project, tab, projects }: { project: string; tab: 
       </main>
     );
   }
-  const isGlobal = project === 'global';
-
   return (
     <main className="content content--wide">
       <div className="page-head">
         <div className="page-head__text">
           <h1>
-            {p ? (isGlobal ? 'Global' : p.name) : <Skeleton width={200} height={28} />}
-            <Badge tone="outline">{isGlobal ? 'every project' : project}</Badge>
+            {p ? p.name : <Skeleton width={200} height={28} />}
+            <Badge tone="outline">{project}</Badge>
           </h1>
-          <p>{isGlobal ? 'Rules and notes included in every project’s recall.' : p?.description || 'No description yet — add one in Setup.'}</p>
+          <p>{p?.description || 'No description yet — add one in Setup.'}</p>
         </div>
       </div>
       <Tabs

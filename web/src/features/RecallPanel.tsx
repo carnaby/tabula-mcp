@@ -4,15 +4,15 @@ import { copyText } from '../format';
 import { Alert, Badge, Button, Skeleton, useToast } from '../ui';
 
 const TRIM_LABELS: Record<string, string> = {
-  'decisions-omitted': 'decisions collapsed',
-  'rules-first-sentence': 'rules shortened',
-  'gotchas-first-sentence': 'gotchas shortened',
+  'files-collapsed': 'file list collapsed',
   'facts-omitted': 'facts collapsed',
-  'notes-omitted': 'notes collapsed',
+  'gotchas-first-sentence': 'gotchas shortened',
+  'rules-first-sentence': 'rules shortened',
+  'state-truncated': 'state shortened',
 };
 
 export function RecallPanel({ project }: { project: string }) {
-  const q = useQuery((s) => api.recall(project, s), [project], { topics: ['memories', 'notes'] });
+  const q = useQuery((s) => api.recall(project, s), [project], { topics: ['memories', 'files'] });
   const notify = useToast();
   const d = q.data;
   const pct = d ? Math.min(100, Math.round((d.tokens / d.budget) * 100)) : 0;
@@ -21,7 +21,7 @@ export function RecallPanel({ project }: { project: string }) {
   return (
     <div className="t-stack">
       <p className="t-muted">
-        The exact digest an agent receives when it calls <code className="t-mono">recall("{project}")</code> at the start of a session. This is the main tuning tool: if it's too long, condense or deprecate.
+        The exact digest an agent receives from <code className="t-mono">recall("{project}")</code>: the global rules, the project state and the list of synced files. Claude Code asks for it without the state (the files are on disk); claude.ai gets it as shown.
       </p>
       {q.error && <Alert tone="danger">{q.error.message}</Alert>}
       <div className="t-card t-card--pad t-stack">
@@ -38,7 +38,7 @@ export function RecallPanel({ project }: { project: string }) {
           <Button size="sm" icon="refresh" onClick={q.reload} loading={q.loading && !!d}>Refresh</Button>
           <Button size="sm" icon="copy" disabled={!d} onClick={async () => notify((await copyText(d!.text)) ? 'Digest copied' : 'Copy failed', { tone: 'default' })}>Copy</Button>
         </div>
-        {level === 'over' && <Alert tone="danger">Over budget even after trimming. Shorten pinned notes or condense rules and gotchas.</Alert>}
+        {level === 'over' && <Alert tone="danger">Over budget even after trimming. Shorten the global rules.</Alert>}
       </div>
       {d ? <pre className="digest">{d.text}</pre> : <Skeleton height={320} />}
     </div>

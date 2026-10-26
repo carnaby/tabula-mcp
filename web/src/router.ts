@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-export type ProjectTab = 'memories' | 'recall' | 'setup';
+export type ProjectTab = 'state' | 'files' | 'recall' | 'setup';
 export type GlobalTab = 'rules' | 'recall';
 export type Route =
   | { name: 'thoughts' }
@@ -9,7 +9,7 @@ export type Route =
   | { name: 'note'; id: string | 'new' }
   | { name: 'global'; tab: GlobalTab }
   | { name: 'search'; q: string }
-  | { name: 'project'; project: string; tab: ProjectTab }
+  | { name: 'project'; project: string; tab: ProjectTab; path?: string }
   | { name: 'notFound' };
 
 export const href = {
@@ -19,8 +19,9 @@ export const href = {
   note: (id: string) => `#/notes/${id}`,
   global: (tab: GlobalTab = 'rules') => `#/global${tab === 'rules' ? '' : `/${tab}`}`,
   search: (q = '') => `#/search${q ? `?q=${encodeURIComponent(q)}` : ''}`,
-  project: (p: string, tab: ProjectTab = 'memories') =>
-    `#/p/${encodeURIComponent(p)}${tab === 'memories' ? '' : `/${tab}`}`,
+  project: (p: string, tab: ProjectTab = 'state') =>
+    `#/p/${encodeURIComponent(p)}${tab === 'state' ? '' : `/${tab}`}`,
+  file: (p: string, path: string) => `#/p/${encodeURIComponent(p)}/files?path=${encodeURIComponent(path)}`,
 };
 
 export function parse(hash: string): Route {
@@ -42,9 +43,10 @@ export function parse(hash: string): Route {
   if (a === 'recall' && !b) return { name: 'global', tab: 'recall' };
   if (a === 'p' && b === 'global') return { name: 'global', tab: c === 'recall' ? 'recall' : 'rules' };
   if (a === 'p' && b) {
-    if (!c) return { name: 'project', project: b, tab: 'memories' };
+    if (!c) return { name: 'project', project: b, tab: 'state' };
     if (c === 'notes') return d ? { name: 'note', id: d } : { name: 'notes' };
-    if (c === 'recall' || c === 'setup') return { name: 'project', project: b, tab: c };
+    if (c === 'files') return { name: 'project', project: b, tab: 'files', path: params.get('path') ?? undefined };
+    if (c === 'state' || c === 'recall' || c === 'setup') return { name: 'project', project: b, tab: c };
   }
   return { name: 'notFound' };
 }

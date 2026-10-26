@@ -81,4 +81,18 @@ export type SearchHit = {
   updated_at: string;
 };
 
+export type ProjectFile = {
+  path: string;
+  sha256: string;
+  size: number;
+  version: number;
+  isState: boolean;
+  updatedAt: string;
+  updatedBy: string;
+  deletedAt: string | null;
+};
+export type ProjectFileContent = ProjectFile & { content: string };
+export type FileRevision = { version: number; sha256: string; size: number; updatedBy: string; createdAt: string };
+export type FileRevisionContent = FileRevision & { content: string };
+
 export type RecallPreview = { text: string; tokens: number; budget: number; trimmed: string[]; overBudget: boolean };

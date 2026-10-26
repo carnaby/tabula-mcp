@@ -1,6 +1,6 @@
 import type {
-  Memory, MemoryKind, MemorySort, Note, NoteSort, Page, Project, RecallPreview, SearchHit, Source, Thought,
-  ThoughtRevision, ThoughtSort,
+  FileRevision, FileRevisionContent, Memory, MemoryKind, MemorySort, Note, NoteSort, Page, Project, RecallPreview, SearchHit, Source, Thought,
+  ProjectFile, ProjectFileContent, ThoughtRevision, ThoughtSort,
 } from './types';
 
 const TOKEN_KEY = 'tabula.token';
@@ -55,6 +55,20 @@ type ThoughtInput = { title: string; body?: string; tags?: string[]; pinned?: bo
 type S = AbortSignal | undefined;
 
 export const api = {
+  files: (project: string, deleted: boolean, signal?: S) =>
+    request<ProjectFile[]>('GET', `/projects/${encodeURIComponent(project)}/files${qs({ deleted: deleted ? 1 : undefined })}`, undefined, signal),
+  file: (project: string, path: string, signal?: S) =>
+    request<ProjectFileContent>('GET', `/projects/${encodeURIComponent(project)}/files/content${qs({ path })}`, undefined, signal),
+  putFile: (project: string, body: { path: string; content: string; base_sha256: string | null }) =>
+    request<{ sha256: string; version: number; changed: boolean }>('PUT', `/projects/${encodeURIComponent(project)}/files`, body),
+  deleteFile: (project: string, path: string) =>
+    request<{ changed: boolean }>('DELETE', `/projects/${encodeURIComponent(project)}/files${qs({ path })}`),
+  restoreFile: (project: string, path: string) =>
+    request<{ changed: boolean }>('POST', `/projects/${encodeURIComponent(project)}/files/restore`, { path }),
+  fileRevisions: (project: string, path: string, signal?: S) =>
+    request<FileRevision[]>('GET', `/projects/${encodeURIComponent(project)}/files/revisions${qs({ path })}`, undefined, signal),
+  fileRevision: (project: string, path: string, version: number, signal?: S) =>
+    request<FileRevisionContent>('GET', `/projects/${encodeURIComponent(project)}/files/revisions/content${qs({ path, version })}`, undefined, signal),
   projects: (signal?: S) => request<Project[]>('GET', '/projects', undefined, signal),
   createProject: (p: { id: string; name: string; description?: string }) => request<Project>('POST', '/projects', p),
   updateProject: (id: string, p: { name?: string; description?: string }) => request<Project>('PATCH', `/projects/${encodeURIComponent(id)}`, p),

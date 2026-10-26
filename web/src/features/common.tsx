@@ -1,6 +1,6 @@
 import { fullDate, timeAgo } from '../format';
 import { KIND_INFO, type MemoryKind, type Project, type Source } from '../types';
-import { Badge, cx, Icon, Select } from '../ui';
+import { Badge, cx, Icon, Markdown, Select } from '../ui';
 
 export function KindBadge({ kind }: { kind: MemoryKind }) {
   return <Badge tone={kind} title={KIND_INFO[kind].hint}>{KIND_INFO[kind].label}</Badge>;
@@ -46,4 +46,15 @@ export function ProjectSelect({
 export function Highlighted({ text }: { text: string }) {
   const parts = text.split(/\*\*(.+?)\*\*/g);
   return <>{parts.map((p, i) => (i % 2 ? <mark key={i}>{p}</mark> : p))}</>;
+}
+
+export const FileAuthor = ({ by, compact }: { by: string; compact?: boolean }) => (
+  <Author source={by === 'human' ? 'human' : 'agent'} label={by} compact={compact} />
+);
+
+export const isMarkdown = (path: string) => /\.(md|markdown)$/i.test(path);
+
+/** File text: Markdown (sanitized) for .md files, plain text otherwise. */
+export function FileContent({ path, content }: { path: string; content: string }) {
+  return isMarkdown(path) ? <Markdown source={content} /> : <pre className="digest">{content}</pre>;
 }

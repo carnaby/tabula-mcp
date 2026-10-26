@@ -9,9 +9,9 @@ import { Alert, Badge, EmptyState, Icon, type IconName, SearchInput, Skeleton, u
 
 const TYPE: Record<SearchHit['type'], { icon: IconName; label: string }> = {
   memory: { icon: 'layers', label: 'Memory' },
-  note: { icon: 'fileText', label: 'Note' },
+  note: { icon: 'pencil', label: 'Note' },
   thought: { icon: 'lightbulb', label: 'Thought' },
-  file: { icon: 'folder', label: 'File' },
+  file: { icon: 'fileText', label: 'File' },
 };
 
 export function SearchPage({ q: initialQ, projects }: { q: string; projects: Project[] | undefined }) {
@@ -20,7 +20,7 @@ export function SearchPage({ q: initialQ, projects }: { q: string; projects: Pro
   const input = useRef<HTMLInputElement>(null);
   const [dialog, setDialog] = useState<MemoryDialogState>(null);
   const notify = useToast();
-  const hits = useQuery((s) => (dq ? api.search(dq, s) : Promise.resolve([])), [dq], { topics: ['memories', 'notes', 'thoughts'] });
+  const hits = useQuery((s) => (dq ? api.search(dq, s) : Promise.resolve([])), [dq], { topics: ['memories', 'notes', 'thoughts', 'files'] });
 
   useEffect(() => input.current?.focus(), []);
   // Keep the query in the address so back/forward and reload work, without adding history entries.
@@ -29,7 +29,7 @@ export function SearchPage({ q: initialQ, projects }: { q: string; projects: Pro
   }, [dq]);
 
   const open = async (h: SearchHit) => {
-    if (h.type === 'file') return navigate(href.project(h.project!));
+    if (h.type === 'file') return navigate(href.file(h.project!, h.title));
     if (h.type === 'thought') return navigate(href.thought(h.id));
     if (h.type === 'note') return navigate(href.note(h.id));
     try {
@@ -44,7 +44,7 @@ export function SearchPage({ q: initialQ, projects }: { q: string; projects: Pro
       <div className="page-head">
         <div className="page-head__text">
           <h1>Search</h1>
-          <p>Memories, notes and thoughts at once. Words match as prefixes: “drizz pri” finds “Drizzle over Prisma”.</p>
+          <p>Global rules, project files, notes and thoughts at once. Words match as prefixes: “drizz pri” finds “Drizzle over Prisma”.</p>
         </div>
       </div>
       <div className="search-hero">

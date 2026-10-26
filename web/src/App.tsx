@@ -84,7 +84,7 @@ function Page({ route, projects }: { route: Route; projects: Project[] | undefin
     case 'note': return <NoteEditorPage id={route.id} />;
     case 'global': return <GlobalPage tab={route.tab} projects={projects} />;
     case 'search': return <SearchPage q={route.q} projects={projects} />;
-    case 'project': return <ProjectPage project={route.project} tab={route.tab} projects={projects} />;
+    case 'project': return <ProjectPage project={route.project} tab={route.tab} path={route.path} projects={projects} />;
     default:
       return (
         <main className="content">

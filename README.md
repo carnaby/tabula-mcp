@@ -57,16 +57,16 @@ A repository opts in with a `.tabula.json` in its root, committed:
 ```
 
 - `project` (optional) names the Tabula project; by default it is the name of the working-tree folder, so a git worktree for a side series syncs into its own project with the same file.
-- `sync` lists glob patterns (`**`, `*`, `?`). Only files git does **not** track are candidates — untracked and ignored ones, never `node_modules/` or `.git/`. `.env` and `.env.*` are refused even when a pattern matches them; binary files, invalid UTF-8 and files over 1 MiB are skipped with a warning.
+- `sync` lists glob patterns (`**`, `*`, `?`). Only files git does **not** track are candidates — untracked and ignored ones, never `node_modules/` or `.git/`. `.env` and `.env.*` (any letter case) are refused even when a pattern matches them, so keep the patterns explicit; binary files, invalid UTF-8 and files over 1 MiB are skipped with a warning.
 - `state` lists the files that form the current project state (default: `docs/handoff/*.md` at any depth). `recall` includes their content.
 
 | Command | What it does |
 |---|---|
 | `tabula status` | new, changed, newer on the server, conflicts, missing here, deleted on the server |
-| `tabula push [--force]` | uploads new and changed files; never deletes |
-| `tabula pull [--force]` | writes missing files and updates unchanged copies; never deletes local files |
+| `tabula push [--force]` | uploads new and changed files; never deletes; warns before uploading more than 100 new files |
+| `tabula pull [--force]` | writes missing files and updates unchanged copies, state files first; a file that cannot be written is reported and skipped; never deletes local files |
 | `tabula rm <path>` | deletes a file on the server (restorable in the UI) |
-| `tabula pull --hook` | for the SessionStart hook: silent without `.tabula.json` or a login, at most 5 seconds, always exit 0 |
+| `tabula pull --hook` | for the SessionStart hook: silent without `.tabula.json` or a login, at most 5 seconds (when time runs out it keeps what it restored and says how many files are missing), always exit 0 |
 | `tabula login <url>` · `install` · `update` | credentials (or `TABULA_URL` / `TABULA_TOKEN`), PATH shims and the hook snippet, self-update |
 
 Each clone keeps the hash it last synced for every file in `<git-dir>/tabula-sync.json` (per worktree, never committed). The server accepts a change only if it is based on the server's current version, so two machines editing the same file produce a **conflict** instead of a silent overwrite: merge by hand, or take one side with `--force`. Exit codes: 0 OK, 1 error, 2 finished with conflicts.
@@ -122,7 +122,7 @@ At the start of a session the agent calls `recall` once and gets plain text:
 | `deprecate(id, reason)` | Retires a global rule the agent wrote. Refuses human-written records. |
 | `find_notes(query?, tag?, limit?)` | Reads your Notes — only when you mention them. |
 | `save_thought` · `update_thought` · `find_thoughts` | The Thoughts notebook, on request; edits use `expected_version` and keep the previous version. |
-| `list_projects()` · `setup_project(id, name?, description?)` | Projects with file counts; onboarding on explicit request (returns the CLAUDE.md section and a `.tabula.json`). |
+| `list_projects()` · `setup_project(id, name?, description?)` | Projects with file counts; onboarding on explicit request (returns the CLAUDE.md section, a `.tabula.json` and the next step: `tabula status` before the first push). |
 
 The tool descriptions are part of the design: they are what an agent reads before deciding whether to call a tool, and they say when *not* to.
 
@@ -141,7 +141,7 @@ Tabula keeps this project's files that are not in git (handoff state, private sp
 - Never write project memories. Add a global rule only when the user explicitly asks.
 ```
 
-You don't write it by hand: tell the agent *"use Tabula in this project"* and it calls `setup_project` with the folder name as the slug, puts the section into `CLAUDE.md` and the suggested `.tabula.json` into the repository root. For claude.ai projects use [`templates/claude-ai-project-instructions.md`](templates/claude-ai-project-instructions.md).
+You don't write it by hand: tell the agent *"use Tabula in this project"* and it calls `setup_project` with the folder name as the slug, puts the section into `CLAUDE.md` and the suggested `.tabula.json` into the repository root. Run `tabula status` before the first `tabula push`: it lists every file the push would upload. For claude.ai projects use [`templates/claude-ai-project-instructions.md`](templates/claude-ai-project-instructions.md).
 
 ### The web UI
 
@@ -195,7 +195,7 @@ Open `http://localhost:3000`, paste `TABULA_TOKEN`, and create your first projec
 
 CI also publishes a ready-made image, `ghcr.io/carnaby/tabula:latest` (plus a `sha-<commit>` tag per build). [`deploy/`](deploy/) holds an example production stack that pulls it and a daily `pg_dump` backup script.
 
-For anything beyond localhost, put Tabula behind a reverse proxy that terminates TLS and bind the container to loopback: the bearer token travels in a header, and it unlocks the whole memory.
+For anything beyond localhost, put Tabula behind a reverse proxy that terminates TLS and bind the container to loopback: the bearer token travels in a header, and it unlocks everything Tabula holds.
 
 ### Connect Claude Code
 
@@ -205,7 +205,7 @@ claude mcp add tabula --scope user --transport http https://tabula.example.com/m
   --header "X-Tabula-Agent: claude-code"
 ```
 
-`X-Tabula-Agent` labels the records this client writes, so the UI shows which agent wrote what. Check with `claude mcp get tabula`.
+`X-Tabula-Agent` labels what this client writes, so the UI shows which agent wrote what. Check with `claude mcp get tabula`.
 
 ### Connect claude.ai
 
@@ -261,25 +261,27 @@ The tests cover the domain rules, the digest builder, the REST API, the MCP endp
 
 ```text
 src/
-  domain/      records, validation, search, digest builder, token estimate
-  agent/       what agents may do (source tagging, read-only human records)
-  mcp/         MCP server, tool descriptions, server instructions, CLAUDE.md section
-  http/        Fastify app, REST API, bearer auth, static UI
-  db/          Drizzle schema, client, migrations runner
+  domain/       records, validation, search, digest builder, token estimate
+  agent/        what agents may do (source tagging, read-only human records)
+  mcp/          MCP server, tool descriptions, server instructions, CLAUDE.md section
+  http/         Fastify app, REST API, bearer auth, static UI
+  db/           Drizzle schema, client, migrations runner
   maintenance/  one-off data migrations run inside the container
-cli/         the tabula command (one dependency-free file, served at /cli/tabula.mjs)
-drizzle/       SQL migrations (generated search column, GIN indexes, the global project)
-web/           React UI (web/src/ui is the UI kit)
-templates/     protocol snippets for CLAUDE.md, claude.ai and the SessionStart hook
-deploy/        example production stack and backup script
+cli/            the tabula command (one dependency-free file, served at /cli/tabula.mjs)
+drizzle/        SQL migrations (generated search column, GIN indexes, the global project)
+web/            React UI (web/src/ui is the UI kit)
+templates/      protocol snippets for CLAUDE.md, claude.ai and the SessionStart hook
+deploy/         example production stack and backup script
+test/           Vitest: unit, database, HTTP/MCP and end-to-end CLI tests
 ```
 
 ## Security
 
-- **Never store secrets in Tabula** — not as a fact, not in a note. The tool descriptions say so, and it is the reason a single shared token is acceptable for a personal deployment.
-- One bearer token (and the optional connector secret) unlocks everything. Tokens are compared in constant time, and the connector secret is kept out of request logs.
+- **Never store secrets in Tabula** — not in a rule, a note, a thought or a synced file. The tool descriptions say so, and it is the reason a single shared token is acceptable for a personal deployment.
+- **Synced files are the most likely way a secret reaches Tabula.** A `sync` pattern uploads every untracked file it matches, and untracked files are exactly where local credentials live. `.env` and `.env.*` (in any folder and any letter case) are always refused, but nothing else is guessed: keep the patterns explicit (`docs/**`, not `**`), run `tabula status` before the first `tabula push`, and treat a secret that was uploaded by mistake as leaked: `tabula rm` only hides the file (it and its previous versions stay in the database, restorable in the UI), so rotate the secret.
+- One bearer token (and the optional connector secret) unlocks all projects, rules, notes and thoughts. Tokens are compared in constant time, and the connector secret is kept out of request logs.
 - Unexpected errors are logged on the server and returned to clients as a generic message, without internals.
-- The `tabula` command never uploads `.env` or `.env.*` files and the server refuses them too; paths are validated on both sides (relative, no `..`, no `.git`).
+- The `tabula` command never uploads `.env` or `.env.*` files and the server refuses them too; paths are validated on both sides (relative, no `..`, no `.git`), and paths that differ only in letter case are never synced, so one cannot overwrite the other on Windows or macOS.
 - `/cli/tabula.mjs` and `/cli/version` are public: they serve the CLI from this repository and no data.
 - Input is validated at the boundary: length limits, slug format, and NUL characters rejected before they reach Postgres.
 

@@ -193,7 +193,8 @@ export const apiRoutes: FastifyPluginAsync<{ db: Db; config: Config }> = async (
   // Recall preview
   app.get('/recall/:project', async (req) => {
     const { project } = parse(z.object({ project: z.string() }), req.params);
-    const d = await recall(db, project);
+    const { state } = parse(z.object({ state: z.enum(['0', '1']).optional() }), req.query);
+    const d = await recall(db, project, { includeState: state !== '0' });
     return { ...d, budget: DIGEST_BUDGET };
   });
 };

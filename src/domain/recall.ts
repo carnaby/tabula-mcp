@@ -1,27 +1,35 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
-import { memories, notes } from '../db/schema.js';
+import { memories, projectFiles } from '../db/schema.js';
 import { buildDigest, type Digest } from './digest.js';
 import { requireProject } from './projects.js';
 
-export async function recall(db: Db, projectId: string, now: Date = new Date()): Promise<Digest> {
+/** The digest an agent reads at session start: global rules, the project state (optional) and the file list. */
+export async function recall(
+  db: Db,
+  projectId: string,
+  opts: { includeState?: boolean; now?: Date } = {},
+): Promise<Digest> {
   await requireProject(db, projectId);
-  const scope = [...new Set([projectId, 'global'])];
-  const [mems, nts] = await Promise.all([
+  const alive = and(eq(projectFiles.projectId, projectId), isNull(projectFiles.deletedAt));
+  const [rules, files, state] = await Promise.all([
     db
-      .select({
-        id: memories.id, projectId: memories.projectId, kind: memories.kind,
-        title: memories.title, body: memories.body, updatedAt: memories.updatedAt,
-      })
+      .select({ id: memories.id, kind: memories.kind, title: memories.title, body: memories.body, updatedAt: memories.updatedAt })
       .from(memories)
-      .where(and(inArray(memories.projectId, scope), eq(memories.status, 'active'))),
+      .where(and(eq(memories.projectId, 'global'), eq(memories.status, 'active'))),
     db
-      .select({
-        id: notes.id, projectId: notes.projectId, title: notes.title, summary: notes.summary,
-        body: notes.body, pinned: notes.pinned, updatedAt: notes.updatedAt,
-      })
-      .from(notes)
-      .where(inArray(notes.projectId, scope)),
+      .select({ path: projectFiles.path, size: projectFiles.size, updatedAt: projectFiles.updatedAt, isState: projectFiles.isState })
+      .from(projectFiles)
+      .where(alive),
+    opts.includeState === false
+      ? Promise.resolve([])
+      : db
+          .select({ path: projectFiles.path, content: projectFiles.content, updatedAt: projectFiles.updatedAt })
+          .from(projectFiles)
+          .where(and(alive, eq(projectFiles.isState, true)))
+          .orderBy(desc(projectFiles.updatedAt), asc(projectFiles.path)),
   ]);
-  return buildDigest({ project: projectId, date: now.toISOString().slice(0, 10), memories: mems, notes: nts });
+  return buildDigest({
+    project: projectId, date: (opts.now ?? new Date()).toISOString().slice(0, 10), memories: rules, files, state,
+  });
 }

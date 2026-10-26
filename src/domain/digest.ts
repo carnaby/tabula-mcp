@@ -1,20 +1,31 @@
 import { shortIds } from './ids.js';
-import { DIGEST_BUDGET, estimateTokens, wordCount } from './tokens.js';
+import { DIGEST_BUDGET, estimateTokens } from './tokens.js';
 import type { MemoryKind } from './validation.js';
 
-export type DigestMemory = { id: string; projectId: string; kind: MemoryKind; title: string; body: string; updatedAt: Date };
-export type DigestNote = {
-  id: string; projectId: string | null; title: string; summary: string; body: string; pinned: boolean; updatedAt: Date;
+/** An active memory of the global project: a global rule, gotcha, fact or decision. */
+export type DigestMemory = { id: string; kind: MemoryKind; title: string; body: string; updatedAt: Date };
+/** A synced file of the project, without its content. */
+export type DigestFile = { path: string; size: number; updatedAt: Date; isState: boolean };
+/** A state file with its content; pass them newest first. */
+export type DigestStateFile = { path: string; content: string; updatedAt: Date };
+export type DigestInput = {
+  project: string;
+  date: string;
+  memories: DigestMemory[];
+  files: DigestFile[];
+  /** Omitted or empty when recall is called with include_state: false. */
+  state?: DigestStateFile[];
+  budget?: number;
 };
-export type DigestInput = { project: string; date: string; memories: DigestMemory[]; notes: DigestNote[]; budget?: number };
 export type TrimStep =
-  | 'decisions-omitted' | 'rules-first-sentence' | 'gotchas-first-sentence' | 'facts-omitted' | 'notes-omitted';
+  | 'files-collapsed' | 'facts-omitted' | 'gotchas-first-sentence' | 'rules-first-sentence' | 'state-truncated';
 export type Digest = { text: string; tokens: number; trimmed: TrimStep[]; overBudget: boolean };
 
-/** The first two steps come from the spec; the rest is an extension from the plan (decision 6). Pinned notes are never trimmed. */
-const TRIM_ORDER: TrimStep[] = [
-  'decisions-omitted', 'rules-first-sentence', 'gotchas-first-sentence', 'facts-omitted', 'notes-omitted',
-];
+/** Applied in this order while the global rules and the file list alone exceed the budget. */
+const REST_TRIM_ORDER: TrimStep[] = ['files-collapsed', 'facts-omitted', 'gotchas-first-sentence', 'rules-first-sentence'];
+/** A state file keeps at least this many characters, or it is replaced by a pointer to read_file. */
+const MIN_STATE_CHARS = 200;
+const EMPTY = 'No global rules and no synced files yet. Files appear here after `tabula push` in a repository with a `.tabula.json`.';
 
 export function firstSentence(text: string): string {
   const flat = text.replace(/\s+/g, ' ').trim();
@@ -22,77 +33,104 @@ export function firstSentence(text: string): string {
   return m ? m[0] : flat;
 }
 
-function ordered<T extends { projectId: string | null; updatedAt: Date }>(items: T[]): T[] {
-  return [...items].sort((a, b) => {
-    const scope = Number(a.projectId !== 'global') - Number(b.projectId !== 'global');
-    return scope !== 0 ? scope : b.updatedAt.getTime() - a.updatedAt.getTime();
-  });
+export function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function render(input: DigestInput, ids: Map<string, string>, trim: ReadonlySet<TrimStep>): string {
-  const g = (x: { projectId: string | null }) => (x.projectId === 'global' && input.project !== 'global' ? '[g] ' : '');
-  const ref = (id: string) => `#${ids.get(id)}`;
-  const of = (kind: MemoryKind) => ordered(input.memories.filter((m) => m.kind === kind));
+const day = (d: Date) => d.toISOString().slice(0, 10);
+const newestFirst = <T extends { updatedAt: Date }>(items: T[]) =>
+  [...items].sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+const byPath = <T extends { path: string }>(items: T[]) =>
+  [...items].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+
+function globalSections(memories: DigestMemory[], ids: Map<string, string>, has: (s: TrimStep) => boolean): string[] {
+  const line = (m: DigestMemory) => `- ${m.title} (#${ids.get(m.id)})`;
   const indent = (s: string) => s.split('\n').map((l) => `  ${l}`).join('\n');
-  const line = (m: DigestMemory) => `- ${g(m)}${m.title} (${ref(m.id)})`;
-  const withBody = (m: DigestMemory, short: boolean) =>
-    `${line(m)}\n${indent(short ? firstSentence(m.body) : m.body.trim())}`;
-
-  const sections: string[] = [];
+  const withBody = (m: DigestMemory, short: boolean) => `${line(m)}\n${indent(short ? firstSentence(m.body) : m.body.trim())}`;
+  const of = (...kinds: MemoryKind[]) => newestFirst(memories.filter((m) => kinds.includes(m.kind)));
+  const out: string[] = [];
   const add = (heading: string, lines: string[]) => {
-    if (lines.length) sections.push(`## ${heading}\n${lines.join('\n')}`);
+    if (lines.length) out.push(`## ${heading}\n${lines.join('\n')}`);
   };
-  const omitted = (heading: string, n: number, what: string) => add(heading, [`- ${n} ${what} omitted — use search`]);
+  add('Global rules (always follow)', of('rule').map((m) => withBody(m, has('rules-first-sentence'))));
+  add('Global gotchas', of('gotcha').map((m) => withBody(m, has('gotchas-first-sentence'))));
+  const facts = of('fact', 'decision');
+  if (has('facts-omitted') && facts.length) out.push(`## Global facts and decisions\n- ${facts.length} omitted — use search`);
+  else add('Global facts and decisions (title only — `get` for the why)', facts.map(line));
+  return out;
+}
 
-  add('Rules (always follow)', of('rule').map((m) => withBody(m, trim.has('rules-first-sentence'))));
-  add('Gotchas', of('gotcha').map((m) => withBody(m, trim.has('gotchas-first-sentence'))));
+function filesSection(files: DigestFile[], has: (s: TrimStep) => boolean): string[] {
+  if (files.length === 0) return [];
+  if (has('files-collapsed')) return [`## Files\n- ${files.length} synced files — call \`list_files\` for the list`];
+  const lines = byPath(files).map((f) => `- ${f.path} — ${day(f.updatedAt)}, ${formatSize(f.size)}${f.isState ? ' (state)' : ''}`);
+  return [`## Files (${files.length}) — \`read_file\` for the content\n${lines.join('\n')}`];
+}
 
-  const decisions = of('decision');
-  if (trim.has('decisions-omitted') && decisions.length) omitted('Decisions', decisions.length, 'decisions');
-  else add('Decisions (title only — `get` for the why)', decisions.map(line));
-
-  const facts = of('fact');
-  if (trim.has('facts-omitted') && facts.length) omitted('Facts', facts.length, 'facts');
-  else add('Facts', facts.map(line));
-
-  const listed = ordered(input.notes.filter((n) => !n.pinned));
-  if (trim.has('notes-omitted') && listed.length) omitted('Notes', listed.length, 'notes');
-  else
-    add(
-      'Notes (human-authored, read-only — `get` for full text)',
-      listed.map((n) => `- ${ref(n.id)} ${g(n)}${n.title}${n.summary ? ` — ${n.summary}` : ''} (${wordCount(n.body)} words)`),
-    );
-
-  for (const n of ordered(input.notes.filter((x) => x.pinned))) {
-    sections.push(`## Pinned note: ${g(n)}${n.title} (${ref(n.id)})\n${n.body.trim()}`);
-  }
-
-  if (sections.length === 0) {
-    sections.push('No active memories or notes yet. Call `remember` when you make a decision a future session must know.');
-  }
-
-  const header =
-    input.project === 'global'
-      ? `# Tabula · global · ${input.date}`
-      : `# Tabula · ${input.project} (+ global) · ${input.date}`;
-  return `${[header, ...sections].join('\n\n')}\n`;
+/** The state section in at most maxChars characters; files that do not fit are cut at a line break or replaced by a pointer. */
+function stateSection(state: DigestStateFile[], maxChars: number): { text: string; truncated: boolean } {
+  const head = '## Project state';
+  const title = (f: DigestStateFile) => `### ${f.path} (${day(f.updatedAt)})`;
+  const omitted = (f: DigestStateFile) => `${title(f)}\n[omitted to fit the budget — read_file("${f.path}")]`;
+  const parts: string[] = [];
+  let truncated = false;
+  /** Characters used so far, including the separator before the next part. */
+  const used = () => head.length + 1 + parts.join('\n\n').length + (parts.length ? 2 : 0);
+  state.forEach((f, i) => {
+    // Keep room for the pointers of the files after this one.
+    const reserve = state.slice(i + 1).reduce((n, g) => n + 2 + omitted(g).length, 0);
+    const body = f.content.trim() || '(empty)';
+    const room = maxChars - used() - reserve - title(f).length - 1;
+    if (body.length <= room) {
+      parts.push(`${title(f)}\n${body}`);
+      return;
+    }
+    truncated = true;
+    const note = `[… truncated — read_file("${f.path}") for the rest]`;
+    const keep = room - note.length - 1;
+    if (keep < MIN_STATE_CHARS) {
+      parts.push(omitted(f));
+      return;
+    }
+    const cut = body.slice(0, keep);
+    const nl = cut.lastIndexOf('\n');
+    parts.push(`${title(f)}\n${(nl >= keep / 2 ? cut.slice(0, nl) : cut).trimEnd()}\n${note}`);
+  });
+  return { text: `${head}\n${parts.join('\n\n')}`, truncated };
 }
 
 export function buildDigest(input: DigestInput): Digest {
   const budget = input.budget ?? DIGEST_BUDGET;
-  const ids = shortIds([...input.memories.map((m) => m.id), ...input.notes.map((n) => n.id)]);
-  const applied = new Set<TrimStep>();
-  let text = render(input, ids, applied);
-  for (const step of TRIM_ORDER) {
-    if (estimateTokens(text) <= budget) break;
-    applied.add(step);
-    text = render(input, ids, applied);
+  const maxChars = budget * 4;
+  const ids = shortIds(input.memories.map((m) => m.id));
+  const header = `# Tabula · ${input.project} · ${input.date}`;
+  const applied: TrimStep[] = [];
+  const has = (s: TrimStep) => applied.includes(s);
+  const render = () => ({ rules: globalSections(input.memories, ids, has), files: filesSection(input.files, has) });
+  let rest = render();
+  const restChars = () => [header, ...rest.rules, ...rest.files].join('\n\n').length + 1;
+  // The global rules and the file list come first; the state gets the room they leave.
+  for (const step of REST_TRIM_ORDER) {
+    if (restChars() <= maxChars) break;
+    applied.push(step);
+    rest = render();
   }
+  const sections = [header, ...rest.rules];
+  if (input.state?.length) {
+    const s = stateSection(input.state, maxChars - restChars() - 2);
+    if (s.truncated) applied.push('state-truncated');
+    sections.push(s.text);
+  }
+  sections.push(...rest.files);
+  if (sections.length === 1) sections.push(EMPTY);
+  let text = `${sections.join('\n\n')}\n`;
   const overBudget = estimateTokens(text) > budget;
   if (overBudget) {
-    const [head, ...rest] = text.split('\n\n');
-    const warning = `(Over budget: ~${estimateTokens(text)} tokens of ${budget} after all trimming. Shorten pinned notes or condense rules and gotchas in Tabula.)`;
-    text = [head, warning, ...rest].join('\n\n');
+    const [head, ...more] = text.split('\n\n');
+    const warning = `(Over budget: ~${estimateTokens(text)} tokens of ${budget} after all trimming. Shorten the global rules in Tabula.)`;
+    text = [head, warning, ...more].join('\n\n');
   }
-  return { text, tokens: estimateTokens(text), trimmed: [...applied], overBudget };
+  return { text, tokens: estimateTokens(text), trimmed: applied, overBudget };
 }

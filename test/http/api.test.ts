@@ -64,9 +64,11 @@ describe('REST API', () => {
     expect((await call('GET', '/api/notes?project=demo')).json()).toMatchObject({ total: 1, items: [{ wordCount: 4 }] });
 
     const preview = (await call('GET', '/api/recall/demo')).json();
-    expect(preview).toMatchObject({ budget: 1500, overBudget: false, trimmed: [] });
-    expect(preview.text).toContain('## Pinned note: Protocol');
+    expect(preview).toMatchObject({ budget: 3000, overBudget: false, trimmed: [] });
+    expect(preview.text).toContain('# Tabula · demo · ');
+    expect(preview.text).not.toContain('Protocol'); // notes never go into recall
     expect(preview.tokens).toBeGreaterThan(0);
+    expect((await call('GET', '/api/recall/demo?state=0')).statusCode).toBe(200);
 
     expect((await call('DELETE', `/api/notes/${n.id}`)).statusCode).toBe(204);
     expect((await call('GET', '/api/recall/nope')).statusCode).toBe(404);

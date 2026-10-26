@@ -1,132 +1,126 @@
 import { describe, expect, it } from 'vitest';
-import { buildDigest, type DigestInput, type DigestMemory, type DigestNote, firstSentence } from '../../src/domain/digest.js';
-import { estimateTokens } from '../../src/domain/tokens.js';
+import {
+  buildDigest, type DigestFile, type DigestInput, type DigestMemory, firstSentence, formatSize,
+} from '../../src/domain/digest.js';
+import { DIGEST_BUDGET, estimateTokens } from '../../src/domain/tokens.js';
 
 const id = (n: number) => `${n.toString(16).padStart(4, '0')}0000-0000-4000-8000-000000000000`;
-const day = (d: number) => new Date(Date.UTC(2026, 8, d));
-const mem = (n: number, projectId: string, kind: DigestMemory['kind'], title: string, body: string, d: number): DigestMemory =>
-  ({ id: id(n), projectId, kind, title, body, updatedAt: day(d) });
-const note = (n: number, projectId: string, title: string, summary: string, body: string, pinned: boolean): DigestNote =>
-  ({ id: id(n), projectId, title, summary, body, pinned, updatedAt: day(1) });
+const day = (d: number) => new Date(Date.UTC(2026, 9, d));
+const mem = (n: number, kind: DigestMemory['kind'], title: string, body: string, d: number): DigestMemory =>
+  ({ id: id(n), kind, title, body, updatedAt: day(d) });
+const file = (path: string, size: number, d: number, isState = false): DigestFile => ({ path, size, updatedAt: day(d), isState });
 
 const fixture: DigestInput = {
   project: 'acme',
-  date: '2026-09-19',
+  date: '2026-10-26',
   memories: [
-    mem(1, 'global', 'rule', 'Never give an agent raw shell access.', 'Expose domain-scoped tools only.', 1),
-    mem(2, 'acme', 'rule', 'Run tests via `pnpm test:unit`.', 'Vitest directly skips the DB setup. It also ignores env files.', 10),
-    mem(3, 'acme', 'rule', 'Migrations run from CI only.', 'Local runs drifted the schema twice.', 12),
-    mem(4, 'acme', 'gotcha', 'Serverless cold start kills long migrations.', 'Anything over ~60 s gets killed.', 5),
-    mem(5, 'acme', 'decision', 'Drizzle over Prisma', 'Typed schema, SQL migrations in repo.', 3),
-    mem(6, 'acme', 'fact', 'Production DB lives on a managed host', 'Not in the app container.', 3),
+    mem(1, 'rule', 'Never give an agent raw shell access.', 'Expose domain-scoped tools only.', 1),
+    mem(2, 'rule', 'Run long jobs detached.', 'Background tasks die with the session. Use a log file.', 10),
+    mem(3, 'gotcha', 'Tools turn a NUL escape into a real NUL byte.', 'Use a regex instead.', 5),
+    mem(4, 'fact', 'Production runs on a single host', 'Not in a managed cloud.', 3),
+    mem(5, 'decision', 'Drizzle over Prisma', 'Typed schema.', 4),
   ],
-  notes: [
-    note(7, 'acme', 'Architecture overview', 'Module boundaries and event contracts', 'one two three', false),
-    note(8, 'global', 'Session protocol', '', 'Verify before you claim.', true),
-  ],
+  files: [file('docs/specs/design.md', 12_800, 20), file('docs/handoff/state.md', 300, 25, true)],
+  state: [{ path: 'docs/handoff/state.md', content: '# State\nNext: write the CLI.\n', updatedAt: day(25) }],
 };
 
 const FULL = [
-  '# Tabula · acme (+ global) · 2026-09-19',
+  '# Tabula · acme · 2026-10-26',
   '',
-  '## Rules (always follow)',
-  '- [g] Never give an agent raw shell access. (#0001)',
+  '## Global rules (always follow)',
+  '- Run long jobs detached. (#0002)',
+  '  Background tasks die with the session. Use a log file.',
+  '- Never give an agent raw shell access. (#0001)',
   '  Expose domain-scoped tools only.',
-  '- Migrations run from CI only. (#0003)',
-  '  Local runs drifted the schema twice.',
-  '- Run tests via `pnpm test:unit`. (#0002)',
-  '  Vitest directly skips the DB setup. It also ignores env files.',
   '',
-  '## Gotchas',
-  '- Serverless cold start kills long migrations. (#0004)',
-  '  Anything over ~60 s gets killed.',
+  '## Global gotchas',
+  '- Tools turn a NUL escape into a real NUL byte. (#0003)',
+  '  Use a regex instead.',
   '',
-  '## Decisions (title only — `get` for the why)',
+  '## Global facts and decisions (title only — `get` for the why)',
   '- Drizzle over Prisma (#0005)',
+  '- Production runs on a single host (#0004)',
   '',
-  '## Facts',
-  '- Production DB lives on a managed host (#0006)',
+  '## Project state',
+  '### docs/handoff/state.md (2026-10-25)',
+  '# State',
+  'Next: write the CLI.',
   '',
-  '## Notes (human-authored, read-only — `get` for full text)',
-  '- #0007 Architecture overview — Module boundaries and event contracts (3 words)',
-  '',
-  '## Pinned note: [g] Session protocol (#0008)',
-  'Verify before you claim.',
+  '## Files (2) — `read_file` for the content',
+  '- docs/handoff/state.md — 2026-10-25, 300 B (state)',
+  '- docs/specs/design.md — 2026-10-20, 12.5 KB',
   '',
 ].join('\n');
 
 describe('buildDigest', () => {
-  it('renders the fixed section order, global first, newest first', () => {
+  it('renders the global rules, the project state and the files in a fixed order', () => {
     const d = buildDigest(fixture);
     expect(d.text).toBe(FULL);
-    expect(d.tokens).toBe(estimateTokens(FULL));
-    expect(d.trimmed).toEqual([]);
-    expect(d.overBudget).toBe(false);
+    expect(d).toMatchObject({ tokens: estimateTokens(FULL), trimmed: [], overBudget: false });
   });
 
-  it('omits empty sections and explains an empty digest', () => {
-    const d = buildDigest({ project: 'demo', date: '2026-09-19', memories: [], notes: [] });
-    expect(d.text).toBe(
-      '# Tabula · demo (+ global) · 2026-09-19\n\nNo active memories or notes yet. Call `remember` when you make a decision a future session must know.\n',
+  it('leaves the state out when it is not asked for, but still marks state files', () => {
+    const d = buildDigest({ ...fixture, state: undefined });
+    expect(d.text).not.toContain('## Project state');
+    expect(d.text).toContain('- docs/handoff/state.md — 2026-10-25, 300 B (state)');
+  });
+
+  it('explains an empty digest', () => {
+    expect(buildDigest({ project: 'demo', date: '2026-10-26', memories: [], files: [] }).text).toBe(
+      '# Tabula · demo · 2026-10-26\n\nNo global rules and no synced files yet. Files appear here after `tabula push` in a repository with a `.tabula.json`.\n',
     );
   });
 
-  it('uses a plain header and no [g] prefix for the global project itself', () => {
-    const d = buildDigest({ project: 'global', date: '2026-09-19', memories: [fixture.memories[0]!], notes: [] });
-    expect(d.text).toContain('# Tabula · global · 2026-09-19');
-    expect(d.text).toContain('- Never give an agent raw shell access. (#0001)');
-    expect(d.text).not.toContain('[g]');
+  it('truncates a long state at a line break with a pointer to read_file, keeping the rules and the files', () => {
+    const long = Array.from({ length: 600 }, (_, i) => `Line ${i} of the handoff state.`).join('\n');
+    const d = buildDigest({ ...fixture, state: [{ path: 'docs/handoff/state.md', content: long, updatedAt: day(25) }] });
+    expect(d.trimmed).toEqual(['state-truncated']);
+    expect(d.overBudget).toBe(false);
+    expect(d.tokens).toBeLessThanOrEqual(DIGEST_BUDGET);
+    expect(d.text).toContain('Background tasks die with the session. Use a log file.');
+    expect(d.text).toMatch(/Line \d+ of the handoff state\.\n\[… truncated — read_file\("docs\/handoff\/state\.md"\) for the rest\]/);
+    expect(d.text).toContain('## Files (2)');
   });
 
-  it('extends short ids when two records share a 4-char prefix', () => {
-    const a = { ...fixture.memories[5]!, id: 'abcd1000-0000-4000-8000-000000000000' };
-    const b = { ...fixture.memories[5]!, id: 'abcd2000-0000-4000-8000-000000000000', title: 'Other fact' };
-    const d = buildDigest({ project: 'acme', date: '2026-09-19', memories: [a, b], notes: [] });
-    expect(d.text).toContain('(#abcd1)');
-    expect(d.text).toContain('(#abcd2)');
-  });
-
-  it('first trims by omitting decisions', () => {
-    const full = buildDigest(fixture);
-    const d = buildDigest({ ...fixture, budget: full.tokens - 1 });
-    expect(d.trimmed).toEqual(['decisions-omitted']);
-    expect(d.text).toContain('## Decisions\n- 1 decisions omitted — use search');
-    expect(d.text).toContain('It also ignores env files.');
+  it('replaces a state file that no longer fits with a pointer and stays within the budget', () => {
+    const d = buildDigest({
+      ...fixture,
+      state: [
+        { path: 'docs/handoff/a.md', content: 'a'.repeat(20_000), updatedAt: day(26) },
+        { path: 'docs/handoff/b.md', content: 'b'.repeat(500), updatedAt: day(20) },
+      ],
+    });
+    expect(d.text).toContain('[… truncated — read_file("docs/handoff/a.md") for the rest]');
+    expect(d.text).toContain('### docs/handoff/b.md (2026-10-20)\n[omitted to fit the budget — read_file("docs/handoff/b.md")]');
     expect(d.overBudget).toBe(false);
   });
 
-  it('applies every step in order and never trims pinned notes', () => {
-    const pinnedBody = 'Verify before you claim. '.repeat(10).trim();
-    const input = { ...fixture, budget: 1, notes: [fixture.notes[0]!, { ...fixture.notes[1]!, body: pinnedBody }] };
-    const d = buildDigest(input);
+  it('trims the file list and the rules in a fixed order when they alone exceed the budget', () => {
+    const d = buildDigest({ ...fixture, budget: 1 });
     expect(d.trimmed).toEqual([
-      'decisions-omitted', 'rules-first-sentence', 'gotchas-first-sentence', 'facts-omitted', 'notes-omitted',
+      'files-collapsed', 'facts-omitted', 'gotchas-first-sentence', 'rules-first-sentence', 'state-truncated',
     ]);
-    expect(d.text).toContain('  Vitest directly skips the DB setup.\n');
-    expect(d.text).not.toContain('It also ignores env files.');
-    expect(d.text).toContain('- 1 facts omitted — use search');
-    expect(d.text).toContain('- 1 notes omitted — use search');
-    expect(d.text).toContain(pinnedBody);
+    expect(d.text).toContain('- 2 synced files — call `list_files` for the list');
+    expect(d.text).toContain('## Global facts and decisions\n- 2 omitted — use search');
+    expect(d.text).toContain('  Background tasks die with the session.\n');
+    expect(d.text).not.toContain('Use a log file.');
+    expect(d.text).toContain('[omitted to fit the budget — read_file("docs/handoff/state.md")]');
     expect(d.overBudget).toBe(true);
     expect(d.text.split('\n\n')[1]).toMatch(/^\(Over budget: ~\d+ tokens of 1 after all trimming\./);
   });
 
-  it('blames rules/gotchas, not pinned notes, when over budget with no notes at all', () => {
-    const longSentence = 'x '.repeat(3000).trim();
-    const input: DigestInput = {
-      project: 'acme',
-      date: '2026-09-19',
-      memories: [
-        mem(1, 'acme', 'rule', 'Rule one', longSentence, 1),
-        mem(2, 'acme', 'rule', 'Rule two', longSentence, 2),
-        mem(3, 'acme', 'gotcha', 'Gotcha one', longSentence, 3),
-      ],
-      notes: [],
-    };
-    const d = buildDigest(input);
-    expect(d.overBudget).toBe(true);
-    expect(d.text.split('\n\n')[1]).toMatch(/^\(Over budget: ~\d+ tokens of 1500 after all trimming\./);
-    expect(d.text).not.toContain('Pinned note');
+  it('extends short ids when two rules share a 4-character prefix', () => {
+    const a = { ...fixture.memories[0]!, id: 'abcd1000-0000-4000-8000-000000000000' };
+    const b = { ...fixture.memories[0]!, id: 'abcd2000-0000-4000-8000-000000000000', title: 'Other rule' };
+    const d = buildDigest({ project: 'acme', date: '2026-10-26', memories: [a, b], files: [] });
+    expect(d.text).toContain('(#abcd1)');
+    expect(d.text).toContain('(#abcd2)');
+  });
+});
+
+describe('formatSize', () => {
+  it('uses B, KB and MB with one decimal', () => {
+    expect([0, 1023, 1024, 12_800, 1_048_576].map(formatSize)).toEqual(['0 B', '1023 B', '1.0 KB', '12.5 KB', '1.0 MB']);
   });
 });
 

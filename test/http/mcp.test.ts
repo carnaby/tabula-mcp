@@ -97,12 +97,12 @@ describe('MCP endpoint', () => {
     const client = await connect('/mcp', bearer);
     const r = await client.callTool({
       name: 'remember',
-      arguments: { project: 'demo', kind: 'gotcha', title: 'Cold start kills migrations', body: 'Over 60 s.' },
+      arguments: { project: 'global', kind: 'gotcha', title: 'Cold start kills migrations', body: 'Over 60 s.' },
     });
     const { id } = JSON.parse(textOf(r)) as { id: string };
     expect(await getMemory(db, id)).toMatchObject({ source: 'agent', agentLabel: 'claude-code' });
     const digest = textOf(await client.callTool({ name: 'recall', arguments: { project: 'demo' } }));
-    expect(digest).toContain('## Gotchas\n- Cold start kills migrations');
+    expect(digest).toContain('## Global gotchas\n- Cold start kills migrations');
     await client.close();
   });
 

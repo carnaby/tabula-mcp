@@ -21,7 +21,7 @@ export type TrimStep =
   | 'files-collapsed' | 'facts-omitted' | 'gotchas-first-sentence' | 'rules-first-sentence' | 'state-truncated';
 export type Digest = { text: string; tokens: number; trimmed: TrimStep[]; overBudget: boolean };
 
-/** Applied in this order while the global rules and the file list alone exceed the budget. */
+/** Applied in this order while the global rules and the file list leave the state too little room. */
 const REST_TRIM_ORDER: TrimStep[] = ['files-collapsed', 'facts-omitted', 'gotchas-first-sentence', 'rules-first-sentence'];
 /** A state file keeps at least this many characters, or it is replaced by a pointer to read_file. */
 const MIN_STATE_CHARS = 200;
@@ -111,26 +111,41 @@ export function buildDigest(input: DigestInput): Digest {
   const render = () => ({ rules: globalSections(input.memories, ids, has), files: filesSection(input.files, has) });
   let rest = render();
   const restChars = () => [header, ...rest.rules, ...rest.files].join('\n\n').length + 1;
-  // The global rules and the file list come first; the state gets the room they leave.
-  for (const step of REST_TRIM_ORDER) {
-    if (restChars() <= maxChars) break;
-    applied.push(step);
+  const pending = [...REST_TRIM_ORDER];
+  const trimRest = () => {
+    applied.push(pending.shift()!);
     rest = render();
+  };
+  const state = input.state ?? [];
+  // Room kept for the state section and its separator: its full text, but at most half the budget.
+  const stateReserve = state.length
+    ? Math.min(stateSection(state, Number.POSITIVE_INFINITY).text.length + 2, Math.floor(maxChars / 2))
+    : 0;
+  const compose = () => {
+    const s = state.length ? stateSection(state, maxChars - restChars() - 2) : undefined;
+    const sections = [header, ...rest.rules, ...(s ? [s.text] : []), ...rest.files];
+    if (sections.length === 1) sections.push(EMPTY);
+    return { text: `${sections.join('\n\n')}\n`, stateTruncated: s?.truncated ?? false };
+  };
+  // The global rules and the file list are trimmed first, until they leave the state its reserve.
+  while (pending.length && restChars() + stateReserve > maxChars) trimRest();
+  let out = compose();
+  // The state's headings and pointers may still not fit in what is left: keep trimming the rest.
+  while (pending.length && out.text.length > maxChars) {
+    trimRest();
+    out = compose();
   }
-  const sections = [header, ...rest.rules];
-  if (input.state?.length) {
-    const s = stateSection(input.state, maxChars - restChars() - 2);
-    if (s.truncated) applied.push('state-truncated');
-    sections.push(s.text);
-  }
-  sections.push(...rest.files);
-  if (sections.length === 1) sections.push(EMPTY);
-  let text = `${sections.join('\n\n')}\n`;
+  const trimmed: TrimStep[] = out.stateTruncated ? [...applied, 'state-truncated'] : applied;
+  let text = out.text;
   const overBudget = estimateTokens(text) > budget;
   if (overBudget) {
     const [head, ...more] = text.split('\n\n');
-    const warning = `(Over budget: ~${estimateTokens(text)} tokens of ${budget} after all trimming. Shorten the global rules in Tabula.)`;
-    text = [head, warning, ...more].join('\n\n');
+    const withWarning = (n: number) =>
+      [head, `(Over budget: ~${n} tokens of ${budget} after all trimming. Shorten the global rules in Tabula.)`, ...more].join('\n\n');
+    // The count is part of the text it counts: settle on the number that includes the warning itself.
+    let n = estimateTokens(text);
+    while (estimateTokens(withWarning(n)) !== n) n = estimateTokens(withWarning(n));
+    text = withWarning(n);
   }
-  return { text, tokens: estimateTokens(text), trimmed: applied, overBudget };
+  return { text, tokens: estimateTokens(text), trimmed, overBudget };
 }

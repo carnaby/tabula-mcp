@@ -109,6 +109,35 @@ describe('buildDigest', () => {
     expect(d.text.split('\n\n')[1]).toMatch(/^\(Over budget: ~\d+ tokens of 1 after all trimming\./);
   });
 
+  it('collapses the file list instead of overflowing when the list leaves no room for the state', () => {
+    // 257 files fill the budget almost exactly; the state section on top would overflow it.
+    const files = Array.from({ length: 257 }, (_, i) => file(`docs/specs/file-${String(i).padStart(3, '0')}.md`, 1000, 20));
+    files.push(file('docs/handoff/state.md', 300, 25, true));
+    const input: DigestInput = { project: 'acme', date: '2026-10-26', memories: [], files, state: fixture.state };
+    expect(buildDigest({ ...input, state: undefined }).trimmed).toEqual([]);
+    const d = buildDigest(input);
+    expect(d.overBudget).toBe(false);
+    expect(d.tokens).toBeLessThanOrEqual(DIGEST_BUDGET);
+    expect(d.trimmed).toContain('files-collapsed');
+    expect(d.text).toContain('## Project state\n### docs/handoff/state.md (2026-10-25)\n# State\nNext: write the CLI.');
+    expect(d.text).not.toContain('[omitted to fit the budget');
+  });
+
+  it('applies only the steps it needs', () => {
+    const d = buildDigest({ ...fixture, budget: 160 });
+    expect(d.trimmed).toEqual(['files-collapsed']);
+    expect(d.overBudget).toBe(false);
+    expect(d.text).toContain('Background tasks die with the session. Use a log file.');
+    expect(d.text).toContain('## Project state\n### docs/handoff/state.md (2026-10-25)\n# State\nNext: write the CLI.');
+  });
+
+  it('states the size of the final text, warning included, when over budget', () => {
+    const d = buildDigest({ ...fixture, budget: 1 });
+    const n = /\(Over budget: ~(\d+) tokens of 1 /.exec(d.text)?.[1];
+    expect(Number(n)).toBe(d.tokens);
+    expect(d.tokens).toBe(estimateTokens(d.text));
+  });
+
   it('extends short ids when two rules share a 4-character prefix', () => {
     const a = { ...fixture.memories[0]!, id: 'abcd1000-0000-4000-8000-000000000000' };
     const b = { ...fixture.memories[0]!, id: 'abcd2000-0000-4000-8000-000000000000', title: 'Other rule' };

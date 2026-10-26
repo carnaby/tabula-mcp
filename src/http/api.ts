@@ -2,7 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import type { Config } from '../config.js';
 import type { Db } from '../db/client.js';
-import { badRequest, notFound } from '../domain/errors.js';
+import { notFound } from '../domain/errors.js';
 import {
   createMemory, deleteMemory, deprecateMemory, getMemory, MEMORY_SORTS, pageMemories, supersedesChain, updateMemory,
 } from '../domain/memories.js';
@@ -19,12 +19,8 @@ import { recall } from '../domain/recall.js';
 import { DIGEST_BUDGET, estimateTokens, wordCount } from '../domain/tokens.js';
 import { MEMORY_KINDS } from '../domain/validation.js';
 import { requireBearer } from './auth.js';
-
-function parse<T extends z.ZodType>(schema: T, data: unknown): z.infer<T> {
-  const r = schema.safeParse(data ?? {});
-  if (!r.success) throw badRequest(r.error.issues.map((i) => `${i.path.join('.') || 'input'}: ${i.message}`).join('; '));
-  return r.data;
-}
+import { fileRoutes } from './files-api.js';
+import { parse } from './parse.js';
 
 const kind = z.enum(MEMORY_KINDS);
 const tags = z.array(z.string()).optional();
@@ -41,6 +37,8 @@ const withSize = (n: Note) => ({ ...n, wordCount: wordCount(n.body), tokenEstima
 
 export const apiRoutes: FastifyPluginAsync<{ db: Db; config: Config }> = async (app, { db, config }) => {
   app.addHook('preHandler', requireBearer(config.token));
+  // Child plugin: inherits the bearer preHandler above.
+  await app.register(fileRoutes, { db });
 
   // Projects
   app.get('/projects', () => listProjects(db));

@@ -11,6 +11,7 @@ const TYPE: Record<SearchHit['type'], { icon: IconName; label: string }> = {
   memory: { icon: 'layers', label: 'Memory' },
   note: { icon: 'fileText', label: 'Note' },
   thought: { icon: 'lightbulb', label: 'Thought' },
+  file: { icon: 'folder', label: 'File' },
 };
 
 export function SearchPage({ q: initialQ, projects }: { q: string; projects: Project[] | undefined }) {
@@ -28,6 +29,7 @@ export function SearchPage({ q: initialQ, projects }: { q: string; projects: Pro
   }, [dq]);
 
   const open = async (h: SearchHit) => {
+    if (h.type === 'file') return navigate(href.project(h.project!));
     if (h.type === 'thought') return navigate(href.thought(h.id));
     if (h.type === 'note') return navigate(href.note(h.project!, h.id));
     try {

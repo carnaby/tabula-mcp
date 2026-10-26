@@ -72,7 +72,7 @@ export type ThoughtRevision = {
 
 export type SearchHit = {
   id: string;
-  type: 'memory' | 'note' | 'thought';
+  type: 'memory' | 'note' | 'thought' | 'file';
   project: string | null;
   kind: MemoryKind | null;
   title: string;

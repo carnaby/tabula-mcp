@@ -85,7 +85,7 @@ export async function search(db: Db, p: SearchParams): Promise<SearchHit[]> {
 
 export type QuickHit = {
   id: string;
-  type: 'memory' | 'note' | 'thought';
+  type: 'memory' | 'note' | 'thought' | 'file';
   project: string | null;
   kind: MemoryKind | null;
   title: string;
@@ -94,7 +94,7 @@ export type QuickHit = {
   updated_at: string;
 };
 
-/** The UI's global search box: prefix match over memories, notes and thoughts, best match first. */
+/** The UI's global search box: prefix match over memories, notes, thoughts and project files, best match first. */
 export async function quickSearch(db: Db, p: { q: string; limit?: number }): Promise<QuickHit[]> {
   const tsq = prefixTsQuery(p.q);
   if (!tsq) return [];
@@ -117,6 +117,10 @@ export async function quickSearch(db: Db, p: { q: string; limit?: number }): Pro
         SELECT t.id, 'thought', NULL, NULL, t.title,
           t.body, 'active', t.updated_at, ts_rank(t.search, q.tsq)
         FROM thoughts t, q WHERE t.search @@ q.tsq AND NOT t.archived
+        UNION ALL
+        SELECT f.id, 'file', f.project_id, NULL, f.path,
+          left(f.content, 100000), 'active', f.updated_at, ts_rank(f.search, q.tsq)
+        FROM project_files f, q WHERE f.search @@ q.tsq AND f.deleted_at IS NULL
       ) hits
       ORDER BY (status = 'active') DESC, rank DESC, updated_at DESC
       LIMIT ${limit}

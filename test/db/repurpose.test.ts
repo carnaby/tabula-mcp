@@ -30,6 +30,13 @@ describe('repurpose cleanup', () => {
     await expect(applyRepurpose(db, bogus)).rejects.toThrow(/unknown or inactive/);
     expect((await getMemory(db, p1.id))?.status).toBe('active');
 
+    const wrong = await planRepurpose(db, [p1.id, p1.id.slice(0, 8)]);
+    expect(wrong.unknownIds).toEqual([p1.id, p1.id.slice(0, 8)]);
+    expect(wrong.globalToArchive).toEqual([]);
+    await expect(applyRepurpose(db, wrong)).rejects.toThrow(/unknown or inactive/);
+    expect((await getMemory(db, p1.id))?.status).toBe('active');
+    expect((await getNote(db, note.id))?.projectId).toBe('global');
+
     const plan = await planRepurpose(db, [domain.id.toUpperCase()]);
     expect(plan.globalToArchive.map((c) => c.id)).toEqual([domain.id]);
     expect(await applyRepurpose(db, plan)).toEqual({ archived: 3, movedNotes: 1 });

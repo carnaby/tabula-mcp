@@ -82,3 +82,33 @@ export function formatPlan(p: RepurposePlan): string {
     list(p.globalMemories),
   ].join('\n');
 }
+
+export const USAGE =
+  'Usage: node dist/maintenance/run-repurpose.js [--apply] [--archive-global=<uuid,uuid,...>]';
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Strict parsing: only `--apply` and `--archive-global=<full uuids>`, each at most once. Throws a usage error otherwise. */
+export function parseArgs(argv: string[]): { apply: boolean; archiveGlobal: string[] } {
+  let apply = false;
+  let archiveGlobal: string[] | null = null;
+  for (const a of argv) {
+    if (a === '--apply') {
+      if (apply) throw new Error(`duplicate --apply
+${USAGE}`);
+      apply = true;
+    } else if (a.startsWith('--archive-global=')) {
+      if (archiveGlobal) throw new Error(`duplicate --archive-global
+${USAGE}`);
+      const ids = a.slice('--archive-global='.length).split(',');
+      const bad = ids.find((id) => !UUID.test(id));
+      if (bad !== undefined) throw new Error(`--archive-global needs full comma-separated uuids, got "${bad}"
+${USAGE}`);
+      archiveGlobal = ids.map((id) => id.toLowerCase());
+    } else {
+      throw new Error(`unknown argument "${a}"
+${USAGE}`);
+    }
+  }
+  return { apply, archiveGlobal: archiveGlobal ?? [] };
+}

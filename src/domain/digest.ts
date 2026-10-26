@@ -4,7 +4,7 @@ import type { MemoryKind } from './validation.js';
 
 export type DigestMemory = { id: string; projectId: string; kind: MemoryKind; title: string; body: string; updatedAt: Date };
 export type DigestNote = {
-  id: string; projectId: string; title: string; summary: string; body: string; pinned: boolean; updatedAt: Date;
+  id: string; projectId: string | null; title: string; summary: string; body: string; pinned: boolean; updatedAt: Date;
 };
 export type DigestInput = { project: string; date: string; memories: DigestMemory[]; notes: DigestNote[]; budget?: number };
 export type TrimStep =
@@ -22,7 +22,7 @@ export function firstSentence(text: string): string {
   return m ? m[0] : flat;
 }
 
-function ordered<T extends { projectId: string; updatedAt: Date }>(items: T[]): T[] {
+function ordered<T extends { projectId: string | null; updatedAt: Date }>(items: T[]): T[] {
   return [...items].sort((a, b) => {
     const scope = Number(a.projectId !== 'global') - Number(b.projectId !== 'global');
     return scope !== 0 ? scope : b.updatedAt.getTime() - a.updatedAt.getTime();
@@ -30,7 +30,7 @@ function ordered<T extends { projectId: string; updatedAt: Date }>(items: T[]): 
 }
 
 function render(input: DigestInput, ids: Map<string, string>, trim: ReadonlySet<TrimStep>): string {
-  const g = (x: { projectId: string }) => (x.projectId === 'global' && input.project !== 'global' ? '[g] ' : '');
+  const g = (x: { projectId: string | null }) => (x.projectId === 'global' && input.project !== 'global' ? '[g] ' : '');
   const ref = (id: string) => `#${ids.get(id)}`;
   const of = (kind: MemoryKind) => ordered(input.memories.filter((m) => m.kind === kind));
   const indent = (s: string) => s.split('\n').map((l) => `  ${l}`).join('\n');

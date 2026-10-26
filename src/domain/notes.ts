@@ -20,7 +20,7 @@ const cols = {
 
 export type Note = {
   id: string;
-  projectId: string;
+  projectId: string | null;
   title: string;
   summary: string;
   body: string;

@@ -14,7 +14,7 @@ export type AgentContext = { db: Db; agentLabel: string };
 
 /** Project memories were replaced by synced files; agents keep only the global rules, and only on request. */
 export const GLOBAL_ONLY =
-  'Tabula keeps no project memories: remember and deprecate work only on global rules (project "global"), and only when the user explicitly asks. Project knowledge belongs in the repository or in its synced files (tabula push).';
+  'Tabula keeps no project memories: remember and deprecate work only on global rules (project "global"), and only when the user explicitly asks. Project knowledge belongs in the repository or in its synced files (tabula push). Do not retry with project "global" unless the user asked for a rule that applies to every project.';
 
 /** read_file returns at most this many characters per call. */
 export const READ_CHUNK = 100_000;

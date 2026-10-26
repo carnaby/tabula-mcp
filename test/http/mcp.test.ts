@@ -51,6 +51,7 @@ describe('MCP endpoint', () => {
     const ins = client.getInstructions();
     expect(ins).toMatch(/^Tabula keeps each project's files that are not in git/);
     expect(ins).toContain('call setup_project');
+    expect(ins).toContain('run `tabula status` before the first `tabula push`');
     expect(ins).toContain('find_notes');
     await client.close();
   });
@@ -120,7 +121,8 @@ describe('MCP endpoint', () => {
       expect(out.created).toBe(true);
       expect(out.project).toMatchObject({ id: 'fresh-one', name: 'fresh-one', description: 'A fresh project' });
       expect(out.claude_md_section).toBe(claudeMdSection('fresh-one'));
-    expect(out.tabula_json).toBe(TABULA_JSON);
+      expect(out.tabula_json).toBe(TABULA_JSON);
+      expect(out.next_step).toMatch(/run `tabula status` before the first `tabula push`/);
     });
 
     it('leaves an existing project unchanged', async () => {

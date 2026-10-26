@@ -30,6 +30,8 @@ describe('agent operations', () => {
     await expect(agentDeprecate(ctx, { id: legacy.id, reason: 'x' })).rejects.toMatchObject({ code: 'bad_request', message: GLOBAL_ONLY });
     await expect(agentRemember(ctx, { ...input, supersedes_id: legacy.id })).rejects.toMatchObject({ message: GLOBAL_ONLY });
     expect(await listMemories(db, { status: 'all' })).toHaveLength(1);
+    // The agent must not "fix" the error by writing the project knowledge as a global rule instead.
+    expect(GLOBAL_ONLY).toMatch(/do not retry with project "global" unless the user asked for a rule that applies to every project/i);
   });
 
   it('remember accepts a short supersedes id', async () => {

@@ -13,8 +13,12 @@ import { claudeMdSection, TABULA_JSON } from './snippet.js';
 const SERVER_INSTRUCTIONS = `Tabula keeps each project's files that are not in git (handoff state, private specs and plans) and the global rules that apply to every project. It ranks below the code and the client's own local memory: on a conflict they win.
 Use Tabula for a project only when its CLAUDE.md (or project instructions) has a "Memory (Tabula)" section naming its Tabula project. Without that section do not call recall, search, list_files or read_file, and never guess a project slug.
 Never write project memories: remember and deprecate work only on global rules, and only when the user explicitly asks.
-When the user explicitly asks to start using Tabula in a project: call setup_project with the project folder name as the slug, put the section it returns into CLAUDE.md (create the file if it is missing; replace an older "Memory (Tabula)" section), save the suggested .tabula.json in the repository root, then call recall.
+When the user explicitly asks to start using Tabula in a project: call setup_project with the project folder name as the slug, put the section it returns into CLAUDE.md (create the file if it is missing; replace an older "Memory (Tabula)" section), save the suggested .tabula.json in the repository root, run \`tabula status\` before the first \`tabula push\` and check the files it lists (a broad "sync" pattern can upload far more than intended), then call recall.
 Thoughts and Notes need no such section and work anywhere. Thoughts are the user's notebook of saved conversations: when the user explicitly asks to save something to Tabula, or to find or change a saved thought, use find_thoughts, save_thought and update_thought. Notes are the user's own notes: read them with find_notes and get only when the user mentions their notes.`;
+
+/** Returned by setup_project: the first push uploads everything "sync" matches, so look before it does. */
+const SETUP_NEXT_STEP =
+  'Save tabula_json as .tabula.json in the repository root, then run `tabula status` before the first `tabula push` and check the files it lists; narrow "sync" if it would upload more than the untracked files meant for Tabula.';
 
 const idParam = z.string().describe('Full uuid or the short #xxxx id shown in recall and search.');
 const projectParam = z.string().describe('Project slug from the "Memory (Tabula)" section, e.g. "acme".');
@@ -122,7 +126,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
           throw badRequest('"global" is not a project to onboard; it holds rules shared by every project. Use the project folder name as the slug.');
         }
         const existing = (await agentListProjects(ctx)).find((p) => p.id === id);
-        const result = { claude_md_section: claudeMdSection(id), tabula_json: TABULA_JSON };
+        const result = { claude_md_section: claudeMdSection(id), tabula_json: TABULA_JSON, next_step: SETUP_NEXT_STEP };
         if (existing) return { created: false, project: existing, ...result };
         const project = await createProject(ctx.db, { id, name: a.name ?? id, description: a.description });
         return { created: true, project, ...result };

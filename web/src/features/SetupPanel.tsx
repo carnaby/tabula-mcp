@@ -106,7 +106,7 @@ export function SetupPanel({ project }: { project: Project | undefined }) {
         <p className="t-muted">Windows (PowerShell):</p>
         <CodeBlock label="Commands" text={installWindows(origin)} />
         <p className="t-muted">
-          <code className="t-mono">install</code> puts <code className="t-mono">tabula</code> and <code className="t-mono">tabula.cmd</code> into <code className="t-mono">~/.tabula/bin</code> and tells you how to add it to PATH. Then run <code className="t-mono">tabula push</code> in the repository.
+          <code className="t-mono">install</code> puts <code className="t-mono">tabula</code> and <code className="t-mono">tabula.cmd</code> into <code className="t-mono">~/.tabula/bin</code> and tells you how to add it to PATH. Then run <code className="t-mono">tabula status</code> in the repository before the first <code className="t-mono">tabula push</code>: it lists every file the push would upload, so a too broad <code className="t-mono">sync</code> pattern shows up before anything leaves the machine.
         </p>
       </section>
 

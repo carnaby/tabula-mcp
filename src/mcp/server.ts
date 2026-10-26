@@ -1,22 +1,23 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import {
-  type AgentContext, agentDeprecate, agentFindThoughts, agentGet, agentListProjects, agentRecall, agentRemember,
-  agentSaveThought, agentSearch, agentUpdateThought,
+  type AgentContext, agentDeprecate, agentFindNotes, agentFindThoughts, agentGet, agentListFiles, agentListProjects,
+  agentReadFile, agentRecall, agentRemember, agentSaveThought, agentSearch, agentUpdateThought,
 } from '../agent/operations.js';
 import { badRequest, DomainError } from '../domain/errors.js';
 import { createProject } from '../domain/projects.js';
 import { MEMORY_KINDS, validateProjectSlug } from '../domain/validation.js';
 import { TOOL_DESCRIPTIONS as D } from './descriptions.js';
-import { claudeMdSection } from './snippet.js';
+import { claudeMdSection, TABULA_JSON } from './snippet.js';
 
-const SERVER_INSTRUCTIONS = `Tabula is a backup memory shared across machines and clients. It ranks below the code and the client's own local memory: on a conflict they win, and the Tabula record gets fixed.
-Use Tabula only in a project whose CLAUDE.md (or project instructions) has a "Memory (Tabula)" section naming its Tabula project. Without that section do not call recall, search or remember, and never guess a project slug.
-When the user explicitly asks to start using Tabula in a project: call setup_project with the project folder name as the slug, put the section it returns into CLAUDE.md (create the file if it is missing; replace an older "Memory (Tabula)" section), then call recall.
-Thoughts are the user's personal notebook, separate from projects, and need no such section: when the user explicitly asks to save something to Tabula, or to find or change a saved thought, use find_thoughts, save_thought and update_thought.`;
+const SERVER_INSTRUCTIONS = `Tabula keeps each project's files that are not in git (handoff state, private specs and plans) and the global rules that apply to every project. It ranks below the code and the client's own local memory: on a conflict they win.
+Use Tabula for a project only when its CLAUDE.md (or project instructions) has a "Memory (Tabula)" section naming its Tabula project. Without that section do not call recall, search, list_files or read_file, and never guess a project slug.
+Never write project memories: remember and deprecate work only on global rules, and only when the user explicitly asks.
+When the user explicitly asks to start using Tabula in a project: call setup_project with the project folder name as the slug, put the section it returns into CLAUDE.md (create the file if it is missing; replace an older "Memory (Tabula)" section), save the suggested .tabula.json in the repository root, then call recall.
+Thoughts and Notes need no such section and work anywhere. Thoughts are the user's notebook of saved conversations: when the user explicitly asks to save something to Tabula, or to find or change a saved thought, use find_thoughts, save_thought and update_thought. Notes are the user's own notes: read them with find_notes and get only when the user mentions their notes.`;
 
 const idParam = z.string().describe('Full uuid or the short #xxxx id shown in recall and search.');
-const projectParam = z.string().describe('Project slug, e.g. "acme". Global records are always included.');
+const projectParam = z.string().describe('Project slug from the "Memory (Tabula)" section, e.g. "acme".');
 const kindParam = z.enum(MEMORY_KINDS);
 
 /** Logger is optional only for places where the server is built without a request (e.g. tests). */
@@ -45,8 +46,16 @@ export function buildMcpServer(ctx: McpContext): McpServer {
     run(() => agentListProjects(ctx)),
   );
 
-  server.registerTool('recall', { description: D.recall, inputSchema: z.object({ project: projectParam }) }, ({ project }) =>
-    run(() => agentRecall(ctx, project)),
+  server.registerTool(
+    'recall',
+    {
+      description: D.recall,
+      inputSchema: z.object({
+        project: projectParam,
+        include_state: z.boolean().default(true).describe('Include the content of the project state files. Claude Code passes false: the files are on disk.'),
+      }),
+    },
+    ({ project, include_state }) => run(() => agentRecall(ctx, project, include_state)),
   );
 
   server.registerTool(
@@ -55,8 +64,8 @@ export function buildMcpServer(ctx: McpContext): McpServer {
       description: D.search,
       inputSchema: z.object({
         query: z.string().min(1).describe('Words to look for; supports "quoted phrases", OR and -exclusion.'),
-        project: projectParam.optional().describe('Limit to this project plus global. Omit to search everything.'),
-        kind: kindParam.optional().describe('Only memories of this kind (excludes notes).'),
+        project: projectParam.optional().describe('Search this project\'s files (global rules are always included). Omit to search the files of every project.'),
+        kind: kindParam.optional().describe('Only global memories of this kind (excludes files).'),
         include_deprecated: z.boolean().default(false),
         limit: z.number().int().min(1).max(50).default(10),
       }),
@@ -76,12 +85,12 @@ export function buildMcpServer(ctx: McpContext): McpServer {
     {
       description: D.remember,
       inputSchema: z.object({
-        project: projectParam.describe('Project slug; use "global" only for rules that apply to every project.'),
+        project: z.string().describe('Must be "global": Tabula keeps only global rules.'),
         kind: kindParam.describe('rule = how to do things; decision = what was chosen and why; fact = state of the world not in code; gotcha = a trap already hit.'),
         title: z.string().describe('One line, max 120 characters.'),
         body: z.string().describe('The why and the context in 1–5 sentences, max 2000 characters.'),
         tags: z.array(z.string()).optional().describe('Free lowercase tags.'),
-        supersedes_id: idParam.optional().describe('Id of the record this one replaces; it will be deprecated.'),
+        supersedes_id: idParam.optional().describe('Id of the rule this one replaces; it will be deprecated.'),
       }),
     },
     (a) => run(() => agentRemember(ctx, a)),
@@ -91,7 +100,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
     'deprecate',
     {
       description: D.deprecate,
-      inputSchema: z.object({ id: idParam, reason: z.string().describe('Why the record is no longer valid.') }),
+      inputSchema: z.object({ id: idParam, reason: z.string().describe('Why the rule is no longer valid.') }),
     },
     (a) => run(() => agentDeprecate(ctx, a)),
   );
@@ -113,10 +122,41 @@ export function buildMcpServer(ctx: McpContext): McpServer {
           throw badRequest('"global" is not a project to onboard; it holds rules shared by every project. Use the project folder name as the slug.');
         }
         const existing = (await agentListProjects(ctx)).find((p) => p.id === id);
-        if (existing) return { created: false, project: existing, claude_md_section: claudeMdSection(id) };
+        const result = { claude_md_section: claudeMdSection(id), tabula_json: TABULA_JSON };
+        if (existing) return { created: false, project: existing, ...result };
         const project = await createProject(ctx.db, { id, name: a.name ?? id, description: a.description });
-        return { created: true, project, claude_md_section: claudeMdSection(id) };
+        return { created: true, project, ...result };
       }),
+  );
+
+  server.registerTool('list_files', { description: D.list_files, inputSchema: z.object({ project: projectParam }) }, ({ project }) =>
+    run(() => agentListFiles(ctx, project)),
+  );
+
+  server.registerTool(
+    'read_file',
+    {
+      description: D.read_file,
+      inputSchema: z.object({
+        project: projectParam,
+        path: z.string().describe('Path relative to the repository root, exactly as list_files shows it.'),
+        offset: z.number().int().min(0).default(0).describe('Character offset for long files; the previous reply names it.'),
+      }),
+    },
+    (a) => run(() => agentReadFile(ctx, a)),
+  );
+
+  server.registerTool(
+    'find_notes',
+    {
+      description: D.find_notes,
+      inputSchema: z.object({
+        query: z.string().optional().describe('Words to look for (prefix match). Omit for the newest notes.'),
+        tag: z.string().optional(),
+        limit: z.number().int().min(1).max(50).default(10),
+      }),
+    },
+    (a) => run(() => agentFindNotes(ctx, a)),
   );
 
   const tagsParam = z.array(z.string()).optional().describe('Free lowercase tags, e.g. topic words.');

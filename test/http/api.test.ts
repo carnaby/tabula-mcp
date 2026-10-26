@@ -128,6 +128,7 @@ describe('REST API', () => {
     expect(hits.map((h: { type: string }) => h.type).sort()).toEqual(['memory', 'note', 'thought']);
     expect((await call('GET', '/api/search?q=')).json()).toEqual([]);
     expect((await call('GET', '/api/projects/demo/snippet')).json().text).toContain('`demo`');
+    expect((await call('GET', '/api/projects/demo/snippet')).json().tabulaJson).toContain('"sync"');
     expect((await call('GET', '/api/projects/nope/snippet')).statusCode).toBe(404);
   });
 

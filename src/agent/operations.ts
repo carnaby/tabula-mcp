@@ -129,7 +129,12 @@ export async function agentReadFile(ctx: AgentContext, input: { project: string;
   const offset = Math.max(0, Math.trunc(input.offset ?? 0));
   const total = f.content.length;
   if (offset > 0 && offset >= total) return `[offset ${offset} is past the end of the file (${total} characters)]`;
-  const end = Math.min(total, offset + READ_CHUNK);
+  let end = Math.min(total, offset + READ_CHUNK);
+  // Never split a surrogate pair: end one code unit earlier so the next chunk starts on the whole pair.
+  if (end < total) {
+    const last = f.content.charCodeAt(end - 1);
+    if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+  }
   const part = f.content.slice(offset, end);
   return end < total ? `${part}\n\n[… part ends at character ${end} of ${total} — call read_file again with offset: ${end}]` : part;
 }

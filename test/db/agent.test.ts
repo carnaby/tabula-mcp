@@ -122,6 +122,19 @@ describe('agent operations', () => {
     await expect(agentReadFile(ctx, { project: 'demo', path: 'docs/handoff/state.md' })).rejects.toMatchObject({ code: 'not_found' });
   });
 
+  it('never splits a surrogate pair at a chunk boundary', async () => {
+    const content = `${'a'.repeat(READ_CHUNK - 1)}\u{1F600}b`;
+    await putFile(db, 'demo', { path: 'docs/emoji.md', content, baseSha256: null }, 'cli');
+    const first = await agentReadFile(ctx, { project: 'demo', path: 'docs/emoji.md' });
+    const m = /^([\s\S]*)\n\n\[… part ends at character (\d+) of \d+ — call read_file again with offset: (\d+)\]$/.exec(first)!;
+    const next = Number(m[3]);
+    expect(next).toBe(READ_CHUNK - 1);
+    const second = await agentReadFile(ctx, { project: 'demo', path: 'docs/emoji.md', offset: next });
+    expect(m[1]).toBe('a'.repeat(READ_CHUNK - 1));
+    expect(second).toBe('\u{1F600}b');
+    expect(m[1] + second).toBe(content);
+  });
+
   it('finds notebook notes', async () => {
     const n = await createNote(db, { title: 'Suno prompts', body: 'short stingers' });
     expect(await agentFindNotes(ctx, { query: 'stinger' })).toMatchObject([{ id: n.id, title: 'Suno prompts' }]);

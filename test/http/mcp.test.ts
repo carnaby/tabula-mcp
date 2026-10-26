@@ -5,10 +5,12 @@ import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Db } from '../../src/db/client.js';
 import { projects } from '../../src/db/schema.js';
+import { putFile, setStatePaths } from '../../src/domain/files.js';
 import { createMemory, getMemory } from '../../src/domain/memories.js';
+import { createNote } from '../../src/domain/notes.js';
 import { createThought, getThought, HUMAN, listRevisions } from '../../src/domain/thoughts.js';
 import { buildApp } from '../../src/http/app.js';
-import { claudeMdSection } from '../../src/mcp/snippet.js';
+import { claudeMdSection, TABULA_JSON } from '../../src/mcp/snippet.js';
 import { seedProject, TEST_SECRET, TEST_TOKEN, testConfig, useTestDb } from '../helpers.js';
 
 const db = useTestDb();
@@ -33,12 +35,12 @@ type Content = Array<{ type: string; text: string }>;
 const textOf = (r: { content?: unknown }) => (r.content as Content)[0]!.text;
 
 describe('MCP endpoint', () => {
-  it('exposes exactly the ten tools', async () => {
+  it('exposes exactly the thirteen tools', async () => {
     const client = await connect('/mcp', bearer);
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
-      'deprecate', 'find_thoughts', 'get', 'list_projects', 'recall', 'remember', 'save_thought', 'search',
-      'setup_project', 'update_thought',
+      'deprecate', 'find_notes', 'find_thoughts', 'get', 'list_files', 'list_projects', 'read_file', 'recall', 'remember',
+      'save_thought', 'search', 'setup_project', 'update_thought',
     ]);
     expect(tools.find((t) => t.name === 'recall')!.description).toMatch(/^Call at the start of a session/);
     await client.close();
@@ -47,8 +49,57 @@ describe('MCP endpoint', () => {
   it('sends server instructions on initialize', async () => {
     const client = await connect('/mcp', bearer);
     const ins = client.getInstructions();
-    expect(ins).toMatch(/^Tabula is a backup memory shared across machines and clients\./);
+    expect(ins).toMatch(/^Tabula keeps each project's files that are not in git/);
     expect(ins).toContain('call setup_project');
+    expect(ins).toContain('find_notes');
+    await client.close();
+  });
+
+  it('refuses project memories with the reason', async () => {
+    const client = await connect('/mcp', bearer);
+    const r = await client.callTool({ name: 'remember', arguments: { project: 'demo', kind: 'fact', title: 'T', body: 'b' } });
+    expect(r.isError).toBe(true);
+    expect(textOf(r)).toMatch(/^400: Tabula keeps no project memories/);
+    await client.close();
+  });
+
+  it('serves the project state in recall on request, and lists and reads files', async () => {
+    await putFile(db, 'demo', { path: 'docs/handoff/state.md', content: 'Next: ship the CLI', baseSha256: null }, 'cli');
+    await setStatePaths(db, 'demo', ['docs/handoff/state.md']);
+    await createNote(db, { title: 'Private note', body: 'not for recall' });
+    const client = await connect('/mcp', bearer);
+    const full = textOf(await client.callTool({ name: 'recall', arguments: { project: 'demo' } }));
+    expect(full).toContain('## Project state\n### docs/handoff/state.md');
+    expect(full).toContain('Next: ship the CLI');
+    expect(full).not.toContain('Private note');
+    const lean = textOf(await client.callTool({ name: 'recall', arguments: { project: 'demo', include_state: false } }));
+    expect(lean).not.toContain('Next: ship the CLI');
+    expect(JSON.parse(textOf(await client.callTool({ name: 'list_files', arguments: { project: 'demo' } })))).toMatchObject([
+      { path: 'docs/handoff/state.md', state: true },
+    ]);
+    expect(textOf(await client.callTool({ name: 'read_file', arguments: { project: 'demo', path: 'docs/handoff/state.md' } })))
+      .toBe('Next: ship the CLI');
+    const missing = await client.callTool({ name: 'read_file', arguments: { project: 'demo', path: 'docs/nope.md' } });
+    expect(textOf(missing)).toMatch(/^404: file "docs\/nope\.md" does not exist/);
+    const hits = JSON.parse(textOf(await client.callTool({ name: 'search', arguments: { query: 'ship', project: 'demo' } })));
+    expect(hits).toMatchObject([{ type: 'file', path: 'docs/handoff/state.md' }]);
+    await client.close();
+  });
+
+  it('rejects a negative or fractional read_file offset', async () => {
+    const client = await connect('/mcp', bearer);
+    for (const offset of [-1, 1.5]) {
+      const r = await client.callTool({ name: 'read_file', arguments: { project: 'demo', path: 'a.md', offset } }).catch((e) => e);
+      expect(r instanceof Error || r.isError === true).toBe(true);
+    }
+    await client.close();
+  });
+
+  it('finds the user notes', async () => {
+    const n = await createNote(db, { title: 'Ambient ideas', body: 'pads and drones' });
+    const client = await connect('/mcp', bearer);
+    const hits = JSON.parse(textOf(await client.callTool({ name: 'find_notes', arguments: { query: 'drone' } })));
+    expect(hits).toMatchObject([{ id: n.id, title: 'Ambient ideas' }]);
     await client.close();
   });
 
@@ -69,6 +120,7 @@ describe('MCP endpoint', () => {
       expect(out.created).toBe(true);
       expect(out.project).toMatchObject({ id: 'fresh-one', name: 'fresh-one', description: 'A fresh project' });
       expect(out.claude_md_section).toBe(claudeMdSection('fresh-one'));
+    expect(out.tabula_json).toBe(TABULA_JSON);
     });
 
     it('leaves an existing project unchanged', async () => {

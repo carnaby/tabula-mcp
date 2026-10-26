@@ -14,7 +14,7 @@ import {
   createThought, deleteThought, getThought, HUMAN, listRevisions, pageThoughts, restoreRevision, THOUGHT_SORTS,
   thoughtTags, updateThought,
 } from '../domain/thoughts.js';
-import { claudeMdSection } from '../mcp/snippet.js';
+import { claudeMdSection, TABULA_JSON } from '../mcp/snippet.js';
 import { recall } from '../domain/recall.js';
 import { DIGEST_BUDGET, estimateTokens, wordCount } from '../domain/tokens.js';
 import { MEMORY_KINDS } from '../domain/validation.js';
@@ -53,7 +53,7 @@ export const apiRoutes: FastifyPluginAsync<{ db: Db; config: Config }> = async (
   app.get('/projects/:id/snippet', async (req) => {
     const { id } = parse(z.object({ id: z.string() }), req.params);
     await requireProject(db, id);
-    return { text: claudeMdSection(id) };
+    return { text: claudeMdSection(id), tabulaJson: TABULA_JSON };
   });
 
   // Memories

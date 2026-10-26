@@ -3,7 +3,7 @@
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "echo \"Reminder: call tabula.recall before starting.\"" }
+          { "type": "command", "command": "node ~/.tabula/tabula.mjs pull --hook", "timeout": 10 }
         ]
       }
     ]

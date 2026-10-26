@@ -4,7 +4,9 @@
 // Exit codes: 0 OK, 1 error, 2 finished with conflicts.
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -563,6 +565,93 @@ async function login(args, flags) {
   return 0;
 }
 
+// ------------------------------------------------------------------ hook, install, update
+
+/** The hook stops working at this point so a session start never waits 5 s (Node start-up included). */
+const HOOK_DEADLINE_MS = 3500;
+
+/** SessionStart mode: never fails the session and never holds it up for long. */
+async function runHook() {
+  const deadline = Date.now() + HOOK_DEADLINE_MS;
+  // Last resort if something blocks past the deadline (a slow git, a stuck socket).
+  setTimeout(() => {
+    process.stderr.write('tabula: pull timed out; the session starts without it\n');
+    process.exit(0);
+  }, HOOK_DEADLINE_MS + 900).unref();
+  try {
+    const conn = readConnection();
+    if (!conn.url || !conn.token) return 0;
+    const repo = loadRepo(Math.max(1, deadline - Date.now()));
+    if (!repo?.config) return 0;
+    repo.deadline = deadline;
+    await pull(repo, makeApi(conn, deadline), { force: false, hook: true });
+  } catch (e) {
+    process.stderr.write(`tabula: ${String(e?.message ?? e).split('\n')[0]}\n`);
+  }
+  return 0;
+}
+
+function install() {
+  const home = tabulaHome();
+  const target = join(home, 'tabula.mjs');
+  const bin = join(home, 'bin');
+  const self = realpathSync(fileURLToPath(import.meta.url));
+  mkdirSync(bin, { recursive: true });
+  if (!existsSync(target) || realpathSync(target) !== self) copyFileSync(self, target);
+  const posix = target.split(sep).join('/');
+  const sh = join(bin, 'tabula');
+  writeFileSync(sh, `#!/bin/sh\nexec node "${posix}" "$@"\n`);
+  try {
+    chmodSync(sh, 0o755);
+  } catch {
+    // Windows has no execute bit; Git Bash runs the script by its shebang.
+  }
+  writeFileSync(join(bin, 'tabula.cmd'), `@echo off\r\nnode "${target}" %*\r\n`);
+  out(`Installed ${target}`);
+  out(`The commands tabula (sh) and tabula.cmd are in ${bin}. Add that folder to PATH once:`);
+  out(
+    process.platform === 'win32'
+      ? `  PowerShell: [Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path', 'User') + ';${bin}', 'User')`
+      : `  echo 'export PATH="${bin}:$PATH"' >> ~/.profile`,
+  );
+  out('Then log in: tabula login <url>');
+  out('SessionStart hook for ~/.claude/settings.json (merge it into the hooks you already have):');
+  const hook = { type: 'command', command: `node "${posix}" pull --hook`, timeout: 10 };
+  out(JSON.stringify({ hooks: { SessionStart: [{ hooks: [hook] }] } }, null, 2));
+  return 0;
+}
+
+async function update(conn) {
+  if (!conn.url) throw new CliError('no server URL: run tabula login <url> first');
+  let source;
+  try {
+    const res = await fetch(`${conn.url}/cli/tabula.mjs`, { signal: AbortSignal.timeout(30000) });
+    if (!res.ok) throw new CliError(`download failed: HTTP ${res.status}`);
+    source = await res.text();
+  } catch (e) {
+    if (e instanceof CliError) throw e;
+    throw new CliError(`cannot reach ${conn.url}: ${e.cause?.code ?? e.message}`);
+  }
+  const m = /^export const VERSION = '([^']+)';\r?$/m.exec(source);
+  if (!m) throw new CliError(`${conn.url}/cli/tabula.mjs is not the Tabula CLI`);
+  const self = realpathSync(fileURLToPath(import.meta.url));
+  writeFileSync(`${self}.tmp`, source);
+  renameSync(`${self}.tmp`, self);
+  out(m[1] === VERSION ? `tabula ${VERSION} is current; reinstalled it` : `updated tabula ${VERSION} → ${m[1]}`);
+  return 0;
+}
+
+/** The server's CLI version when it differs from this one; null when equal or unknown. Never throws. */
+async function newerVersion(url) {
+  try {
+    const r = await fetch(`${url}/cli/version`, { signal: AbortSignal.timeout(3000) });
+    const { version } = await r.json();
+    return typeof version === 'string' && version !== VERSION ? version : null;
+  } catch {
+    return null;
+  }
+}
+
 // ------------------------------------------------------------------ command line
 
 export class CliError extends Error {
@@ -600,11 +689,14 @@ function fail(e) {
   return 1;
 }
 
-/** Options each command accepts. */
-const FLAGS = { help: [], version: [], login: ['--token-stdin'], status: [], push: ['--force'], pull: ['--force'], rm: [] };
+/** Options each command accepts (pull --hook is handled before this check). */
+const FLAGS = {
+  help: [], version: [], login: ['--token-stdin'], status: [], push: ['--force'], pull: ['--force'], rm: [], install: [], update: [],
+};
 
 export async function main(argv) {
   const { cmd, args, flags } = parseArgs(argv);
+  if (cmd === 'pull' && flags.has('--hook')) return runHook();
   try {
     if (!cmd) {
       out(flags.has('--version') ? VERSION : HELP);
@@ -622,18 +714,24 @@ export async function main(argv) {
       return 0;
     }
     if (cmd === 'login') return await login(args, flags);
+    if (cmd === 'install') return install();
+    if (cmd === 'update') return await update(readConnection());
     const conn = requireConnection(readConnection());
     const repo = openRepo();
     const api = makeApi(conn);
-    if (cmd === 'status') return await status(repo, api, conn);
-    if (cmd === 'push') return await push(repo, api, { force: flags.has('--force') });
-    if (cmd === 'pull') return await pull(repo, api, { force: flags.has('--force'), hook: false });
-    return await rm(repo, api, args[0]);
+    const newer = newerVersion(conn.url); // runs while the command works
+    const code =
+      cmd === 'status' ? await status(repo, api, conn)
+      : cmd === 'push' ? await push(repo, api, { force: flags.has('--force') })
+      : cmd === 'pull' ? await pull(repo, api, { force: flags.has('--force'), hook: false })
+      : await rm(repo, api, args[0]);
+    const v = await newer;
+    if (v) err(`tabula: the server offers tabula ${v} (you have ${VERSION}); run tabula update`);
+    return code;
   } catch (e) {
     return fail(e);
   }
 }
-
 
 function invokedDirectly() {
   try {

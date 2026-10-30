@@ -29,7 +29,11 @@ services:
     networks: [tabula]
     # Optional: only used if you run Watchtower with label-enable.
     labels: ['com.centurylinklabs.watchtower.enable=true']
-    # No healthcheck block: the image declares its own HEALTHCHECK (see Dockerfile).
+    # infra-admin (services): healthcheck timing is owned by the infra admin; do not change it in this project.
+    # Policy: Tabula global decision "Healthcheck intervals on the home NAS" (#cb98). Requests go to the services project.
+    # Only the interval is set; the check itself comes from the image.
+    healthcheck:
+      interval: 30m
 
   db:
     image: postgres:16-alpine
@@ -44,9 +48,11 @@ services:
     volumes:
       - ${TABULA_DATA_DIR:-./data}/db:/var/lib/postgresql/data
     networks: [tabula]
+    # infra-admin (services): healthcheck timing is owned by the infra admin; do not change it in this project.
+    # Policy: Tabula global decision "Healthcheck intervals on the home NAS" (#cb98). Requests go to the services project.
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U tabula -d tabula']
-      interval: 10s
+      interval: 2m
       timeout: 5s
       retries: 5
     # No watchtower label: only the app image is auto-updated, not Postgres.

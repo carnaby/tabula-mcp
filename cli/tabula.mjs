@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // tabula: keeps a repository's untracked files (handoff state, private specs and plans) in a Tabula server.
 // One dependency-free ES module for Node >= 22; the Tabula server serves it at GET /cli/tabula.mjs.
+// The server also imports this file for its glob matcher (src/domain/glob.ts): importing it must stay free of side
+// effects beyond defining functions and constants.
 // Exit codes: 0 OK, 1 error, 2 finished with conflicts.
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -19,36 +21,64 @@ export const DEFAULT_STATE = ['docs/handoff/*.md', '**/docs/handoff/*.md'];
 
 // ------------------------------------------------------------------ pure helpers (unit-tested)
 
-/** Glob over POSIX paths: "**" spans directories (as a whole segment), "*" stays within one segment, "?" is one character. */
-export function globToRegExp(glob) {
-  let re = '';
-  for (let i = 0; i < glob.length; i++) {
-    const c = glob[i];
-    if (c === '*') {
-      const segmentStart = i === 0 || glob[i - 1] === '/';
-      if (glob[i + 1] === '*' && segmentStart && (i + 2 === glob.length || glob[i + 2] === '/')) {
-        if (i + 2 === glob.length) re += '.*'; // trailing "**": everything below
-        else {
-          re += '(?:.*/)?'; // "**/": zero or more directories
-          i++;
-        }
-        i++;
-        continue;
-      }
-      re += '[^/]*';
-    } else if (c === '?') re += '[^/]';
-    else re += c.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+/** "**" never spans a line break, as in the regex translation this matcher replaced. */
+const LINE_BREAK = /[\n\r\u2028\u2029]/;
+
+/**
+ * One path segment against one pattern segment: "*" is any run of characters, "?" is one, the rest is literal.
+ * Two pointers that go back only to the last "*": O(pattern × segment), never exponential.
+ */
+function segmentMatch(pattern, text) {
+  let p = 0;
+  let t = 0;
+  let star = -1;
+  let mark = 0;
+  while (t < text.length) {
+    if (p < pattern.length && pattern[p] !== '*' && (pattern[p] === '?' || pattern[p] === text[t])) {
+      p++;
+      t++;
+    } else if (p < pattern.length && pattern[p] === '*') {
+      star = p++;
+      mark = t;
+    } else if (star >= 0) {
+      p = star + 1;
+      t = ++mark;
+    } else return false;
   }
-  return new RegExp(`^${re}$`);
+  while (pattern[p] === '*') p++;
+  return p === pattern.length;
 }
 
-const compiled = new Map();
+/**
+ * Glob over POSIX paths: a "**" segment spans directories (zero or more in the middle, one or more at the end), "*"
+ * stays within one segment, "?" is one character. Matched segment by segment with dynamic programming, so the time
+ * is bounded by pattern length × path length whatever the pattern (the server matches paths that agents choose).
+ */
+export function globMatch(glob, path) {
+  const pat = glob.split('/');
+  const segs = path.split('/');
+  const n = segs.length;
+  const plain = segs.map((s) => !LINE_BREAK.test(s));
+  // next[j]: pattern segments after the current one match path segments j..n-1.
+  let next = new Uint8Array(n + 1);
+  next[n] = 1;
+  for (let i = pat.length - 1; i >= 0; i--) {
+    const row = new Uint8Array(n + 1);
+    if (pat[i] === '**' && i === pat.length - 1) {
+      for (let j = n - 1; j >= 0; j--) row[j] = plain[j] && (j === n - 1 || row[j + 1]) ? 1 : 0;
+    } else if (pat[i] === '**') {
+      row[n] = next[n];
+      for (let j = n - 1; j >= 0; j--) row[j] = next[j] || (plain[j] && row[j + 1]) ? 1 : 0;
+    } else {
+      for (let j = 0; j < n; j++) row[j] = next[j + 1] && segmentMatch(pat[i], segs[j]) ? 1 : 0;
+    }
+    next = row;
+  }
+  return next[0] === 1;
+}
+
 export function matchesAny(path, patterns) {
-  return patterns.some((p) => {
-    let re = compiled.get(p);
-    if (!re) compiled.set(p, (re = globToRegExp(p)));
-    return re.test(path);
-  });
+  return patterns.some((p) => globMatch(p, path));
 }
 
 /**

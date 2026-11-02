@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { matchesSyncPattern } from '../../src/domain/glob.js';
 
-type CliGlob = { matchesAny(path: string, patterns: string[]): boolean; globToRegExp(glob: string): RegExp };
+type CliGlob = { matchesAny(path: string, patterns: string[]): boolean };
 // A non-literal specifier keeps TypeScript from looking for type declarations of the plain .mjs file.
 const cli = (await import(new URL('../../cli/tabula.mjs', import.meta.url).href)) as CliGlob;
 

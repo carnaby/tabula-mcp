@@ -8,13 +8,21 @@ describe('claudeMdSection', () => {
     expect(claudeMdSection('<slug>').trim()).toBe(template.trim());
   });
 
+  it('keeps the local workflow and tells sessions without the tabula command to read and write over MCP', () => {
+    const s = claudeMdSection('acme');
+    expect(s).toContain('`include_state: false`');
+    expect(s).toContain('`tabula push`');
+    expect(s).toMatch(/`tabula` command is not available.*`include_state: true`.*`read_file`.*`write_file`/s);
+    expect(s.split('\n').length).toBeLessThanOrEqual(9);
+  });
+
   it('suggests a .tabula.json that parses', () => {
     expect(JSON.parse(TABULA_JSON)).toEqual({ sync: ['docs/**', '.superpowers/sdd/*/progress.md'], state: ['docs/handoff/*.md'] });
   });
 
   it('the claude.ai template reads the state at start, notes on request and saves thoughts on request', () => {
     const t = readFileSync(new URL('../../templates/claude-ai-project-instructions.md', import.meta.url), 'utf8');
-    for (const s of ['## Memory (Tabula)', '`recall`', '`list_files`', '`find_notes`', '`save_thought`', 'explicitly asks']) {
+    for (const s of ['## Memory (Tabula)', '`recall`', '`list_files`', '`find_notes`', '`save_thought`', 'explicitly asks', '`write_file`', '`base_sha256`']) {
       expect(t).toContain(s);
     }
     expect(t).not.toContain('supersedes_id');

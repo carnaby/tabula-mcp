@@ -19,7 +19,7 @@ It is deliberately modest: no embeddings, no automatic memory, and no second cop
 
 | | Written by | Agents can | Shape |
 |---|---|---|---|
-| **Project file** | the `tabula` command, from the repository | list, read, search | UTF-8 text ≤ 1 MiB at a repository-relative path; the last 20 versions are kept; deleting is reversible |
+| **Project file** | the `tabula` command, from the repository; agents without it (Claude Code on the web, claude.ai) with `write_file` | list, read, search; write and delete paths the project's `sync` patterns allow | UTF-8 text ≤ 1 MiB at a repository-relative path; the last 20 versions are kept; deleting is reversible |
 | **Global rule** | you; agents only on request | read; add or retire one on explicit request | `kind` (rule, gotcha, fact, decision) + one-line title + body ≤ 2 000 characters |
 | **Note** | you | read, when you mention your notes | Markdown with tags; pinned notes stay on top |
 | **Thought** | you, and agents on request | create, edit, append | Markdown ≤ 50 000 characters with tags; every change keeps the previous version (the last 50) |
@@ -59,6 +59,7 @@ A repository opts in with a `.tabula.json` in its root, committed:
 - `project` (optional) names the Tabula project; by default it is the name of the working-tree folder, so a git worktree for a side series syncs into its own project with the same file.
 - `sync` lists glob patterns (`**`, `*`, `?`). Only files git does **not** track are candidates — untracked and ignored ones, never `node_modules/` or `.git/`. `.env` and `.env.*` (any letter case) are refused even when a pattern matches them, so keep the patterns explicit; binary files, invalid UTF-8 and files over 1 MiB are skipped with a warning.
 - `state` lists the files that form the current project state (default: `docs/handoff/*.md` at any depth). `recall` includes their content.
+- Every `tabula push` also sends the `sync` and `state` patterns to the server (`PUT /api/projects/<id>/sync-config`). `write_file` uses them, matched by the same code as the command, so an agent can write only paths this repository syncs. An older server without that endpoint gets a warning, and the push still succeeds.
 
 | Command | What it does |
 |---|---|
@@ -107,7 +108,7 @@ At the start of a session the agent calls `recall` once and gets plain text:
 
 - **Fixed order:** global rules → global gotchas → global facts and decisions (titles only) → project state → the file list.
 - **Budget of 3 000 tokens** (estimated as characters / 4). The global rules and the file list come first; the state gets the room they leave and is cut at a line break with a pointer to `read_file`. If the rules and the list alone are too long, the list collapses into a count, then facts collapse, then gotcha and rule bodies shrink to their first sentence.
-- **`include_state`:** Claude Code passes `false` — the hook already restored the files on disk. claude.ai gets the state in the digest.
+- **`include_state`:** Claude Code on a computer passes `false` — the hook already restored the files on disk. Claude Code on the web and claude.ai get the state in the digest.
 - **Plain text, not JSON.** The agent reads the digest rather than parsing it, and JSON would cost 30–40 % more tokens.
 
 ### MCP tools
@@ -115,7 +116,8 @@ At the start of a session the agent calls `recall` once and gets plain text:
 | Tool | What it does |
 |---|---|
 | `recall(project, include_state?)` | The digest above. Called once at the start of a session. |
-| `list_files(project)` / `read_file(project, path, offset?)` | The project's synced files; long files come in parts of 100 000 characters. |
+| `list_files(project)` / `read_file(project, path, offset?)` | The project's synced files with version and sha256. `read_file` answers in separate text blocks: a header line `[file <path> · version <n> · sha256 <hex> · <n> characters]`, the text exactly as stored, and for long files (parts of 100 000 characters) a last block with the next offset. |
+| `write_file(project, path, content, base_sha256?)` · `delete_file(project, path, base_sha256)` | For sessions without the `tabula` command. Only paths matching the project's `sync` patterns (refused until a `tabula push` has sent them), never `.env`, never the `global` project. A new file needs no base; changing or deleting an existing one needs the sha256 of the version the agent read, a stale one is a 409 with the current sha256, and there is no force. Paths matching `state` become the project state. The writer is the agent's label. |
 | `search(query, project?, kind?, include_deprecated?, limit?)` | Full-text search over the global rules and the project files (Postgres `tsvector`, `simple` configuration). |
 | `get(id)` | One rule, note or thought in full; accepts the short `#xxxx` id from the digest. |
 | `remember(project="global", kind, title, body, tags?, supersedes_id?)` | Adds a global rule — only when the user explicitly asks. Any other project is refused with the reason. |
@@ -141,8 +143,11 @@ Tabula keeps this project's files that are not in git (handoff state, private sp
 - This project's Tabula project is `my-project`; `.tabula.json` says which untracked files are synced.
 - At session start call `recall` for `my-project` with `include_state: false` and follow the global rules. The project state is on disk (restored by the SessionStart hook).
 - At handoff run `tabula push` after writing the state file.
+- If the `tabula` command is not available (Claude Code on the web, claude.ai), the files are not on disk: call `recall` with `include_state: true`, read files with `read_file`, and save every new or changed synced file (spec, plan, `progress.md`, handoff state) with `write_file`.
 - Never write project memories. Add a global rule only when the user explicitly asks.
 ```
+
+**Without the `tabula` command** — Claude Code on the web runs in a temporary container without your login, and claude.ai has only the connector — nothing is on disk and nothing would survive the session. The section covers that case too: the agent calls `recall` with `include_state: true`, reads files with `read_file` and saves every new or changed spec, plan, `progress.md` or handoff state with `write_file`. On your computer `tabula pull` (or the SessionStart hook) brings them down like any other change; if you edited the same file locally meanwhile, it is a conflict, not a silent overwrite.
 
 You don't write it by hand: tell the agent *"use Tabula in this project"* and it calls `setup_project` with the folder name as the slug, puts the section into `CLAUDE.md` and the suggested `.tabula.json` into the repository root. Run `tabula status` before the first `tabula push`: it lists every file the push would upload. For claude.ai projects use [`templates/claude-ai-project-instructions.md`](templates/claude-ai-project-instructions.md).
 
@@ -279,7 +284,7 @@ src/
   http/         Fastify app, REST API, bearer auth, static UI
   db/           Drizzle schema, client, migrations runner
   maintenance/  one-off data migrations run inside the container
-cli/            the tabula command (one dependency-free file, served at /cli/tabula.mjs)
+cli/            the tabula command (one dependency-free file, served at /cli/tabula.mjs; the server reuses its glob matcher)
 drizzle/        SQL migrations (generated search column, GIN indexes, the global project)
 web/            React UI (web/src/ui is the UI kit)
 templates/      protocol snippets for CLAUDE.md, claude.ai and the SessionStart hook
@@ -293,6 +298,7 @@ test/           Vitest: unit, database, HTTP/MCP and end-to-end CLI tests
 - **Synced files are the most likely way a secret reaches Tabula.** A `sync` pattern uploads every untracked file it matches, and untracked files are exactly where local credentials live. `.env` and `.env.*` (in any folder and any letter case) are always refused, but nothing else is guessed: keep the patterns explicit (`docs/**`, not `**`), run `tabula status` before the first `tabula push`, and treat a secret that was uploaded by mistake as leaked: `tabula rm` only hides the file (it and its previous versions stay in the database, restorable in the UI), so rotate the secret.
 - One bearer token (and the optional connector secret) unlocks all projects, rules, notes and thoughts. Tokens are compared in constant time, and the connector secret is kept out of request logs.
 - Unexpected errors are logged on the server and returned to clients as a generic message, without internals.
+- **Agents write project files only over `write_file` and `delete_file`**, only at paths matching the `sync` patterns the CLI last sent for that project, and never blind: an existing file needs the hash of the version the agent read. Every version keeps its writer's label and the last 20 versions can be restored in the UI.
 - The `tabula` command never uploads `.env` or `.env.*` files and the server refuses them too; paths are validated on both sides (relative, no `..`, no `.git`), and paths that differ only in letter case are never synced, so one cannot overwrite the other on Windows or macOS.
 - **Bug-report attachments** are accepted only as photos, video or audio, recognised from the file's bytes (never from the name or the client's content type), so an HTML or SVG file can't be uploaded and run on Tabula's origin. They are served from `/media/<id>` with a signed, expiring link instead of the token (`<video>` and `<img>` can't send one), with `nosniff`, a sandboxing CSP and range support. The signing key is derived from `TABULA_TOKEN`: rotating the token invalidates every link. Signatures are masked in request logs.
 - **ffmpeg reads untrusted files**, so it runs with only `PATH` in its environment (never the token or the database URL), reads local files only, with the demuxer fixed by the detected type, refuses pictures over 64 megapixels, and at most two ffmpeg/ffprobe processes run at once. Its error output stays in the server log.

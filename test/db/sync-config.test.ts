@@ -89,7 +89,7 @@ describe('writeSyncedFile', () => {
     await expect(write('docs/plan.md', 'x')).rejects.toMatchObject({ code: 'bad_request', message: expect.stringContaining('"docs/Plan.md"') });
     await write('docs/Specs/a.md', 'a');
     await expect(write('docs/specs/b.md', 'b')).rejects.toMatchObject({ code: 'bad_request', message: expect.stringContaining('"docs/Specs"') });
-    await expect(write('DOCS/Specs/a.md', 'b')).rejects.toMatchObject({ code: 'bad_request' });
+    await expect(write('docs/SPECS/c.md', 'c')).rejects.toMatchObject({ code: 'bad_request', message: expect.stringContaining('"docs/Specs"') });
     expect(await write('docs/Specs/b.md', 'b')).toMatchObject({ version: 1 });
     expect(await write('docs/plan-two.md', 'b')).toMatchObject({ version: 1 });
     // A deleted twin is no obstacle.

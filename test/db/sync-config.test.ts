@@ -84,6 +84,20 @@ describe('writeSyncedFile', () => {
     await expect(write('docs/big.md', 'x'.repeat(1_048_577))).rejects.toMatchObject({ code: 'too_large' });
   });
 
+  it('refuses a path that differs only in letter case from a live file or folder (one file on Windows and macOS)', async () => {
+    await write('docs/Plan.md', 'p');
+    await expect(write('docs/plan.md', 'x')).rejects.toMatchObject({ code: 'bad_request', message: expect.stringContaining('"docs/Plan.md"') });
+    await write('docs/Specs/a.md', 'a');
+    await expect(write('docs/specs/b.md', 'b')).rejects.toMatchObject({ code: 'bad_request', message: expect.stringContaining('"docs/Specs"') });
+    await expect(write('DOCS/Specs/a.md', 'b')).rejects.toMatchObject({ code: 'bad_request' });
+    expect(await write('docs/Specs/b.md', 'b')).toMatchObject({ version: 1 });
+    expect(await write('docs/plan-two.md', 'b')).toMatchObject({ version: 1 });
+    // A deleted twin is no obstacle.
+    const plan = await getFile(db, 'demo', 'docs/Plan.md');
+    await deleteSyncedFile(db, 'demo', { path: 'docs/Plan.md', baseSha256: plan.sha256 });
+    expect(await write('docs/plan.md', 'x')).toMatchObject({ version: 1 });
+  });
+
   it('refuses a project without stored patterns, the global project and unknown projects', async () => {
     await seedProject(db, 'fresh');
     await expect(write('docs/a.md', 'x', null, 'fresh')).rejects.toMatchObject({

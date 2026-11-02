@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { projectSyncConfigs } from '../db/schema.js';
 import { badRequest, conflict, notFound } from './errors.js';
-import { deleteFile, getFile, putFile, validateFilePath } from './files.js';
+import { deleteFile, getFile, listFiles, putFile, validateFilePath } from './files.js';
 import { matchesSyncPattern } from './glob.js';
 import { requireProject } from './projects.js';
 import { charCount } from './validation.js';
@@ -72,6 +72,27 @@ async function requireWritablePath(db: Db, projectId: string, rawPath: string): 
 }
 
 /**
+ * The spelling already in the project when `path` or one of its folders differs from it only in letter case: on
+ * Windows and macOS that is one file or folder, and the tabula command syncs neither of the two.
+ */
+export function caseTwin(existing: readonly string[], path: string): string | null {
+  const segs = path.split('/');
+  for (const other of existing) {
+    if (other === path) continue;
+    const o = other.split('/');
+    for (let i = 0; i < Math.min(segs.length, o.length); i++) {
+      if (segs[i] === o[i]) continue;
+      if (segs[i]!.toLowerCase() !== o[i]!.toLowerCase()) break;
+      const folderInBoth = i < segs.length - 1 && i < o.length - 1;
+      const fileInBoth = i === segs.length - 1 && i === o.length - 1;
+      if (folderInBoth || fileInBoth) return o.slice(0, i + 1).join('/');
+      break;
+    }
+  }
+  return null;
+}
+
+/**
  * An agent's write: only synced paths, never blind. A new (or deleted) file needs no base; an existing one needs the
  * sha256 of the version the agent read, and there is no force.
  */
@@ -79,6 +100,12 @@ export async function writeSyncedFile(
   db: Db, projectId: string, input: { path: string; content: string; baseSha256: string | null }, updatedBy: string,
 ): Promise<SyncedWrite> {
   const { path, config } = await requireWritablePath(db, projectId, input.path);
+  const twin = caseTwin((await listFiles(db, projectId)).map((f) => f.path), path);
+  if (twin) {
+    throw badRequest(
+      `"${path}" differs only in letter case from "${twin}", already in project "${projectId}"; on Windows and macOS they are the same, so the tabula command would sync neither. Use the spelling "${twin}"`,
+    );
+  }
   if (input.baseSha256 === null) {
     const existing = await getFile(db, projectId, path).catch(() => null);
     if (existing && existing.deletedAt === null) {

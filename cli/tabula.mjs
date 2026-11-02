@@ -12,7 +12,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const VERSION = '1.0.0';
+export const VERSION = '1.1.0';
 /** 1 MiB, the server's limit for one file. */
 export const MAX_BYTES = 1048576;
 export const DEFAULT_STATE = ['docs/handoff/*.md', '**/docs/handoff/*.md'];
@@ -564,8 +564,25 @@ async function push(repo, api, { force }) {
   const statePaths = [...onServer].filter((p) => matchesAny(p, repo.config.state));
   ok(await api('PUT', `${projectPath(repo)}/files/state`, { paths: statePaths }), 'marking state files');
   saveSyncState(repo, state);
+  await sendSyncConfig(api, repo);
   out(`tabula push ${repo.config.project}: ${pushed} pushed, ${conflicts} conflicts, ${issues.length} skipped${behind ? `, ${behind} newer on the server (run tabula pull)` : ''}`);
   return failed ? 1 : conflicts ? 2 : 0;
+}
+
+/**
+ * The server keeps the patterns so agents without this command (write_file over MCP) write only synced paths.
+ * Never fails the push: an older server without the endpoint answers 404.
+ */
+async function sendSyncConfig(api, repo) {
+  let why;
+  try {
+    const r = await api('PUT', `${projectPath(repo)}/sync-config`, { sync: repo.config.sync, state: repo.config.state });
+    if (r.status >= 200 && r.status < 300) return;
+    why = `HTTP ${r.status}${r.status === 404 ? ' — the server is older than this command' : r.data?.message ? ` — ${r.data.message}` : ''}`;
+  } catch (e) {
+    why = String(e?.message ?? e);
+  }
+  err(`warning: Tabula did not store the sync patterns of .tabula.json (${why}); agents without the tabula command cannot write files of this project until it does`);
 }
 
 /**

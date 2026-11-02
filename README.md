@@ -123,7 +123,7 @@ At the start of a session the agent calls `recall` once and gets plain text:
 | `find_notes(query?, tag?, limit?)` | Reads your Notes — only when you mention them. |
 | `save_thought` · `update_thought` · `find_thoughts` | The Thoughts notebook, on request; edits use `expected_version` and keep the previous version. |
 | `list_reports(project?, status?, query?)` · `get_report(id)` | Bug reports and their attachments (photos, videos, voice notes, saved frames) with links valid for 24 hours. |
-| `create_report(project, title, description?)` · `update_report(id, triage? \| append_triage?, status?, expected_version?)` | Records a bug on request; writes the analysis and tasks (the triage) and the status. |
+| `create_report(project, title, description?)` · `update_report(id, triage? \| append_triage?, status?, expected_version?)` | Records a bug on request; writes the analysis and tasks (the triage) and the status. `expected_version` is required to replace the triage or the title and to close a report (closing deletes its video and audio after the grace period). |
 | `view_attachment(id)` · `get_frame(video_id, at)` | A photo or saved frame as an image; a still from a video at a moment (`"2:41"`), saved to the report so it survives the video. |
 | `list_projects()` · `setup_project(id, name?, description?)` | Projects with file counts; onboarding on explicit request (returns the CLAUDE.md section, a `.tabula.json` and the next step: `tabula status` before the first push). |
 
@@ -201,6 +201,10 @@ CI also publishes a ready-made image, `ghcr.io/carnaby/tabula:latest` (plus a `s
 
 For anything beyond localhost, put Tabula behind a reverse proxy that terminates TLS and bind the container to loopback: the bearer token travels in a header, and it unlocks everything Tabula holds.
 
+The proxy must pass `X-Forwarded-Proto` (and the original `Host`, or `X-Forwarded-Host`): the attachment links that agents get from `get_report` are absolute and built from them, so without it they start with `http://`. Its request body limit must be at least `TABULA_MEDIA_MAX_MB`.
+
+Bug-report attachments live in `TABULA_MEDIA_DIR` (`/data/media` in the image); mount a volume or a host directory there that the container's user (uid 1000, `node`) can write, or uploads are lost with the container. If the directory is missing or not writable, Tabula still starts and everything else works: it logs an error at startup, and uploads and new video frames answer `503` until the directory is fixed.
+
 ### Connect Claude Code
 
 ```bash
@@ -238,7 +242,7 @@ Any client that speaks Streamable HTTP with the classic `initialize` handshake (
 | `HOST` | no | `0.0.0.0` | Interface to bind |
 | `WEB_DIST` | no | `web/dist` | Path to the UI build |
 | `LOG_LEVEL` | no | `info` | `debug`, `info`, `warn` or `error` |
-| `TABULA_MEDIA_DIR` | no | `data/media` (`/data/media` in the image) | Where bug-report attachments are stored; mount a volume there and back it up with the database |
+| `TABULA_MEDIA_DIR` | no | `data/media` (`/data/media` in the image) | Where bug-report attachments are stored; mount a volume there (writable by uid 1000 in the image) and back it up with the database |
 | `TABULA_MEDIA_MAX_MB` | no | `1024` | Largest accepted upload (a reverse proxy in front needs a body limit at least this big) |
 | `TABULA_MEDIA_PURGE_HOURS` | no | `24` | Video and audio of a closed report are deleted this many hours after closing (`0` = at the next check, every 15 minutes) |
 | `FFMPEG_PATH` / `FFPROBE_PATH` | no | `ffmpeg` / `ffprobe` | Used for video frames, image previews for agents and durations; included in the Docker image |
@@ -290,7 +294,9 @@ test/           Vitest: unit, database, HTTP/MCP and end-to-end CLI tests
 - One bearer token (and the optional connector secret) unlocks all projects, rules, notes and thoughts. Tokens are compared in constant time, and the connector secret is kept out of request logs.
 - Unexpected errors are logged on the server and returned to clients as a generic message, without internals.
 - The `tabula` command never uploads `.env` or `.env.*` files and the server refuses them too; paths are validated on both sides (relative, no `..`, no `.git`), and paths that differ only in letter case are never synced, so one cannot overwrite the other on Windows or macOS.
-- **Bug-report attachments** are accepted only as photos, video or audio, recognised from the file's bytes (never from the name or the client's content type), so an HTML or SVG file can't be uploaded and run on Tabula's origin. They are served from `/media/<id>` with a signed, expiring link instead of the token (`<video>` and `<img>` can't send one), with `nosniff`, a sandboxing CSP and range support. The signing key is derived from `TABULA_TOKEN`: rotating the token invalidates every link.
+- **Bug-report attachments** are accepted only as photos, video or audio, recognised from the file's bytes (never from the name or the client's content type), so an HTML or SVG file can't be uploaded and run on Tabula's origin. They are served from `/media/<id>` with a signed, expiring link instead of the token (`<video>` and `<img>` can't send one), with `nosniff`, a sandboxing CSP and range support. The signing key is derived from `TABULA_TOKEN`: rotating the token invalidates every link. Signatures are masked in request logs.
+- **ffmpeg reads untrusted files**, so it runs with only `PATH` in its environment (never the token or the database URL), reads local files only, with the demuxer fixed by the detected type, refuses pictures over 64 megapixels, and at most two ffmpeg/ffprobe processes run at once. Its error output stays in the server log.
+- **There is no total storage quota and no limit on concurrent uploads**, only `TABULA_MEDIA_MAX_MB` per file: with a single token, whoever can upload can already do everything else. Watch the free space of the media volume; video and audio of closed reports are deleted after `TABULA_MEDIA_PURGE_HOURS`.
 - `/cli/tabula.mjs` and `/cli/version` are public: they serve the CLI from this repository and no data.
 - Input is validated at the boundary: length limits, slug format, and NUL characters rejected before they reach Postgres.
 

@@ -6,7 +6,7 @@ Call it when you are unsure which project slug to use. Never invent a slug; proj
 
   search: `Full-text search over the global rules and the project's synced files (path and content). Use it when you need something specific that recall did not show; open a file hit with read_file. Words match exactly; use "quoted phrases", OR and -exclusion.`,
 
-  get: `Fetch the full text of one global rule (memory), note or thought by id. Notes are the user's own notebook: read them only when the user mentions their notes.`,
+  get: `Fetch the full text of one global rule (memory), note, thought or bug report by id (for a report's attachments use get_report). Notes are the user's own notebook: read them only when the user mentions their notes.`,
 
   remember: `Store a global rule — something that applies to every project. Call it ONLY when the user explicitly asks to add a global rule, never on your own initiative and never for project knowledge (that belongs in the repository or in its synced files). project must be "global".
 Always search first; if a rule covers the same topic, pass its id as supersedes_id instead of creating a duplicate.
@@ -30,4 +30,17 @@ Write it so the user can reread it months later without the conversation: a spec
 expected_version (from find_thoughts or get) is REQUIRED when you pass body or title, so you never overwrite the user's own edit; append alone may omit it; on a 409 conflict call get and apply the change again.`,
 
   find_thoughts: `List or search the user's personal Tabula notebook ("Thoughts"). Without query it returns the newest thoughts. Use it when the user refers to something saved earlier, and before save_thought to avoid duplicates. Returns ids and versions for get and update_thought. Works in any project; it needs no "Memory (Tabula)" section.`,
+
+  list_reports: `List bug reports of a project (or of all projects): id, title, status, attachment counts. By default only open ones (status new or triaged). Bug reports are captured by the user on the phone — text, photos, screen recordings and voice notes — and wait for an agent to turn them into tasks. Use it when the user asks about bug reports ("hlásenia", "bugy") or asks you to process them.`,
+
+  get_report: `Read one bug report: the user's description, the triage written so far, and its attachments (photos, videos, audio, saved frames) with durations and download links valid for 24 hours. Look at photos and frames with view_attachment; for a moment in a video use get_frame. The links also work with curl if you prefer to process a file locally.`,
+
+  create_report: `Create a bug report for a project when the user asks you to record a bug (e.g. "zapíš bug do Tabuly pre music-creator"). Title: what is broken, one line. description: the user's words and the steps to reproduce. Files are added by the user in the Tabula app. project is the slug from list_projects; never guess it.`,
+
+  update_report: `Write your analysis of a bug report: pass triage (Markdown) with what is wrong, where in the code, and a checklist of tasks; or append_triage to add to it. Set status "triaged" once the tasks are written. Set "done" only when the user confirms the fix or asks you to close it — closing deletes the report's video and audio after a grace period (photos, frames and text stay).
+expected_version (from get_report) is REQUIRED when you replace triage or title or set status "done"; append_triage and status "triaged" may be sent without it. On a 409 conflict call get_report and apply the change again.`,
+
+  view_attachment: `Look at a photo or a saved frame of a bug report (returned as an image). For a video use get_frame with a moment; audio cannot be viewed.`,
+
+  get_frame: `Take a still from a report's video at a given moment ("2:41", "1:02:03" or seconds, e.g. 161.5) and look at it. The frame is saved to the report, so it stays after the video is deleted; asking again for the same moment returns the saved one. Use it for the moments that matter — when the user says "here", "look", or describes what the screen shows — rather than sampling the whole video.`,
 } as const;

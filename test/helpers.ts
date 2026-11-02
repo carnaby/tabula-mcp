@@ -7,7 +7,7 @@ import { projects } from '../src/db/schema.js';
 export function useTestDb(): Db {
   const { db, close } = createDb(inject('databaseUrl'));
   beforeEach(async () => {
-    await db.execute(sql`TRUNCATE memories, notes, thoughts, project_files, project_file_revisions CASCADE`);
+    await db.execute(sql`TRUNCATE memories, notes, thoughts, project_files, project_file_revisions, reports, report_attachments CASCADE`);
     await db.execute(sql`DELETE FROM projects WHERE id <> 'global'`);
   });
   afterAll(close);
@@ -29,6 +29,7 @@ export function testConfig(overrides: Partial<Config> = {}): Config {
     port: 0,
     host: '127.0.0.1',
     webDist: 'does-not-exist',
+    media: { dir: 'does-not-exist', maxBytes: 10 * 1024 * 1024, purgeAfterHours: 24, ffmpeg: 'ffmpeg', ffprobe: 'ffprobe' },
     ...overrides,
   };
 }

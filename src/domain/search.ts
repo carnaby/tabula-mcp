@@ -89,7 +89,7 @@ export async function search(db: Db, p: SearchParams): Promise<SearchHit[]> {
 
 export type QuickHit = {
   id: string;
-  type: 'memory' | 'note' | 'thought' | 'file';
+  type: 'memory' | 'note' | 'thought' | 'file' | 'report';
   project: string | null;
   kind: MemoryKind | null;
   title: string;
@@ -98,7 +98,7 @@ export type QuickHit = {
   updated_at: string;
 };
 
-/** The UI's global search box: prefix match over memories, notes, thoughts and project files, best match first. */
+/** The UI's global search box: prefix match over memories, notes, thoughts, project files and bug reports, best match first. */
 export async function quickSearch(db: Db, p: { q: string; limit?: number }): Promise<QuickHit[]> {
   const tsq = prefixTsQuery(p.q);
   if (!tsq) return [];
@@ -125,6 +125,12 @@ export async function quickSearch(db: Db, p: { q: string; limit?: number }): Pro
         SELECT f.id, 'file', f.project_id, NULL, f.path,
           left(f.content, 100000), 'active', f.updated_at, ts_rank(f.search, q.tsq)
         FROM project_files f, q WHERE f.search @@ q.tsq AND f.deleted_at IS NULL
+        UNION ALL
+        -- Closed reports rank like deprecated memories: below everything still open.
+        SELECT r.id, 'report', r.project_id, NULL, r.title,
+          r.body || ' ' || r.triage, CASE WHEN r.status = 'done' THEN 'deprecated' ELSE 'active' END, r.updated_at,
+          ts_rank(r.search, q.tsq)
+        FROM reports r, q WHERE r.search @@ q.tsq
       ) hits
       ORDER BY (status = 'active') DESC, rank DESC, updated_at DESC
       LIMIT ${limit}

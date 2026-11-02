@@ -3,7 +3,9 @@ import { z } from 'zod';
 import {
   type AgentContext, agentDeprecate, agentFindNotes, agentFindThoughts, agentGet, agentListFiles, agentListProjects,
   agentReadFile, agentRecall, agentRemember, agentSaveThought, agentSearch, agentUpdateThought,
+  agentCreateReport, agentGetFrame, agentGetReport, agentListReports, agentUpdateReport, agentViewAttachment, type AgentImage,
 } from '../agent/operations.js';
+import { REPORT_STATUSES } from '../domain/reports.js';
 import { badRequest, DomainError } from '../domain/errors.js';
 import { createProject } from '../domain/projects.js';
 import { MEMORY_KINDS, validateProjectSlug } from '../domain/validation.js';
@@ -14,7 +16,8 @@ const SERVER_INSTRUCTIONS = `Tabula keeps each project's files that are not in g
 Use Tabula for a project only when its CLAUDE.md (or project instructions) has a "Memory (Tabula)" section naming its Tabula project. Without that section do not call recall, search, list_files or read_file, and never guess a project slug.
 Never write project memories: remember and deprecate work only on global rules, and only when the user explicitly asks.
 When the user explicitly asks to start using Tabula in a project: call setup_project with the project folder name as the slug, put the section it returns into CLAUDE.md (create the file if it is missing; replace an older "Memory (Tabula)" section), save the suggested .tabula.json in the repository root, run \`tabula status\` before the first \`tabula push\` and check the files it lists (a broad "sync" pattern can upload far more than intended), then call recall.
-Thoughts and Notes need no such section and work anywhere. Thoughts are the user's notebook of saved conversations: when the user explicitly asks to save something to Tabula, or to find or change a saved thought, use find_thoughts, save_thought and update_thought. Notes are the user's own notes: read them with find_notes and get only when the user mentions their notes.`;
+Thoughts and Notes need no such section and work anywhere. Thoughts are the user's notebook of saved conversations: when the user explicitly asks to save something to Tabula, or to find or change a saved thought, use find_thoughts, save_thought and update_thought. Notes are the user's own notes: read them with find_notes and get only when the user mentions their notes.
+Bug reports belong to a project and need no such section either: when the user asks about bug reports or to process them, use list_reports and get_report, look at photos and video moments with view_attachment and get_frame, and write the tasks with update_report. To record a new bug with create_report, take the project slug from list_projects; never guess it.`;
 
 /** Returned by setup_project: the first push uploads everything "sync" matches, so look before it does. */
 const SETUP_NEXT_STEP =
@@ -28,6 +31,21 @@ const kindParam = z.enum(MEMORY_KINDS);
 export type McpLogger = { error(obj: unknown): void };
 export type McpContext = AgentContext & { log?: McpLogger };
 
+/** Like runTool, for tools that answer with an image (and a line of JSON about it). */
+async function runImageTool(log: McpLogger | undefined, fn: () => Promise<AgentImage>) {
+  try {
+    const r = await fn();
+    return {
+      content: [
+        { type: 'image' as const, data: r.image.toString('base64'), mimeType: r.mime },
+        { type: 'text' as const, text: r.text },
+      ],
+    };
+  } catch (e) {
+    return runTool(log, () => Promise.reject(e));
+  }
+}
+
 async function runTool(log: McpLogger | undefined, fn: () => Promise<unknown>) {
   try {
     const result = await fn();
@@ -35,6 +53,7 @@ async function runTool(log: McpLogger | undefined, fn: () => Promise<unknown>) {
     return { content: [{ type: 'text' as const, text }] };
   } catch (e) {
     if (e instanceof DomainError) {
+      if (e.cause) log?.error({ err: e.cause, msg: e.message });
       return { content: [{ type: 'text' as const, text: `${e.status}: ${e.message}` }], isError: true };
     }
     log?.error(e);
@@ -205,6 +224,72 @@ export function buildMcpServer(ctx: McpContext): McpServer {
       }),
     },
     (a) => run(() => agentFindThoughts(ctx, a)),
+  );
+
+  const reportId = z.string().describe('Report id: full uuid or the short #xxxx id from list_reports.');
+  const attachmentId = z.string().describe('Attachment id from get_report (full uuid or its first 8+ characters).');
+
+  server.registerTool(
+    'list_reports',
+    {
+      description: D.list_reports,
+      inputSchema: z.object({
+        project: z.string().optional().describe('Project slug; omit for every project.'),
+        status: z.enum([...REPORT_STATUSES, 'open', 'all']).default('open').describe('"open" = new and triaged.'),
+        query: z.string().optional().describe('Words to look for (prefix match).'),
+        limit: z.number().int().min(1).max(50).default(20),
+      }),
+    },
+    (a) => run(() => agentListReports(ctx, a)),
+  );
+
+  server.registerTool('get_report', { description: D.get_report, inputSchema: z.object({ id: reportId }) }, ({ id }) =>
+    run(() => agentGetReport(ctx, id)),
+  );
+
+  server.registerTool(
+    'create_report',
+    {
+      description: D.create_report,
+      inputSchema: z.object({
+        project: z.string().describe('Project slug the bug belongs to, as list_projects shows it.'),
+        title: z.string().describe('What is broken, one line, max 200 characters.'),
+        description: z.string().optional().describe('Markdown: what happened, steps to reproduce, expected result.'),
+      }),
+    },
+    (a) => run(() => agentCreateReport(ctx, a)),
+  );
+
+  server.registerTool(
+    'update_report',
+    {
+      description: D.update_report,
+      inputSchema: z.object({
+        id: reportId,
+        triage: z.string().optional().describe('Replaces the whole triage (Markdown).'),
+        append_triage: z.string().optional().describe('Markdown added at the end of the triage.'),
+        status: z.enum(REPORT_STATUSES).optional(),
+        title: z.string().optional(),
+        expected_version: z.number().int().positive().optional().describe('The version from get_report. Required with triage, title or status "done".'),
+      }),
+    },
+    (a) => run(() => agentUpdateReport(ctx, a)),
+  );
+
+  server.registerTool('view_attachment', { description: D.view_attachment, inputSchema: z.object({ id: attachmentId }) }, ({ id }) =>
+    runImageTool(ctx.log, () => agentViewAttachment(ctx, id)),
+  );
+
+  server.registerTool(
+    'get_frame',
+    {
+      description: D.get_frame,
+      inputSchema: z.object({
+        video_id: attachmentId,
+        at: z.union([z.string(), z.number()]).describe('"2:41", "1:02:03" or seconds (161.5).'),
+      }),
+    },
+    (a) => runImageTool(ctx.log, () => agentGetFrame(ctx, a)),
   );
 
   return server;

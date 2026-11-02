@@ -1,6 +1,7 @@
 // Tabula service worker: makes the app installable and the shell load fast and offline.
 // Data never goes through the cache: /api and /mcp always hit the network (they need the token
-// and must be fresh — agents write while the app is open).
+// and must be fresh — agents write while the app is open). /media is left to the browser too:
+// video and audio are fetched with Range requests, which a service worker would break.
 const SHELL = 'tabula-shell-v1';
 const ASSETS = 'tabula-assets-v1';
 const MAX_ASSETS = 60;
@@ -29,7 +30,7 @@ self.addEventListener('fetch', (event) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
-  if (url.pathname.startsWith('/api') || url.pathname.startsWith('/mcp') || url.pathname === '/healthz') return;
+  if (url.pathname.startsWith('/api') || url.pathname.startsWith('/mcp') || url.pathname.startsWith('/media/') || url.pathname === '/healthz') return;
 
   // The page: network first so a deploy shows up at once; the cached shell when offline.
   if (req.mode === 'navigate') {

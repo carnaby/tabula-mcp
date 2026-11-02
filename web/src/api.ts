@@ -1,6 +1,7 @@
 import type {
   FileRevision, FileRevisionContent, Memory, MemoryKind, MemorySort, Note, NoteSort, Page, Project, RecallPreview, SearchHit, Source, Thought,
   ProjectFile, ProjectFileContent, ThoughtRevision, ThoughtSort,
+  Attachment, ReportDetail, Report, ReportSort, ReportStatus, ReportSummary,
 } from './types';
 
 const TOKEN_KEY = 'tabula.token';
@@ -101,6 +102,49 @@ export const api = {
   revisions: (id: string, signal?: S) => request<ThoughtRevision[]>('GET', `/thoughts/${id}/revisions`, undefined, signal),
   restoreRevision: (id: string, revId: string) => request<Thought>('POST', `/thoughts/${id}/revisions/${revId}/restore`),
 
+  reports: (f: { project?: string; status?: ReportStatus | 'open' | 'all'; q?: string } & Paging<ReportSort>, signal?: S) =>
+    request<Page<ReportSummary>>('GET', `/reports${qs(f)}`, undefined, signal),
+  reportCounts: (signal?: S) => request<Record<string, number>>('GET', '/reports/counts', undefined, signal),
+  report: (id: string, signal?: S) => request<ReportDetail>('GET', `/reports/${id}`, undefined, signal),
+  createReport: (r: { projectId: string; title?: string; body?: string }) => request<Report>('POST', '/reports', r),
+  updateReport: (
+    id: string,
+    p: { title?: string; body?: string; triage?: string; status?: ReportStatus; projectId?: string; expectedVersion?: number },
+  ) => request<Report>('PATCH', `/reports/${id}`, p),
+  deleteReport: (id: string) => request<void>('DELETE', `/reports/${id}`),
+  deleteAttachment: (id: string) => request<void>('DELETE', `/attachments/${id}`),
+  saveFrame: (videoId: string, atSeconds: number) => request<Attachment>('POST', `/attachments/${videoId}/frame`, { at: atSeconds }),
+
   search: (q: string, signal?: S) => request<SearchHit[]>('GET', `/search${qs({ q, limit: 30 })}`, undefined, signal),
   recall: (project: string, signal?: S) => request<RecallPreview>('GET', `/recall/${encodeURIComponent(project)}`, undefined, signal),
 };
+
+/**
+ * Upload one file as the raw request body. XMLHttpRequest because fetch has no upload progress;
+ * abort() cancels it.
+ */
+export function uploadAttachment(
+  reportId: string,
+  file: Blob,
+  name: string,
+  onProgress: (fraction: number) => void,
+): { promise: Promise<Attachment>; abort: () => void } {
+  const xhr = new XMLHttpRequest();
+  const promise = new Promise<Attachment>((resolve, reject) => {
+    xhr.open('POST', `/api/reports/${reportId}/attachments`);
+    xhr.setRequestHeader('Authorization', `Bearer ${getToken() ?? ''}`);
+    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+    xhr.setRequestHeader('X-File-Name', encodeURIComponent(name));
+    xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
+    xhr.onload = () => {
+      let body: { message?: string } & Partial<Attachment> = {};
+      try { body = JSON.parse(xhr.responseText); } catch { /* not JSON */ }
+      if (xhr.status === 201) resolve(body as Attachment);
+      else reject(new ApiError(xhr.status, body.message ?? (xhr.status === 413 ? 'The file is too large' : `Upload failed (${xhr.status})`)));
+    };
+    xhr.onerror = () => reject(new ApiError(0, 'Upload failed: no connection to Tabula'));
+    xhr.onabort = () => reject(new ApiError(0, 'Upload cancelled'));
+    xhr.send(file);
+  });
+  return { promise, abort: () => xhr.abort() };
+}

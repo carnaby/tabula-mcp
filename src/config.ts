@@ -12,6 +12,11 @@ const schema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
   HOST: z.string().default('0.0.0.0'),
   WEB_DIST: z.string().default('web/dist'),
+  TABULA_MEDIA_DIR: z.string().default('data/media'),
+  TABULA_MEDIA_MAX_MB: z.coerce.number().int().positive().default(1024),
+  TABULA_MEDIA_PURGE_HOURS: z.coerce.number().min(0).default(24),
+  FFMPEG_PATH: z.string().default('ffmpeg'),
+  FFPROBE_PATH: z.string().default('ffprobe'),
 });
 
 export type Config = {
@@ -21,6 +26,15 @@ export type Config = {
   port: number;
   host: string;
   webDist: string;
+  media: {
+    /** Where attachments of bug reports are stored (a volume in Docker). */
+    dir: string;
+    maxBytes: number;
+    /** Video and audio of a closed report are deleted this many hours after it was closed. */
+    purgeAfterHours: number;
+    ffmpeg: string;
+    ffprobe: string;
+  };
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -37,5 +51,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     port: e.PORT,
     host: e.HOST,
     webDist: e.WEB_DIST,
+    media: {
+      dir: e.TABULA_MEDIA_DIR,
+      maxBytes: e.TABULA_MEDIA_MAX_MB * 1024 * 1024,
+      purgeAfterHours: e.TABULA_MEDIA_PURGE_HOURS,
+      ffmpeg: e.FFMPEG_PATH,
+      ffprobe: e.FFPROBE_PATH,
+    },
   };
 }

@@ -20,6 +20,8 @@ import { DIGEST_BUDGET, estimateTokens, wordCount } from '../domain/tokens.js';
 import { MEMORY_KINDS } from '../domain/validation.js';
 import { requireBearer } from './auth.js';
 import { fileRoutes } from './files-api.js';
+import { reportRoutes } from './reports-api.js';
+import type { MediaStore } from '../media/store.js';
 import { parse } from './parse.js';
 
 const kind = z.enum(MEMORY_KINDS);
@@ -35,10 +37,11 @@ const paging = <S extends readonly [string, ...string[]]>(sorts: S) => ({
 
 const withSize = (n: Note) => ({ ...n, wordCount: wordCount(n.body), tokenEstimate: estimateTokens(n.body) });
 
-export const apiRoutes: FastifyPluginAsync<{ db: Db; config: Config }> = async (app, { db, config }) => {
+export const apiRoutes: FastifyPluginAsync<{ db: Db; config: Config; store: MediaStore }> = async (app, { db, config, store }) => {
   app.addHook('preHandler', requireBearer(config.token));
   // Child plugin: inherits the bearer preHandler above.
   await app.register(fileRoutes, { db });
+  await app.register(reportRoutes, { db, config, store });
 
   // Projects
   app.get('/projects', () => listProjects(db));

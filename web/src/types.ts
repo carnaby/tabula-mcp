@@ -72,7 +72,7 @@ export type ThoughtRevision = {
 
 export type SearchHit = {
   id: string;
-  type: 'memory' | 'note' | 'thought' | 'file';
+  type: 'memory' | 'note' | 'thought' | 'file' | 'report';
   project: string | null;
   kind: MemoryKind | null;
   title: string;
@@ -96,3 +96,44 @@ export type FileRevision = { version: number; sha256: string; size: number; upda
 export type FileRevisionContent = FileRevision & { content: string };
 
 export type RecallPreview = { text: string; tokens: number; budget: number; trimmed: string[]; overBudget: boolean };
+
+export type ReportStatus = 'new' | 'triaged' | 'done';
+export const REPORT_STATUS_INFO: Record<ReportStatus, { label: string; hint: string }> = {
+  new: { label: 'New', hint: 'Captured, waiting for an agent' },
+  triaged: { label: 'Triaged', hint: 'An agent wrote the tasks' },
+  done: { label: 'Done', hint: 'Fixed and closed' },
+};
+export type AttachmentKind = 'image' | 'video' | 'audio' | 'frame';
+export type Attachment = {
+  id: string;
+  reportId: string;
+  kind: AttachmentKind;
+  mime: string;
+  size: number;
+  fileName: string;
+  durationMs: number | null;
+  sourceId: string | null;
+  atMs: number | null;
+  createdBy: string;
+  createdAt: string;
+  purgedAt: string | null;
+  /** Signed link, null once the file was deleted. */
+  url: string | null;
+};
+export type Report = {
+  id: string;
+  projectId: string;
+  title: string;
+  body: string;
+  triage: string;
+  status: ReportStatus;
+  source: Source;
+  editedBy: string;
+  version: number;
+  closedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+export type ReportSummary = Report & { counts: Record<AttachmentKind, number> };
+export type ReportDetail = Report & { attachments: Attachment[] };
+export type ReportSort = 'createdAt' | 'updatedAt' | 'title' | 'status';

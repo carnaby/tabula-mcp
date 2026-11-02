@@ -4,14 +4,26 @@ import type { Config } from '../config.js';
 import type { Db } from '../db/client.js';
 import { sanitizeAgentLabel } from '../domain/validation.js';
 import { requireBearer, safeEqual } from '../http/auth.js';
+import type { MediaStore } from '../media/store.js';
 import { buildMcpServer } from './server.js';
+
+/** The origin the client used (behind a TLS proxy: its forwarded headers), for absolute attachment links. */
+function originOf(req: FastifyRequest): string {
+  const first = (h: string | string[] | undefined) => (Array.isArray(h) ? h[0] : h)?.split(',')[0]?.trim();
+  const proto = first(req.headers['x-forwarded-proto']) ?? req.protocol;
+  const host = first(req.headers['x-forwarded-host']) ?? req.headers.host ?? 'localhost';
+  return `${proto === 'https' ? 'https' : 'http'}://${host}`;
+}
 
 const METHOD_NOT_ALLOWED = { jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed.' }, id: null };
 
-export function registerMcpRoutes(app: FastifyInstance, deps: { db: Db; config: Config }): void {
+export function registerMcpRoutes(app: FastifyInstance, deps: { db: Db; config: Config; store: MediaStore }): void {
   // Stateless: a new server + transport per request; agentLabel is captured in the closure.
   const handle = async (req: FastifyRequest, reply: FastifyReply, agentLabel: string) => {
-    const server = buildMcpServer({ db: deps.db, agentLabel, log: req.log });
+    const server = buildMcpServer({
+      db: deps.db, agentLabel, log: req.log,
+      media: { store: deps.store, token: deps.config.token, paths: deps.config.media, baseUrl: originOf(req) },
+    });
     const transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     reply.raw.on('close', () => {
       void transport.close();

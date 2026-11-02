@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, notInArray, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { projectFileRevisions, projectFiles } from '../db/schema.js';
-import { badRequest, notFound, tooLarge } from './errors.js';
+import { badRequest, conflict, notFound, tooLarge } from './errors.js';
 import { requireProject } from './projects.js';
 import { charCount } from './validation.js';
 
@@ -71,7 +71,8 @@ export type FileMeta = {
 export type ProjectFile = FileMeta & { id: string; projectId: string; content: string; createdAt: Date };
 export type FileRevisionMeta = { version: number; sha256: string; size: number; updatedBy: string; createdAt: Date };
 export type FileRevision = FileRevisionMeta & { content: string };
-export type PutFileInput = { path: string; content: string; baseSha256: string | null; force?: boolean };
+/** isState, when given, sets the file's state flag with the write (agents writing over MCP); otherwise it is kept. */
+export type PutFileInput = { path: string; content: string; baseSha256: string | null; force?: boolean; isState?: boolean };
 export type PutFileResult =
   | { ok: true; sha256: string; version: number; changed: boolean }
   | { ok: false; sha256: string };
@@ -112,7 +113,7 @@ export async function putFile(db: Db, projectId: string, input: PutFileInput, up
     if (!cur) {
       const [created] = await tx
         .insert(projectFiles)
-        .values({ projectId, path, content: input.content, sha256, size, updatedBy })
+        .values({ projectId, path, content: input.content, sha256, size, updatedBy, isState: input.isState ?? false })
         .onConflictDoNothing({ target: [projectFiles.projectId, projectFiles.path] })
         .returning({ version: projectFiles.version });
       if (created) return { ok: true, sha256, version: created.version, changed: true };
@@ -121,8 +122,11 @@ export async function putFile(db: Db, projectId: string, input: PutFileInput, up
       if (!cur) throw new Error(`project file ${projectId}:${path} vanished during insert`);
     }
     const alive = cur.deletedAt === null;
+    const stateFlag = input.isState === undefined ? {} : { isState: input.isState };
     if (cur.sha256 === sha256) {
-      if (!alive) await tx.update(projectFiles).set({ deletedAt: null, ...keepUpdatedAt }).where(eq(projectFiles.id, cur.id));
+      if (!alive || (input.isState !== undefined && input.isState !== cur.isState)) {
+        await tx.update(projectFiles).set({ deletedAt: null, ...stateFlag, ...keepUpdatedAt }).where(eq(projectFiles.id, cur.id));
+      }
       return { ok: true, sha256, version: cur.version, changed: !alive };
     }
     if (alive && !input.force && input.baseSha256 !== cur.sha256) return { ok: false, sha256: cur.sha256 };
@@ -137,7 +141,7 @@ export async function putFile(db: Db, projectId: string, input: PutFileInput, up
       .where(and(eq(projectFileRevisions.fileId, cur.id), lte(projectFileRevisions.version, version - 1 - KEEP_FILE_REVISIONS)));
     await tx
       .update(projectFiles)
-      .set({ content: input.content, sha256, size, version, updatedBy, deletedAt: null })
+      .set({ content: input.content, sha256, size, version, updatedBy, deletedAt: null, ...stateFlag })
       .where(eq(projectFiles.id, cur.id));
     return { ok: true, sha256, version, changed: true };
   });
@@ -161,13 +165,25 @@ export async function getFile(db: Db, projectId: string, rawPath: string): Promi
   return row;
 }
 
-export async function deleteFile(db: Db, projectId: string, path: string): Promise<{ changed: boolean }> {
+/** With baseSha256 the delete happens only while that is still the current version; otherwise it is a conflict. */
+export async function deleteFile(
+  db: Db, projectId: string, path: string, opts: { baseSha256?: string } = {},
+): Promise<{ changed: boolean }> {
   const f = await getFile(db, projectId, path);
+  const expected = opts.baseSha256 === undefined ? undefined : eq(projectFiles.sha256, opts.baseSha256);
   const rows = await db
     .update(projectFiles)
     .set({ deletedAt: sql`now()`, ...keepUpdatedAt })
-    .where(and(eq(projectFiles.id, f.id), isNull(projectFiles.deletedAt)))
+    .where(and(eq(projectFiles.id, f.id), isNull(projectFiles.deletedAt), expected))
     .returning({ id: projectFiles.id });
+  if (rows.length === 0 && expected) {
+    const now = await getFile(db, projectId, path);
+    if (now.deletedAt === null) {
+      throw conflict(
+        `"${now.path}" changed since the version you read: the current version is ${now.version} with sha256 ${now.sha256}; read it again with read_file`,
+      );
+    }
+  }
   return { changed: rows.length > 0 };
 }
 

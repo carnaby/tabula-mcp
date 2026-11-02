@@ -15,11 +15,18 @@ export function useUploads(onUploaded: (a: Attachment) => void) {
     (reportId: string, files: File[]) => {
       for (const file of files) {
         const key = `u${++seq.current}`;
-        let abort = () => {};
-        setUploads((u) => [...u, { key, name: file.name, size: file.size, progress: 0, abort: () => abort() }]);
+        let cancelled = false;
+        let job: ReturnType<typeof uploadAttachment> | null = null;
+        // A running upload is aborted (and reports "cancelled"); a queued one is dropped before it starts.
+        const abort = () => {
+          cancelled = true;
+          if (job) job.abort();
+          else setUploads((u) => u.filter((x) => x.key !== key));
+        };
+        setUploads((u) => [...u, { key, name: file.name, size: file.size, progress: 0, abort }]);
         queue.current = queue.current.then(async () => {
-          const job = uploadAttachment(reportId, file, file.name, (f) => patch(key, { progress: f }));
-          abort = job.abort;
+          if (cancelled) return;
+          job = uploadAttachment(reportId, file, file.name, (f) => patch(key, { progress: f }));
           try {
             onUploaded(await job.promise);
             setUploads((u) => u.filter((x) => x.key !== key));

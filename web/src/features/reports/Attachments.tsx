@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { type Dispatch, type SetStateAction, useRef, useState } from 'react';
 import { api } from '../../api';
 import { formatSize } from '../../format';
 import type { Attachment } from '../../types';
@@ -72,7 +72,13 @@ function VideoCard({ a, frames, onFrame, onDelete }: { a: Attachment; frames: At
 
 export function Attachments({
   attachments, uploads, onChanged, onDismissUpload,
-}: { attachments: Attachment[]; uploads: Upload[]; onChanged: (next: Attachment[]) => void; onDismissUpload: (key: string) => void }) {
+}: {
+  attachments: Attachment[];
+  uploads: Upload[];
+  /** Takes an update function: uploads finishing meanwhile change the list too, so it must not be replaced from a stale copy. */
+  onChanged: Dispatch<SetStateAction<Attachment[]>>;
+  onDismissUpload: (key: string) => void;
+}) {
   const { confirm } = useConfirm();
   const notify = useToast();
   const remove = async (a: Attachment) => {
@@ -80,7 +86,7 @@ export function Attachments({
     if (!(await confirm({ title: `Delete this ${what}?`, message: a.fileName, confirmLabel: 'Delete', danger: true }))) return;
     try {
       await api.deleteAttachment(a.id);
-      onChanged(attachments.filter((x) => x.id !== a.id));
+      onChanged((list) => list.filter((x) => x.id !== a.id));
     } catch (e) {
       notify((e as Error).message, { tone: 'danger' });
     }
@@ -107,7 +113,7 @@ export function Attachments({
           key={v.id}
           a={v}
           frames={attachments.filter((f) => f.kind === 'frame' && f.sourceId === v.id).sort((x, y) => (x.atMs ?? 0) - (y.atMs ?? 0))}
-          onFrame={(f) => onChanged(attachments.some((x) => x.id === f.id) ? attachments : [...attachments, f])}
+          onFrame={(f) => onChanged((list) => (list.some((x) => x.id === f.id) ? list : [...list, f]))}
           onDelete={() => void remove(v)}
         />
       ))}

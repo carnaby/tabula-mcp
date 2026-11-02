@@ -76,18 +76,28 @@ function Editor({
   const dirty = textDirty || (editTriage && triageDraft !== (base?.triage ?? '')) || up.busy;
   const guard = useUnsavedGuard(dirty);
 
-  /** A new report is created the moment it gets text or a file, so uploads can start right away. */
-  const ensureReport = async (): Promise<Report> => {
-    if (base) return base;
-    if (!draft.projectId) throw new Error('Pick the project first.');
-    const r = await api.createReport({ projectId: draft.projectId, title: draft.title.trim() || undefined, body: draft.body });
-    setBase(r);
-    setDraft((d) => ({ ...d, title: r.title }));
-    setLastProject({ id: r.projectId });
-    invalidate('reports');
-    // Swap the address without remounting: uploads in progress keep going.
-    history.replaceState(null, '', href.report(r.id));
-    return r;
+  /**
+   * A new report is created the moment it gets text or a file, so uploads can start right away. One creation at a
+   * time: two quick picks (or a pick and a save) must not create two reports.
+   */
+  const creating = useRef<Promise<Report> | null>(null);
+  const ensureReport = (): Promise<Report> => {
+    if (base) return Promise.resolve(base);
+    if (!draft.projectId) return Promise.reject(new Error('Pick the project first.'));
+    creating.current ??= (async () => {
+      const r = await api.createReport({ projectId: draft.projectId, title: draft.title.trim() || undefined, body: draft.body });
+      setBase(r);
+      setDraft((d) => ({ ...d, title: r.title }));
+      setLastProject({ id: r.projectId });
+      invalidate('reports');
+      // Swap the address without remounting: uploads in progress keep going.
+      history.replaceState(null, '', href.report(r.id));
+      return r;
+    })().catch((e: unknown) => {
+      creating.current = null; // let the next attempt try again
+      throw e;
+    });
+    return creating.current;
   };
 
   const addFiles = async (files: File[]) => {

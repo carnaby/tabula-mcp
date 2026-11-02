@@ -30,19 +30,22 @@ export function Recorder({ mode, onDone, onCancel }: { mode: Mode; onDone: (file
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setInterval> | undefined;
+    const stopAll = () => streams.current.forEach((s) => s.getTracks().forEach((t) => t.stop()));
     (async () => {
       try {
         const mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
         streams.current.push(mic);
+        // Closed while the browser was asking for permission: the cleanup already ran, so stop what came late.
+        if (cancelled) return stopAll();
         let stream = mic;
         if (mode === 'screen') {
           const screen = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 15 }, audio: false });
           streams.current.push(screen);
+          if (cancelled) return stopAll();
           stream = new MediaStream([...screen.getVideoTracks(), ...mic.getAudioTracks()]);
           // Stopping the share from the browser's bar ends the recording too.
           screen.getVideoTracks()[0]?.addEventListener('ended', () => rec.current?.state === 'recording' && rec.current.stop());
         }
-        if (cancelled) return;
         const type =
           mode === 'voice'
             ? pickType(['audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg;codecs=opus'])
@@ -50,7 +53,7 @@ export function Recorder({ mode, onDone, onCancel }: { mode: Mode; onDone: (file
         const r = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
         r.ondataavailable = (e) => e.data.size && chunks.current.push(e.data);
         r.onstop = () => {
-          streams.current.forEach((s) => s.getTracks().forEach((t) => t.stop()));
+          stopAll();
           if (cancelled || chunks.current.length === 0) return;
           const mime = r.mimeType || type || (mode === 'voice' ? 'audio/webm' : 'video/webm');
           const ext = mime.includes('mp4') ? (mode === 'voice' ? 'm4a' : 'mp4') : mime.includes('ogg') ? 'ogg' : 'webm';
@@ -62,7 +65,8 @@ export function Recorder({ mode, onDone, onCancel }: { mode: Mode; onDone: (file
         const start = Date.now();
         timer = setInterval(() => setElapsed(Date.now() - start), 250);
       } catch (e) {
-        streams.current.forEach((s) => s.getTracks().forEach((t) => t.stop()));
+        stopAll();
+        if (cancelled) return;
         const msg = (e as Error).name === 'NotAllowedError' ? 'Permission denied — allow the microphone (and screen) for Tabula.' : (e as Error).message;
         setError(msg);
         notify(msg, { tone: 'danger' });
@@ -72,7 +76,7 @@ export function Recorder({ mode, onDone, onCancel }: { mode: Mode; onDone: (file
       cancelled = true;
       clearInterval(timer);
       if (rec.current?.state === 'recording') rec.current.stop();
-      streams.current.forEach((s) => s.getTracks().forEach((t) => t.stop()));
+      stopAll();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);

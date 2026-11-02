@@ -130,6 +130,22 @@ describe('MCP endpoint', () => {
     await client.close();
   });
 
+  it('accepts a 1 MiB file through write_file, although the JSON-RPC body is larger than 1 MiB', async () => {
+    await setSyncConfig(db, 'demo', { sync: ['docs/**'], state: [] });
+    const line = 'say "hi"\n'; // quotes and newlines grow when JSON-escaped
+    const big = line.repeat(Math.floor(1_048_576 / line.length)).padEnd(1_048_576, 'x');
+    const client = await connect('/mcp', bearer);
+    const r = await client.callTool({ name: 'write_file', arguments: { project: 'demo', path: 'docs/big.md', content: big } });
+    expect(r.isError, textOf(r).slice(0, 200)).toBeFalsy();
+    expect(JSON.parse(textOf(r))).toMatchObject({ version: 1, changed: true });
+    expect((await getFile(db, 'demo', 'docs/big.md')).size).toBe(1_048_576);
+    await client.close();
+    const viaConnector = await connect(`/mcp/${TEST_SECRET}`);
+    const again = await viaConnector.callTool({ name: 'write_file', arguments: { project: 'demo', path: 'docs/big2.md', content: big } });
+    expect(again.isError, textOf(again).slice(0, 200)).toBeFalsy();
+    await viaConnector.close();
+  });
+
   it('rejects a negative or fractional read_file offset', async () => {
     const client = await connect('/mcp', bearer);
     for (const offset of [-1, 1.5]) {

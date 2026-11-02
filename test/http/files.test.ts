@@ -26,6 +26,7 @@ describe('files REST API', () => {
       ['PUT', '/api/projects/demo/files'], ['DELETE', '/api/projects/demo/files?path=a.md'],
       ['POST', '/api/projects/demo/files/restore'], ['GET', '/api/projects/demo/files/revisions?path=a.md'],
       ['GET', '/api/projects/demo/files/revisions/content?path=a.md&version=1'], ['PUT', '/api/projects/demo/files/state'],
+      ['GET', '/api/projects/demo/sync-config'], ['PUT', '/api/projects/demo/sync-config'],
     ] as const;
     for (const [method, url] of routes) expect((await app.inject({ method, url })).statusCode, `${method} ${url}`).toBe(401);
   });
@@ -97,5 +98,23 @@ describe('files REST API', () => {
     expect((await call('GET', '/api/search?q=handoff')).json()).toMatchObject([
       { type: 'file', project: 'demo', title: 'docs/handoff/state.md' },
     ]);
+  });
+
+  it('stores the sync patterns the CLI sends and serves them back', async () => {
+    expect((await call('GET', '/api/projects/demo/sync-config')).statusCode).toBe(404);
+    const body = { sync: ['docs/**', '.superpowers/sdd/*/progress.md'], state: ['docs/handoff/*.md'] };
+    const r = await call('PUT', '/api/projects/demo/sync-config', body);
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toMatchObject({ ...body, updatedAt: expect.any(String) });
+    expect((await call('GET', '/api/projects/demo/sync-config')).json()).toMatchObject(body);
+  });
+
+  it('refuses invalid sync patterns with 400, the global project with 400 and unknown projects with 404', async () => {
+    for (const bad of [{ sync: [], state: [] }, { sync: ['docs/**'] }, { sync: [1], state: [] }, { sync: ['docs/**'], state: [''] }]) {
+      expect((await call('PUT', '/api/projects/demo/sync-config', bad)).statusCode, JSON.stringify(bad)).toBe(400);
+    }
+    const ok = { sync: ['docs/**'], state: [] };
+    expect((await call('PUT', '/api/projects/global/sync-config', ok)).statusCode).toBe(400);
+    expect((await call('PUT', '/api/projects/nope/sync-config', ok)).statusCode).toBe(404);
   });
 });

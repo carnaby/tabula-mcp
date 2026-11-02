@@ -3,7 +3,9 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, st
 import { dirname, join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { projectFiles } from '../../src/db/schema.js';
+import { agentWriteFile } from '../../src/agent/operations.js';
 import { getFile, listFiles, putFile } from '../../src/domain/files.js';
+import { getSyncConfig } from '../../src/domain/sync-config.js';
 import { seedProject, TEST_TOKEN, useTestDb } from '../helpers.js';
 import { git, makeRepo, readText, runCli, startProxy, tempDir, useServer, writeFile } from './harness.js';
 
@@ -334,6 +336,60 @@ describe('tabula pull and push: failures, case collisions and what --force leave
     rmSync(join(a, 'docs', 'notes.md'));
     expect((await runCli(['push'], { cwd: a, env: env() })).code).toBe(0);
     expect((await getFile(db, 'demo', 'docs/notes.md')).content).toBe('n1\n');
+  });
+});
+
+describe('tabula and the agents that write over MCP', { timeout: 60_000 }, () => {
+  const agent = { db, agentLabel: 'claude-ai' };
+
+  it('sends the sync and state patterns on every push, the default state included', async () => {
+    const a = makeRepo(tempDir('tabula-s-'), cfg, { 'docs/a.md': 'a' });
+    expect((await runCli(['push'], { cwd: a, env: env() })).code).toBe(0);
+    expect(await getSyncConfig(db, 'demo')).toMatchObject({ sync: cfg.sync, state: cfg.state });
+    writeFile(a, '.tabula.json', JSON.stringify({ project: 'demo', sync: ['docs/**', 'notes/*.md'] }));
+    const again = await runCli(['push'], { cwd: a, env: env() });
+    expect(again.code, again.stderr).toBe(0);
+    expect(await getSyncConfig(db, 'demo')).toMatchObject({
+      sync: ['docs/**', 'notes/*.md'], state: ['docs/handoff/*.md', '**/docs/handoff/*.md'],
+    });
+  });
+
+  it('still pushes to an older server without the sync-config endpoint, with a warning', async () => {
+    const a = makeRepo(tempDir('tabula-o-'), cfg, { 'docs/a.md': 'a' });
+    const old = await startProxy(server.url, (url) => (url.includes('/sync-config') ? { status: 404 } : 0));
+    try {
+      const push = await runCli(['push'], { cwd: a, env: { ...env(), TABULA_URL: old.url } });
+      expect(push.code, push.stderr).toBe(0);
+      expect(push.stderr).toMatch(/^warning: .*sync patterns.*HTTP 404/m);
+      expect(push.stdout).toMatch(/1 pushed, 0 conflicts/);
+      expect(await serverPaths()).toEqual(['docs/a.md']);
+    } finally {
+      old.close();
+    }
+  });
+
+  it('pulls files written with write_file, and reports a conflict when the local copy changed too', async () => {
+    const a = makeRepo(tempDir('tabula-m-'), cfg, { 'docs/plan.md': 'v1\n' });
+    expect((await runCli(['push'], { cwd: a, env: env() })).code).toBe(0);
+    const v1 = await getFile(db, 'demo', 'docs/plan.md');
+
+    const v2 = await agentWriteFile(agent, { project: 'demo', path: 'docs/plan.md', content: 'v2 from the cloud\n', base_sha256: v1.sha256 });
+    await agentWriteFile(agent, { project: 'demo', path: 'docs/handoff/state.md', content: 'Next: cloud\n' });
+    const pull = await runCli(['pull'], { cwd: a, env: env() });
+    expect(pull.code, pull.stderr).toBe(0);
+    expect(readText(a, 'docs/plan.md')).toBe('v2 from the cloud\n');
+    expect(readText(a, 'docs/handoff/state.md')).toBe('Next: cloud\n');
+    expect((await runCli(['status'], { cwd: a, env: env() })).stdout).toMatch(/everything in sync \(2 files\)/);
+
+    writeFile(a, 'docs/plan.md', 'v3 local\n');
+    await agentWriteFile(agent, { project: 'demo', path: 'docs/plan.md', content: 'v3 cloud\n', base_sha256: v2.sha256 });
+    const conflicted = await runCli(['pull'], { cwd: a, env: env() });
+    expect(conflicted.code).toBe(2);
+    expect(conflicted.stderr).toMatch(/conflict docs\/plan\.md/);
+    expect(readText(a, 'docs/plan.md')).toBe('v3 local\n');
+    const push = await runCli(['push'], { cwd: a, env: env() });
+    expect(push.code).toBe(2);
+    expect((await getFile(db, 'demo', 'docs/plan.md')).content).toBe('v3 cloud\n');
   });
 });
 

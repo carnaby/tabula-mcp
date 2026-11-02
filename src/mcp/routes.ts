@@ -2,6 +2,7 @@ import { NodeStreamableHTTPServerTransport } from '@modelcontextprotocol/node';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Config } from '../config.js';
 import type { Db } from '../db/client.js';
+import { FILE_LIMITS } from '../domain/files.js';
 import { sanitizeAgentLabel } from '../domain/validation.js';
 import { requireBearer, safeEqual } from '../http/auth.js';
 import type { MediaStore } from '../media/store.js';
@@ -14,6 +15,12 @@ function originOf(req: FastifyRequest): string {
   const host = first(req.headers['x-forwarded-host']) ?? req.headers.host ?? 'localhost';
   return `${proto === 'https' ? 'https' : 'http'}://${host}`;
 }
+
+/**
+ * write_file carries a file of up to 1 MiB inside a JSON-RPC body, where JSON escaping can make it several times
+ * larger; the domain enforces the real 1 MiB limit (as the REST PUT does).
+ */
+const MCP_BODY_LIMIT = 8 * FILE_LIMITS.contentBytes;
 
 const METHOD_NOT_ALLOWED = { jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed.' }, id: null };
 
@@ -34,17 +41,26 @@ export function registerMcpRoutes(app: FastifyInstance, deps: { db: Db; config: 
     await transport.handleRequest(req.raw, reply.raw, req.body);
   };
 
-  app.post('/mcp', { preHandler: requireBearer(deps.config.token) }, (req, reply) =>
+  // Authentication runs before the body is read: only an authorized client gets the larger body limit.
+  app.post('/mcp', { bodyLimit: MCP_BODY_LIMIT, onRequest: requireBearer(deps.config.token) }, (req, reply) =>
     handle(req, reply, sanitizeAgentLabel(req.headers['x-tabula-agent'])),
   );
 
   const secret = deps.config.connectorSecret;
   if (secret) {
-    app.post<{ Params: { secret: string } }>('/mcp/:secret', async (req, reply) => {
-      if (!safeEqual(req.params.secret, secret)) return reply.code(404).send({ error: 'not found' });
-      const header = req.headers['x-tabula-agent'];
-      return handle(req, reply, header ? sanitizeAgentLabel(header) : 'claude-ai');
-    });
+    app.post<{ Params: { secret: string } }>(
+      '/mcp/:secret',
+      {
+        bodyLimit: MCP_BODY_LIMIT,
+        onRequest: async (req, reply) => {
+          if (!safeEqual(req.params.secret, secret)) return reply.code(404).send({ error: 'not found' });
+        },
+      },
+      async (req, reply) => {
+        const header = req.headers['x-tabula-agent'];
+        return handle(req, reply, header ? sanitizeAgentLabel(header) : 'claude-ai');
+      },
+    );
     // After initialize the client tries GET (SSE stream); without this route the default 404 handler would log the URL containing the secret.
     app.route<{ Params: { secret: string } }>({
       method: ['GET', 'DELETE'],

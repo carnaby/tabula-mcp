@@ -105,4 +105,28 @@ describe('project files', () => {
     expect(files[0]!.updatedAt.getTime()).toBe(before.getTime());
     expect(await setStatePaths(db, 'demo', [])).toEqual({ updated: 1 });
   });
+
+  it('sets the state flag on a write when asked, also when the content is unchanged', async () => {
+    await putFile(db, 'demo', { path: 'docs/handoff/s.md', content: 's', baseSha256: null, isState: true }, 'agent');
+    expect((await getFile(db, 'demo', 'docs/handoff/s.md')).isState).toBe(true);
+    const base = await sha('docs/handoff/s.md');
+    await putFile(db, 'demo', { path: 'docs/handoff/s.md', content: 's2', baseSha256: base, isState: false }, 'agent');
+    expect((await getFile(db, 'demo', 'docs/handoff/s.md')).isState).toBe(false);
+    const same = await putFile(db, 'demo', { path: 'docs/handoff/s.md', content: 's2', baseSha256: null, isState: true }, 'agent');
+    expect(same).toMatchObject({ ok: true, version: 2, changed: false });
+    expect((await getFile(db, 'demo', 'docs/handoff/s.md')).isState).toBe(true);
+    // Without isState a write leaves the flag alone (the CLI marks state files after its push).
+    await put('docs/handoff/s.md', 's3', await sha('docs/handoff/s.md'));
+    expect((await getFile(db, 'demo', 'docs/handoff/s.md')).isState).toBe(true);
+  });
+
+  it('deletes only the expected version when a base hash is given', async () => {
+    await put('docs/a.md', 'one', null);
+    const one = await sha('docs/a.md');
+    await put('docs/a.md', 'two', one);
+    const two = await sha('docs/a.md');
+    await expect(deleteFile(db, 'demo', 'docs/a.md', { baseSha256: one })).rejects.toMatchObject({ code: 'conflict' });
+    expect((await getFile(db, 'demo', 'docs/a.md')).deletedAt).toBeNull();
+    expect(await deleteFile(db, 'demo', 'docs/a.md', { baseSha256: two })).toEqual({ changed: true });
+  });
 });

@@ -77,8 +77,8 @@ export function makeRepo(dir: string, tabulaJson: object, files: Record<string, 
 }
 
 /**
- * A proxy in front of the test server for the CLI's GET requests. `behave` returns how many ms to hold a request back,
- * 'drop' to close the connection without an answer, or { status } to answer that status itself.
+ * A proxy in front of the test server for the CLI's requests (bodies included). `behave` returns how many ms to hold a
+ * request back, 'drop' to close the connection without an answer, or { status } to answer that status itself.
  */
 export async function startProxy(
   target: string,
@@ -91,7 +91,12 @@ export async function startProxy(
       if (typeof d === 'object') return void res.writeHead(d.status, { 'content-type': 'application/json' }).end('{}');
       if (d > 0) await new Promise((r) => setTimeout(r, d));
       try {
-        const r = await fetch(target + req.url, { method: req.method, headers: { authorization: String(req.headers.authorization) } });
+        const chunks: Buffer[] = [];
+        for await (const c of req) chunks.push(c as Buffer);
+        const headers: Record<string, string> = { authorization: String(req.headers.authorization) };
+        for (const h of ['content-type', 'x-tabula-agent']) if (req.headers[h]) headers[h] = String(req.headers[h]);
+        const body = chunks.length ? Buffer.concat(chunks) : undefined;
+        const r = await fetch(target + req.url, { method: req.method, headers, body });
         res.writeHead(r.status, { 'content-type': r.headers.get('content-type') ?? 'application/json' });
         res.end(Buffer.from(await r.arrayBuffer()));
       } catch {

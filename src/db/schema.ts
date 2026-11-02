@@ -198,6 +198,16 @@ export const projectFileRevisions = pgTable(
   (t) => [index('project_file_revisions_file_idx').on(t.fileId, t.version)],
 );
 
+/** The "sync" and "state" patterns of the repository's .tabula.json, sent by the CLI on every push. */
+export const projectSyncConfigs = pgTable('project_sync_configs', {
+  projectId: text('project_id')
+    .primaryKey()
+    .references(() => projects.id, { onDelete: 'cascade' }),
+  sync: text('sync').array().notNull(),
+  state: text('state').array().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const reportStatus = pgEnum('report_status', ['new', 'triaged', 'done']);
 export const attachmentKind = pgEnum('attachment_kind', ['image', 'video', 'audio', 'frame']);
 

@@ -4,6 +4,7 @@ import type { Db } from '../db/client.js';
 import {
   deleteFile, FILE_LIMITS, getFile, getFileRevision, listFileRevisions, listFiles, putFile, restoreFile, setStatePaths,
 } from '../domain/files.js';
+import { getSyncConfig, setSyncConfig } from '../domain/sync-config.js';
 import { sanitizeAgentLabel } from '../domain/validation.js';
 import { parse } from './parse.js';
 
@@ -66,5 +67,18 @@ export const fileRoutes: FastifyPluginAsync<{ db: Db }> = async (app, { db }) =>
   app.put('/projects/:id/files/state', (req) => {
     const { paths } = parse(z.object({ paths: z.array(z.string()).max(10_000) }), req.body);
     return setStatePaths(db, parse(idParams, req.params).id, paths);
+  });
+
+  // The CLI sends the "sync" and "state" patterns of .tabula.json on every push; write_file over MCP checks them.
+  app.get('/projects/:id/sync-config', async (req, reply) => {
+    const { id } = parse(idParams, req.params);
+    const config = await getSyncConfig(db, id);
+    if (!config) return reply.code(404).send({ error: 'not_found', message: `no sync patterns stored for project "${id}"; run tabula push` });
+    return config;
+  });
+
+  app.put('/projects/:id/sync-config', (req) => {
+    const b = parse(z.object({ sync: z.array(z.string()), state: z.array(z.string()) }), req.body);
+    return setSyncConfig(db, parse(idParams, req.params).id, b);
   });
 };

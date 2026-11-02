@@ -5,6 +5,7 @@ Tabula keeps this project's files that are not in git (handoff state, private sp
 - This project's Tabula project is \`${slug}\`; \`.tabula.json\` says which untracked files are synced.
 - At session start call \`recall\` for \`${slug}\` with \`include_state: false\` and follow the global rules. The project state is on disk (restored by the SessionStart hook).
 - At handoff run \`tabula push\` after writing the state file.
+- If the \`tabula\` command is not available (Claude Code on the web, claude.ai), the files are not on disk: call \`recall\` with \`include_state: true\`, read files with \`read_file\`, and save every new or changed synced file (spec, plan, \`progress.md\`, handoff state) with \`write_file\`.
 - Never write project memories. Add a global rule only when the user explicitly asks.
 `;
 }

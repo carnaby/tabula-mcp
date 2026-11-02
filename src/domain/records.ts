@@ -1,16 +1,18 @@
 import { sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
-import { memories, notes, thoughts } from '../db/schema.js';
+import { memories, notes, reports, thoughts } from '../db/schema.js';
 import { badRequest, notFound } from './errors.js';
 import { parseIdRef } from './ids.js';
 import { getMemory, type Memory } from './memories.js';
 import { getNote, type Note } from './notes.js';
+import { getReport, type Report } from './reports.js';
 import { getThought, type Thought } from './thoughts.js';
 
 export type ResolvedRecord =
   | { type: 'memory'; record: Memory }
   | { type: 'note'; record: Note }
-  | { type: 'thought'; record: Thought };
+  | { type: 'thought'; record: Thought }
+  | { type: 'report'; record: Report };
 
 export async function resolveRecord(db: Db, raw: string): Promise<ResolvedRecord> {
   const ref = parseIdRef(raw);
@@ -20,12 +22,14 @@ export async function resolveRecord(db: Db, raw: string): Promise<ResolvedRecord
     const n = await getNote(db, id);
     if (n) return { type: 'note', record: n };
     const t = await getThought(db, id);
-    return t ? { type: 'thought', record: t } : undefined;
+    if (t) return { type: 'thought', record: t };
+    const r = await getReport(db, id);
+    return r ? { type: 'report', record: r } : undefined;
   };
 
   if (ref.kind === 'full') {
     const found = await byId(ref.id);
-    if (!found) throw notFound(`no memory, note or thought has id ${ref.id}`);
+    if (!found) throw notFound(`no memory, note, thought or report has id ${ref.id}`);
     return found;
   }
 
@@ -37,8 +41,10 @@ export async function resolveRecord(db: Db, raw: string): Promise<ResolvedRecord
       .where(sql`${notes.id}::text LIKE ${pattern}`).limit(6)).map((r) => ({ ...r, type: 'note' })),
     ...(await db.select({ id: thoughts.id, title: thoughts.title }).from(thoughts)
       .where(sql`${thoughts.id}::text LIKE ${pattern}`).limit(6)).map((r) => ({ ...r, type: 'thought' })),
+    ...(await db.select({ id: reports.id, title: reports.title }).from(reports)
+      .where(sql`${reports.id}::text LIKE ${pattern}`).limit(6)).map((r) => ({ ...r, type: 'report' })),
   ];
-  if (candidates.length === 0) throw notFound(`no memory, note or thought matches id "#${ref.prefix}"`);
+  if (candidates.length === 0) throw notFound(`no memory, note, thought or report matches id "#${ref.prefix}"`);
   if (candidates.length > 1) {
     const list = candidates.map((c) => `${c.id} (${c.type}: ${c.title})`).join('; ');
     throw badRequest(`id "#${ref.prefix}" is ambiguous; it matches ${list}. Pass more characters.`);

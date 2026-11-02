@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import {
   type AnyPgColumn,
+  bigint,
   boolean,
   check,
   customType,
@@ -195,4 +196,72 @@ export const projectFileRevisions = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
   },
   (t) => [index('project_file_revisions_file_idx').on(t.fileId, t.version)],
+);
+
+export const reportStatus = pgEnum('report_status', ['new', 'triaged', 'done']);
+export const attachmentKind = pgEnum('attachment_kind', ['image', 'video', 'audio', 'frame']);
+
+/**
+ * Bug reports: captured on the phone (text, photos, screen recordings, voice), always for one project.
+ * The human writes the description; an agent writes the triage (analysis and tasks).
+ */
+export const reports = pgTable(
+  'reports',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'restrict' }),
+    title: text('title').notNull(),
+    body: text('body').notNull().default(''),
+    /** Written by an agent: what is wrong and the tasks to fix it (Markdown). */
+    triage: text('triage').notNull().default(''),
+    status: reportStatus('status').notNull().default('new'),
+    source: memorySource('source').notNull(),
+    /** Who wrote the current version: 'human' or the agent label. */
+    editedBy: text('edited_by').notNull(),
+    version: integer('version').notNull().default(1),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+    ...timestamps,
+    search: tsvector('search').generatedAlwaysAs(
+      sql`setweight(to_tsvector('simple'::regconfig, coalesce(title, '')), 'A') || setweight(to_tsvector('simple'::regconfig, coalesce(body, '') || ' ' || coalesce(triage, '')), 'C')`,
+    ),
+  },
+  (t) => [
+    index('reports_search_idx').using('gin', t.search),
+    index('reports_project_status_idx').on(t.projectId, t.status),
+    check('reports_title_len', sql`char_length(${t.title}) between 1 and 200`),
+    check('reports_body_len', sql`char_length(${t.body}) <= 20000`),
+    check('reports_triage_len', sql`char_length(${t.triage}) <= 50000`),
+  ],
+);
+
+/** Files of a report. The bytes live in the media directory under storage_key; the database keeps only metadata. */
+export const reportAttachments = pgTable(
+  'report_attachments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    reportId: uuid('report_id')
+      .notNull()
+      .references(() => reports.id, { onDelete: 'cascade' }),
+    kind: attachmentKind('kind').notNull(),
+    /** Detected from the file's bytes, not taken from the upload. */
+    mime: text('mime').notNull(),
+    size: bigint('size', { mode: 'number' }).notNull(),
+    sha256: text('sha256').notNull(),
+    fileName: text('file_name').notNull(),
+    storageKey: text('storage_key').notNull(),
+    durationMs: integer('duration_ms'),
+    /** Frames: the video they were taken from and the moment. */
+    sourceId: uuid('source_id').references((): AnyPgColumn => reportAttachments.id, { onDelete: 'set null' }),
+    atMs: integer('at_ms'),
+    createdBy: text('created_by').notNull(),
+    /** Set when the bytes were deleted (video and audio after the report is closed); the row stays as a record. */
+    purgedAt: timestamp('purged_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('report_attachments_report_idx').on(t.reportId, t.createdAt),
+    uniqueIndex('report_attachments_storage_key_idx').on(t.storageKey),
+  ],
 );

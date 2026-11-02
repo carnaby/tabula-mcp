@@ -13,7 +13,15 @@ describe('loadConfig', () => {
       port: 3000,
       host: '0.0.0.0',
       webDist: 'web/dist',
+      media: { dir: 'data/media', maxBytes: 1024 * 1024 * 1024, purgeAfterHours: 24, ffmpeg: 'ffmpeg', ffprobe: 'ffprobe' },
     });
+  });
+
+  it('reads the media settings', () => {
+    const c = loadConfig({
+      DATABASE_URL: 'postgres://x', TABULA_TOKEN: TOKEN, TABULA_MEDIA_DIR: '/data/media', TABULA_MEDIA_MAX_MB: '200', TABULA_MEDIA_PURGE_HOURS: '0',
+    });
+    expect(c.media).toMatchObject({ dir: '/data/media', maxBytes: 200 * 1024 * 1024, purgeAfterHours: 0 });
   });
 
   it('rejects a short token', () => {

@@ -8,6 +8,8 @@ import { DomainError } from '../domain/errors.js';
 import { registerMcpRoutes } from '../mcp/routes.js';
 import { apiRoutes } from './api.js';
 import { registerCliRoutes } from './cli.js';
+import { MediaStore } from '../media/store.js';
+import { registerMediaRoute } from './reports-api.js';
 
 // The secret in the /mcp/<secret> path must never reach the logs.
 const maskUrl = (url: string) => url.replace(/^\/mcp\/[^/?#]+/, '/mcp/***');
@@ -15,9 +17,12 @@ const maskUrl = (url: string) => url.replace(/^\/mcp\/[^/?#]+/, '/mcp/***');
 export async function buildApp(deps: {
   config: Config;
   db: Db;
+  /** Where report attachments live; built from config.media when omitted. */
+  store?: MediaStore;
   /** Tests only: where to write logs (default stdout). */
   logStream?: { write(msg: string): void };
 }): Promise<FastifyInstance> {
+  const store = deps.store ?? new MediaStore(deps.config.media.dir, deps.config.media.maxBytes);
   const secret = deps.config.connectorSecret;
   // Also masks the secret outside /mcp/<secret> (e.g. /MCP/<secret>) in case the URL ends up in the log by another route.
   const mask = (url: string) => {
@@ -52,8 +57,9 @@ export async function buildApp(deps: {
 
   app.get('/healthz', async () => ({ ok: true }));
   registerCliRoutes(app);
-  registerMcpRoutes(app, deps);
-  await app.register(apiRoutes, { prefix: '/api', db: deps.db, config: deps.config });
+  registerMcpRoutes(app, { ...deps, store });
+  registerMediaRoute(app, { db: deps.db, config: deps.config, store });
+  await app.register(apiRoutes, { prefix: '/api', db: deps.db, config: deps.config, store });
 
   const webRoot = resolve(deps.config.webDist);
   if (existsSync(webRoot)) {

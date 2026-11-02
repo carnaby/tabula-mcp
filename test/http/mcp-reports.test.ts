@@ -42,7 +42,7 @@ const json = (c: Content) => JSON.parse(text(c));
 
 async function uploadFile(reportId: string, body: Buffer, type: string, name: string) {
   const res = await fetch(`${base}/api/reports/${reportId}/attachments`, {
-    method: 'POST', body, headers: { Authorization: `Bearer ${TEST_TOKEN}`, 'content-type': type, 'x-file-name': name },
+    method: 'POST', body: new Uint8Array(body), headers: { Authorization: `Bearer ${TEST_TOKEN}`, 'content-type': type, 'x-file-name': name },
   });
   expect(res.status).toBe(201);
   return (await res.json()) as { id: string };

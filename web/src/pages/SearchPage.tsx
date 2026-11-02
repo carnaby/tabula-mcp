@@ -8,6 +8,7 @@ import type { Project, SearchHit } from '../types';
 import { Alert, Badge, EmptyState, Icon, type IconName, SearchInput, Skeleton, useToast } from '../ui';
 
 const TYPE: Record<SearchHit['type'], { icon: IconName; label: string }> = {
+  report: { icon: 'bug', label: 'Bug report' },
   memory: { icon: 'layers', label: 'Memory' },
   note: { icon: 'pencil', label: 'Note' },
   thought: { icon: 'lightbulb', label: 'Thought' },
@@ -31,6 +32,7 @@ export function SearchPage({ q: initialQ, projects }: { q: string; projects: Pro
   const open = async (h: SearchHit) => {
     if (h.type === 'file') return navigate(href.file(h.project!, h.title));
     if (h.type === 'thought') return navigate(href.thought(h.id));
+    if (h.type === 'report') return navigate(href.report(h.id));
     if (h.type === 'note') return navigate(href.note(h.id));
     try {
       setDialog({ mode: 'edit', memory: await api.memory(h.id) });

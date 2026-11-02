@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-export type ProjectTab = 'state' | 'files' | 'recall' | 'setup';
+export type ProjectTab = 'state' | 'reports' | 'files' | 'recall' | 'setup';
 export type GlobalTab = 'rules' | 'recall';
 export type Route =
   | { name: 'thoughts' }
@@ -9,6 +9,8 @@ export type Route =
   | { name: 'note'; id: string | 'new' }
   | { name: 'global'; tab: GlobalTab }
   | { name: 'search'; q: string }
+  | { name: 'reports' }
+  | { name: 'report'; id: string | 'new'; project?: string }
   | { name: 'project'; project: string; tab: ProjectTab; path?: string }
   | { name: 'notFound' };
 
@@ -18,6 +20,8 @@ export const href = {
   notes: () => '#/notes',
   note: (id: string) => `#/notes/${id}`,
   global: (tab: GlobalTab = 'rules') => `#/global${tab === 'rules' ? '' : `/${tab}`}`,
+  reports: () => '#/reports',
+  report: (id: string, project?: string) => `#/reports/${id}${project ? `?project=${encodeURIComponent(project)}` : ''}`,
   search: (q = '') => `#/search${q ? `?q=${encodeURIComponent(q)}` : ''}`,
   project: (p: string, tab: ProjectTab = 'state') =>
     `#/p/${encodeURIComponent(p)}${tab === 'state' ? '' : `/${tab}`}`,
@@ -38,6 +42,7 @@ export function parse(hash: string): Route {
   if (a === 'notes') return b ? { name: 'note', id: b } : { name: 'notes' };
   if (a === 'global') return { name: 'global', tab: b === 'recall' ? 'recall' : 'rules' };
   if (a === 'search') return { name: 'search', q: params.get('q') ?? '' };
+  if (a === 'reports') return b ? { name: 'report', id: b, project: params.get('project') ?? undefined } : { name: 'reports' };
   // Links from earlier versions of the UI.
   if (a === 'memories' && !b) return { name: 'global', tab: 'rules' };
   if (a === 'recall' && !b) return { name: 'global', tab: 'recall' };
@@ -46,7 +51,7 @@ export function parse(hash: string): Route {
     if (!c) return { name: 'project', project: b, tab: 'state' };
     if (c === 'notes') return d ? { name: 'note', id: d } : { name: 'notes' };
     if (c === 'files') return { name: 'project', project: b, tab: 'files', path: params.get('path') ?? undefined };
-    if (c === 'state' || c === 'recall' || c === 'setup') return { name: 'project', project: b, tab: c };
+    if (c === 'state' || c === 'reports' || c === 'recall' || c === 'setup') return { name: 'project', project: b, tab: c };
   }
   return { name: 'notFound' };
 }

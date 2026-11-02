@@ -7,6 +7,8 @@ import { NewProjectDialog } from './pages/NewProjectDialog';
 import { NoteEditorPage } from './pages/NoteEditorPage';
 import { NotesPage } from './pages/NotesPage';
 import { ProjectPage } from './pages/ProjectPage';
+import { ReportPage } from './pages/ReportPage';
+import { ReportsPage } from './pages/ReportsPage';
 import { SearchPage } from './pages/SearchPage';
 import { ThoughtEditorPage } from './pages/ThoughtEditorPage';
 import { ThoughtsPage } from './pages/ThoughtsPage';
@@ -22,6 +24,8 @@ function title(route: Route, projects: Project[] | undefined): string {
     case 'note': return route.id === 'new' ? 'New note' : 'Note';
     case 'global': return 'Global';
     case 'search': return 'Search';
+    case 'reports': return 'Bug reports';
+    case 'report': return route.id === 'new' ? 'New bug report' : 'Bug report';
     case 'project': return projects?.find((x) => x.id === route.project)?.name ?? route.project;
     default: return 'Tabula';
   }
@@ -84,6 +88,8 @@ function Page({ route, projects }: { route: Route; projects: Project[] | undefin
     case 'note': return <NoteEditorPage id={route.id} />;
     case 'global': return <GlobalPage tab={route.tab} projects={projects} />;
     case 'search': return <SearchPage q={route.q} projects={projects} />;
+    case 'reports': return <ReportsPage projects={projects} />;
+    case 'report': return <ReportPage id={route.id} project={route.project} projects={projects} />;
     case 'project': return <ProjectPage project={route.project} tab={route.tab} path={route.path} projects={projects} />;
     default:
       return (

@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { clearToken } from '../api';
+import { api, clearToken } from '../api';
+import { useQuery } from '../hooks/data';
 import { promptInstall, useCanInstall } from '../pwa';
 import { href, type Route } from '../router';
 import type { Project } from '../types';
@@ -22,6 +23,8 @@ export function Sidebar({
 }: { route: Route; projects: Project[] | undefined; onClose: () => void; onNewProject: () => void }) {
   const [theme, setTheme] = useTheme();
   const canInstall = useCanInstall();
+  const reportCounts = useQuery((s) => api.reportCounts(s), [], { topics: ['reports'] });
+  const openReports = Object.values(reportCounts.data ?? {}).reduce((a, b) => a + b, 0);
   const [filter, setFilter] = useState('');
   const { confirm } = useConfirm();
   const activeProject = route.name === 'project' ? route.project : null;
@@ -47,6 +50,9 @@ export function Sidebar({
         <div className="nav-section">Notebook</div>
         <NavItem to={href.thoughts()} icon="lightbulb" label="Thoughts" active={route.name === 'thoughts' || route.name === 'thought'} />
         <NavItem to={href.notes()} icon="fileText" label="Notes" active={route.name === 'notes' || route.name === 'note'} />
+
+        <div className="nav-section">Testing</div>
+        <NavItem to={href.reports()} icon="bug" label="Bug reports" count={openReports || undefined} active={route.name === 'reports' || route.name === 'report'} />
 
         <div className="nav-section">For agents</div>
         <NavItem to={href.global()} icon="globe" label="Global" count={global?.memory_count} active={route.name === 'global'} />

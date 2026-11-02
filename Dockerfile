@@ -8,7 +8,9 @@ RUN pnpm build && pnpm prune --prod
 
 FROM node:22-alpine
 WORKDIR /app
-ENV NODE_ENV=production PORT=3000 HOST=0.0.0.0 WEB_DIST=web/dist
+ENV NODE_ENV=production PORT=3000 HOST=0.0.0.0 WEB_DIST=web/dist TABULA_MEDIA_DIR=/data/media
+# ffmpeg: frames from bug-report videos and durations of recordings. /data/media holds the attachments (mount a volume).
+RUN apk add --no-cache ffmpeg && mkdir -p /data/media && chown node:node /data/media
 COPY --from=build /app/package.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist

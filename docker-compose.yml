@@ -25,6 +25,10 @@ services:
       TABULA_CONNECTOR_SECRET: ${TABULA_CONNECTOR_SECRET:-}
     ports:
       - "${TABULA_PORT:-3000}:3000"
+    volumes:
+      # Bug-report attachments (photos, videos, voice notes).
+      - tabula-media:/data/media
 
 volumes:
   tabula-pg:
+  tabula-media:

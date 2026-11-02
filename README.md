@@ -122,6 +122,9 @@ At the start of a session the agent calls `recall` once and gets plain text:
 | `deprecate(id, reason)` | Retires a global rule the agent wrote. Refuses human-written records. |
 | `find_notes(query?, tag?, limit?)` | Reads your Notes — only when you mention them. |
 | `save_thought` · `update_thought` · `find_thoughts` | The Thoughts notebook, on request; edits use `expected_version` and keep the previous version. |
+| `list_reports(project?, status?, query?)` · `get_report(id)` | Bug reports and their attachments (photos, videos, voice notes, saved frames) with links valid for 24 hours. |
+| `create_report(project, title, description?)` · `update_report(id, triage? \| append_triage?, status?, expected_version?)` | Records a bug on request; writes the analysis and tasks (the triage) and the status. |
+| `view_attachment(id)` · `get_frame(video_id, at)` | A photo or saved frame as an image; a still from a video at a moment (`"2:41"`), saved to the report so it survives the video. |
 | `list_projects()` · `setup_project(id, name?, description?)` | Projects with file counts; onboarding on explicit request (returns the CLAUDE.md section, a `.tabula.json` and the next step: `tabula status` before the first push). |
 
 The tool descriptions are part of the design: they are what an agent reads before deciding whether to call a tool, and they say when *not* to.
@@ -151,7 +154,8 @@ A responsive React app with its own small UI kit (`web/src/ui`), light and dark 
 - **Thoughts** and **Notes** — card grids with search, tag chips, sort and pinning; a Markdown editor with Write / Split / Preview and Ctrl/⌘ S. Thoughts also keep a version history and warn when an agent changed the text while you were typing.
 - **Global** — the rules table (kind, author, status, prefix search; edit, retire, supersede) and the recall preview.
 - **Project** — **State** (the state files rendered as Markdown), **Files** (list, preview, the last 20 versions with restore, delete and restore), **Recall preview** (the exact digest with a budget meter) and **Setup** (the CLAUDE.md section, a `.tabula.json`, the install commands and the hook).
-- **Search** (Ctrl/⌘ K) — global rules, project files, notes and thoughts at once; words match as prefixes.
+- **Bug reports** — capture a bug on the phone while testing: pick the project, say what's wrong, add photos, screen recordings (from the gallery, or *Record screen* on a desktop) and voice notes. Uploads start at once and show their progress. While a video is paused, *Save frame* keeps that moment as a picture. An agent writes the **triage** (cause and tasks) into the report; it shows up when you come back to the window. Also a tab on each project.
+- **Search** (Ctrl/⌘ K) — global rules, project files, notes, thoughts and bug reports at once; words match as prefixes.
 
 **Install it as an app.** Tabula is a PWA: in Chrome or Edge use *Install app* in the sidebar (or the install icon in the address bar); on iPhone use Share → *Add to Home Screen*. A service worker caches only the app shell and the hashed build assets — `/api` and `/mcp` always go to the network, so data is never stale and the token never ends up in a cache. Installation needs HTTPS (or `localhost`).
 
@@ -234,6 +238,10 @@ Any client that speaks Streamable HTTP with the classic `initialize` handshake (
 | `HOST` | no | `0.0.0.0` | Interface to bind |
 | `WEB_DIST` | no | `web/dist` | Path to the UI build |
 | `LOG_LEVEL` | no | `info` | `debug`, `info`, `warn` or `error` |
+| `TABULA_MEDIA_DIR` | no | `data/media` (`/data/media` in the image) | Where bug-report attachments are stored; mount a volume there and back it up with the database |
+| `TABULA_MEDIA_MAX_MB` | no | `1024` | Largest accepted upload (a reverse proxy in front needs a body limit at least this big) |
+| `TABULA_MEDIA_PURGE_HOURS` | no | `24` | Video and audio of a closed report are deleted this many hours after closing (`0` = at the next check, every 15 minutes) |
+| `FFMPEG_PATH` / `FFPROBE_PATH` | no | `ffmpeg` / `ffprobe` | Used for video frames, image previews for agents and durations; included in the Docker image |
 | `POSTGRES_PASSWORD` | Compose | — | Database password used by `docker-compose.yml` |
 | `TABULA_PORT` | Compose | `3000` | Host port published by `docker-compose.yml` |
 
@@ -282,6 +290,7 @@ test/           Vitest: unit, database, HTTP/MCP and end-to-end CLI tests
 - One bearer token (and the optional connector secret) unlocks all projects, rules, notes and thoughts. Tokens are compared in constant time, and the connector secret is kept out of request logs.
 - Unexpected errors are logged on the server and returned to clients as a generic message, without internals.
 - The `tabula` command never uploads `.env` or `.env.*` files and the server refuses them too; paths are validated on both sides (relative, no `..`, no `.git`), and paths that differ only in letter case are never synced, so one cannot overwrite the other on Windows or macOS.
+- **Bug-report attachments** are accepted only as photos, video or audio, recognised from the file's bytes (never from the name or the client's content type), so an HTML or SVG file can't be uploaded and run on Tabula's origin. They are served from `/media/<id>` with a signed, expiring link instead of the token (`<video>` and `<img>` can't send one), with `nosniff`, a sandboxing CSP and range support. The signing key is derived from `TABULA_TOKEN`: rotating the token invalidates every link.
 - `/cli/tabula.mjs` and `/cli/version` are public: they serve the CLI from this repository and no data.
 - Input is validated at the boundary: length limits, slug format, and NUL characters rejected before they reach Postgres.
 

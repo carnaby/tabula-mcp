@@ -74,6 +74,31 @@ describe('bug reports over MCP', () => {
     expect((await tool('create_report', { project: 'global', title: 'x' })).isError).toBe(true);
   });
 
+  it('closes a report only with expected_version: closing starts deleting its video and audio', async () => {
+    const { id } = json((await tool('create_report', { project: 'demo', title: 'Crash on save' })).content);
+    const blind = await tool('update_report', { id, status: 'done' });
+    expect(blind.isError).toBe(true);
+    expect(text(blind.content)).toMatch(/expected_version is required .* status "done"/);
+    expect(json((await tool('update_report', { id, status: 'triaged' })).content)).toMatchObject({ version: 2, status: 'triaged' });
+    expect((await tool('update_report', { id, status: 'done', expected_version: 1 })).isError).toBe(true);
+    expect(json((await tool('update_report', { id, status: 'done', expected_version: 2 })).content)).toMatchObject({ version: 3, status: 'done' });
+  });
+
+  it('tells agents where report slugs come from', async () => {
+    const client = new Client({ name: 'tabula-test', version: '0.0.0' });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), {
+      requestInit: { headers: { Authorization: `Bearer ${TEST_TOKEN}` } },
+    }));
+    try {
+      expect(client.getInstructions()).toMatch(/create_report, take the project slug from list_projects/);
+      const { tools } = await client.listTools();
+      expect(tools.find((t) => t.name === 'get')!.description).toMatch(/bug report/);
+      expect(tools.find((t) => t.name === 'create_report')!.description).toMatch(/list_projects/);
+    } finally {
+      await client.close();
+    }
+  });
+
   it.skipIf(!HAS_FFMPEG)('shows a photo and a video frame as images', async () => {
     const { id } = json((await tool('create_report', { project: 'demo', title: 'Player stutters' })).content);
     const photo = await uploadFile(id, PNG, 'image/png', 'p.png');

@@ -17,7 +17,7 @@ Use Tabula for a project only when its CLAUDE.md (or project instructions) has a
 Never write project memories: remember and deprecate work only on global rules, and only when the user explicitly asks.
 When the user explicitly asks to start using Tabula in a project: call setup_project with the project folder name as the slug, put the section it returns into CLAUDE.md (create the file if it is missing; replace an older "Memory (Tabula)" section), save the suggested .tabula.json in the repository root, run \`tabula status\` before the first \`tabula push\` and check the files it lists (a broad "sync" pattern can upload far more than intended), then call recall.
 Thoughts and Notes need no such section and work anywhere. Thoughts are the user's notebook of saved conversations: when the user explicitly asks to save something to Tabula, or to find or change a saved thought, use find_thoughts, save_thought and update_thought. Notes are the user's own notes: read them with find_notes and get only when the user mentions their notes.
-Bug reports belong to a project and need no such section either: when the user asks about bug reports or to process them, use list_reports and get_report, look at photos and video moments with view_attachment and get_frame, and write the tasks with update_report.`;
+Bug reports belong to a project and need no such section either: when the user asks about bug reports or to process them, use list_reports and get_report, look at photos and video moments with view_attachment and get_frame, and write the tasks with update_report. To record a new bug with create_report, take the project slug from list_projects; never guess it.`;
 
 /** Returned by setup_project: the first push uploads everything "sync" matches, so look before it does. */
 const SETUP_NEXT_STEP =
@@ -53,6 +53,7 @@ async function runTool(log: McpLogger | undefined, fn: () => Promise<unknown>) {
     return { content: [{ type: 'text' as const, text }] };
   } catch (e) {
     if (e instanceof DomainError) {
+      if (e.cause) log?.error({ err: e.cause, msg: e.message });
       return { content: [{ type: 'text' as const, text: `${e.status}: ${e.message}` }], isError: true };
     }
     log?.error(e);
@@ -251,7 +252,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
     {
       description: D.create_report,
       inputSchema: z.object({
-        project: z.string().describe('Project slug the bug belongs to.'),
+        project: z.string().describe('Project slug the bug belongs to, as list_projects shows it.'),
         title: z.string().describe('What is broken, one line, max 200 characters.'),
         description: z.string().optional().describe('Markdown: what happened, steps to reproduce, expected result.'),
       }),
@@ -269,7 +270,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
         append_triage: z.string().optional().describe('Markdown added at the end of the triage.'),
         status: z.enum(REPORT_STATUSES).optional(),
         title: z.string().optional(),
-        expected_version: z.number().int().positive().optional().describe('The version from get_report. Required with triage or title.'),
+        expected_version: z.number().int().positive().optional().describe('The version from get_report. Required with triage, title or status "done".'),
       }),
     },
     (a) => run(() => agentUpdateReport(ctx, a)),

@@ -278,8 +278,10 @@ export async function agentUpdateReport(
 ) {
   const r = await requireReportRef(ctx, input.id);
   if (input.triage !== undefined && input.append_triage !== undefined) throw badRequest('pass either triage (replace) or append_triage, not both');
-  if ((input.triage !== undefined || input.title !== undefined) && input.expected_version === undefined) {
-    throw badRequest('expected_version is required when you replace triage or title; read it with get_report first. append_triage and status may be sent without it.');
+  // Replacing text, or closing (which starts the deletion of the report's video and audio), must not be based on
+  // a stale read.
+  if ((input.triage !== undefined || input.title !== undefined || input.status === 'done') && input.expected_version === undefined) {
+    throw badRequest('expected_version is required when you replace triage or title or set status "done"; read it with get_report first. append_triage and status "triaged" may be sent without it.');
   }
   const out = await updateReport(
     ctx.db,

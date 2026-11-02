@@ -1,13 +1,14 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
-  agentDeprecate, agentFindNotes, agentGet, agentListFiles, agentReadFile, agentRemember, agentUpdateThought,
-  type AgentContext, GLOBAL_ONLY, READ_CHUNK,
+  agentDeleteFile, agentDeprecate, agentFindNotes, agentGet, agentListFiles, agentReadFile, agentRemember, agentUpdateThought,
+  agentWriteFile, type AgentContext, GLOBAL_ONLY, READ_CHUNK,
 } from '../../src/agent/operations.js';
 import { memories } from '../../src/db/schema.js';
 import { AGENT_READ_ONLY } from '../../src/domain/errors.js';
 import { deleteFile, putFile, setStatePaths } from '../../src/domain/files.js';
 import { createMemory, getMemory, listMemories } from '../../src/domain/memories.js';
 import { createNote } from '../../src/domain/notes.js';
+import { setSyncConfig } from '../../src/domain/sync-config.js';
 import { createThought, HUMAN } from '../../src/domain/thoughts.js';
 import { seedProject, useTestDb } from '../helpers.js';
 
@@ -106,20 +107,31 @@ describe('agent operations', () => {
     await expect(agentGet(ctx, '#ffff')).rejects.toMatchObject({ code: 'not_found' });
   });
 
-  it('lists and reads synced files, long ones in parts, never deleted ones', async () => {
-    await putFile(db, 'demo', { path: 'docs/handoff/state.md', content: 'Next: ship', baseSha256: null }, 'cli');
+  it('lists and reads synced files with their hash and version, long ones in parts, never deleted ones', async () => {
+    const st = await putFile(db, 'demo', { path: 'docs/handoff/state.md', content: 'Next: ship', baseSha256: null }, 'cli');
     await putFile(db, 'demo', { path: 'docs/long.md', content: 'a'.repeat(READ_CHUNK + 10), baseSha256: null }, 'cli');
     await setStatePaths(db, 'demo', ['docs/handoff/state.md']);
+    const sha = st.sha256;
     expect(await agentListFiles(ctx, 'demo')).toMatchObject([
-      { path: 'docs/handoff/state.md', size: 10, version: 1, state: true, updated_by: 'cli' },
+      { path: 'docs/handoff/state.md', size: 10, version: 1, sha256: sha, state: true, updated_by: 'cli' },
       { path: 'docs/long.md', state: false },
     ]);
-    expect(await agentReadFile(ctx, { project: 'demo', path: 'docs/handoff/state.md' })).toBe('Next: ship');
+    expect(await agentReadFile(ctx, { project: 'demo', path: 'docs/handoff/state.md' })).toEqual({
+      header: `[file docs/handoff/state.md · version 1 · sha256 ${sha} · 10 characters]`,
+      text: 'Next: ship',
+    });
     const first = await agentReadFile(ctx, { project: 'demo', path: 'docs/long.md' });
-    expect(first.endsWith(
+    expect(first.text).toBe('a'.repeat(READ_CHUNK));
+    expect(first.header).toMatch(/^\[file docs\/long\.md · version 1 · sha256 [0-9a-f]{64} · 100010 characters\]$/);
+    expect(first.footer).toBe(
       `[… part ends at character ${READ_CHUNK} of ${READ_CHUNK + 10} — call read_file again with offset: ${READ_CHUNK}]`,
-    )).toBe(true);
-    expect(await agentReadFile(ctx, { project: 'demo', path: 'docs/long.md', offset: READ_CHUNK })).toBe('a'.repeat(10));
+    );
+    const rest = await agentReadFile(ctx, { project: 'demo', path: 'docs/long.md', offset: READ_CHUNK });
+    expect(rest).toMatchObject({ text: 'a'.repeat(10), header: expect.stringContaining(`from character ${READ_CHUNK}`) });
+    expect(rest.footer).toBeUndefined();
+    expect(await agentReadFile(ctx, { project: 'demo', path: 'docs/long.md', offset: READ_CHUNK + 10 })).toEqual({
+      header: `[offset ${READ_CHUNK + 10} is past the end of the file (${READ_CHUNK + 10} characters)]`,
+    });
     await deleteFile(db, 'demo', 'docs/handoff/state.md');
     await expect(agentReadFile(ctx, { project: 'demo', path: 'docs/handoff/state.md' })).rejects.toMatchObject({ code: 'not_found' });
   });
@@ -128,13 +140,32 @@ describe('agent operations', () => {
     const content = `${'a'.repeat(READ_CHUNK - 1)}\u{1F600}b`;
     await putFile(db, 'demo', { path: 'docs/emoji.md', content, baseSha256: null }, 'cli');
     const first = await agentReadFile(ctx, { project: 'demo', path: 'docs/emoji.md' });
-    const m = /^([\s\S]*)\n\n\[… part ends at character (\d+) of \d+ — call read_file again with offset: (\d+)\]$/.exec(first)!;
-    const next = Number(m[3]);
+    const m = /call read_file again with offset: (\d+)\]$/.exec(first.footer ?? '')!;
+    const next = Number(m[1]);
     expect(next).toBe(READ_CHUNK - 1);
     const second = await agentReadFile(ctx, { project: 'demo', path: 'docs/emoji.md', offset: next });
-    expect(m[1]).toBe('a'.repeat(READ_CHUNK - 1));
-    expect(second).toBe('\u{1F600}b');
-    expect(m[1] + second).toBe(content);
+    expect(first.text).toBe('a'.repeat(READ_CHUNK - 1));
+    expect(second.text).toBe('\u{1F600}b');
+    expect(first.text! + second.text!).toBe(content);
+  });
+
+  it('writes and deletes synced files as the agent, within the stored sync patterns', async () => {
+    await expect(agentWriteFile(ctx, { project: 'demo', path: 'docs/a.md', content: 'x' })).rejects.toMatchObject({
+      code: 'bad_request', message: expect.stringMatching(/tabula push/),
+    });
+    await setSyncConfig(db, 'demo', { sync: ['docs/**'], state: ['docs/handoff/*.md'] });
+    const w = await agentWriteFile(ctx, { project: 'demo', path: 'docs/handoff/state.md', content: 'Next: cloud' });
+    expect(w).toEqual({ path: 'docs/handoff/state.md', sha256: expect.stringMatching(/^[0-9a-f]{64}$/), version: 1, changed: true, state: true });
+    expect(await agentListFiles(ctx, 'demo')).toMatchObject([{ path: 'docs/handoff/state.md', state: true, updated_by: 'claude-code' }]);
+    await expect(agentWriteFile(ctx, { project: 'demo', path: 'docs/handoff/state.md', content: 'v2' })).rejects.toMatchObject({ code: 'conflict' });
+    const w2 = await agentWriteFile(ctx, { project: 'demo', path: 'docs/handoff/state.md', content: 'v2', base_sha256: w.sha256 });
+    expect(w2).toMatchObject({ version: 2, changed: true });
+    await expect(agentDeleteFile(ctx, { project: 'demo', path: 'docs/handoff/state.md', base_sha256: w.sha256 }))
+      .rejects.toMatchObject({ code: 'conflict' });
+    expect(await agentDeleteFile(ctx, { project: 'demo', path: 'docs/handoff/state.md', base_sha256: w2.sha256 })).toEqual({
+      path: 'docs/handoff/state.md', deleted: true,
+    });
+    expect(await agentListFiles(ctx, 'demo')).toEqual([]);
   });
 
   it('finds notebook notes', async () => {

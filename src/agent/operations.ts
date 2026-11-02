@@ -8,6 +8,7 @@ import { listProjects, type ProjectSummary } from '../domain/projects.js';
 import { recall } from '../domain/recall.js';
 import { resolveRecord } from '../domain/records.js';
 import { search, type SearchHit, type SearchParams } from '../domain/search.js';
+import { deleteSyncedFile, type SyncedWrite, writeSyncedFile } from '../domain/sync-config.js';
 import type { FfmpegPaths } from '../media/ffmpeg.js';
 import { signMediaPath } from '../media/sign.js';
 import type { MediaStore } from '../media/store.js';
@@ -81,7 +82,11 @@ const thoughtView = (t: Thought) => ({
 export type MemoryView = ReturnType<typeof memoryView>;
 export type NoteView = ReturnType<typeof noteView>;
 export type ThoughtView = ReturnType<typeof thoughtView>;
-export type AgentFile = { path: string; size: number; version: number; state: boolean; updated_at: string; updated_by: string };
+export type AgentFile = {
+  path: string; size: number; version: number; sha256: string; state: boolean; updated_at: string; updated_by: string;
+};
+/** read_file's reply: a header line with the version and hash, the text exactly as stored, and a pointer to the next part. */
+export type AgentFileRead = { header: string; text?: string; footer?: string };
 
 /** A record the agent may modify: a global memory written by an agent. */
 async function requireAgentWritable(db: Db, id: string): Promise<Memory> {
@@ -135,26 +140,42 @@ export async function agentDeprecate(ctx: AgentContext, input: { id: string; rea
 
 export async function agentListFiles(ctx: AgentContext, project: string): Promise<AgentFile[]> {
   return (await listFiles(ctx.db, project)).map((f) => ({
-    path: f.path, size: f.size, version: f.version, state: f.isState, updated_at: f.updatedAt.toISOString(), updated_by: f.updatedBy,
+    path: f.path, size: f.size, version: f.version, sha256: f.sha256, state: f.isState,
+    updated_at: f.updatedAt.toISOString(), updated_by: f.updatedBy,
   }));
 }
 
-/** The file's text from offset, at most READ_CHUNK characters, with a footer that names the next offset. */
-export async function agentReadFile(ctx: AgentContext, input: { project: string; path: string; offset?: number }): Promise<string> {
+/** The file's text from offset, at most READ_CHUNK characters; the footer names the next offset. */
+export async function agentReadFile(
+  ctx: AgentContext, input: { project: string; path: string; offset?: number },
+): Promise<AgentFileRead> {
   const f = await getFile(ctx.db, input.project, input.path);
   if (f.deletedAt) throw notFound(`file "${f.path}" was deleted in project "${input.project}"; call list_files for the current files`);
   const offset = Math.max(0, Math.trunc(input.offset ?? 0));
   const total = f.content.length;
-  if (offset > 0 && offset >= total) return `[offset ${offset} is past the end of the file (${total} characters)]`;
+  if (offset > 0 && offset >= total) return { header: `[offset ${offset} is past the end of the file (${total} characters)]` };
   let end = Math.min(total, offset + READ_CHUNK);
   // Never split a surrogate pair: end one code unit earlier so the next chunk starts on the whole pair.
   if (end < total) {
     const last = f.content.charCodeAt(end - 1);
     if (last >= 0xd800 && last <= 0xdbff) end -= 1;
   }
-  const part = f.content.slice(offset, end);
-  return end < total ? `${part}\n\n[… part ends at character ${end} of ${total} — call read_file again with offset: ${end}]` : part;
+  const from = offset > 0 ? ` · from character ${offset}` : '';
+  const header = `[file ${f.path} · version ${f.version} · sha256 ${f.sha256} · ${total} characters${from}]`;
+  const text = f.content.slice(offset, end);
+  if (end === total) return { header, text };
+  return { header, text, footer: `[… part ends at character ${end} of ${total} — call read_file again with offset: ${end}]` };
 }
+
+/** Agents without the tabula command (Claude Code on the web, claude.ai) save synced files with this. */
+export const agentWriteFile = (
+  ctx: AgentContext, input: { project: string; path: string; content: string; base_sha256?: string },
+): Promise<SyncedWrite> =>
+  writeSyncedFile(ctx.db, input.project, { path: input.path, content: input.content, baseSha256: input.base_sha256 ?? null }, ctx.agentLabel);
+
+export const agentDeleteFile = (
+  ctx: AgentContext, input: { project: string; path: string; base_sha256: string },
+): Promise<{ path: string; deleted: true }> => deleteSyncedFile(ctx.db, input.project, { path: input.path, baseSha256: input.base_sha256 });
 
 export const agentFindNotes = (
   ctx: AgentContext,

@@ -5,9 +5,10 @@ import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Db } from '../../src/db/client.js';
 import { projects } from '../../src/db/schema.js';
-import { putFile, setStatePaths } from '../../src/domain/files.js';
+import { getFile, putFile, setStatePaths } from '../../src/domain/files.js';
 import { createMemory, getMemory } from '../../src/domain/memories.js';
 import { createNote } from '../../src/domain/notes.js';
+import { setSyncConfig } from '../../src/domain/sync-config.js';
 import { createThought, getThought, HUMAN, listRevisions } from '../../src/domain/thoughts.js';
 import { buildApp } from '../../src/http/app.js';
 import { claudeMdSection, TABULA_JSON } from '../../src/mcp/snippet.js';
@@ -35,13 +36,13 @@ type Content = Array<{ type: string; text: string }>;
 const textOf = (r: { content?: unknown }) => (r.content as Content)[0]!.text;
 
 describe('MCP endpoint', () => {
-  it('exposes exactly the nineteen tools', async () => {
+  it('exposes exactly the twenty-one tools', async () => {
     const client = await connect('/mcp', bearer);
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
-      'create_report', 'deprecate', 'find_notes', 'find_thoughts', 'get', 'get_frame', 'get_report', 'list_files',
+      'create_report', 'delete_file', 'deprecate', 'find_notes', 'find_thoughts', 'get', 'get_frame', 'get_report', 'list_files',
       'list_projects', 'list_reports', 'read_file', 'recall', 'remember', 'save_thought', 'search', 'setup_project',
-      'update_report', 'update_thought', 'view_attachment',
+      'update_report', 'update_thought', 'view_attachment', 'write_file',
     ]);
     expect(tools.find((t) => t.name === 'recall')!.description).toMatch(/^Call at the start of a session/);
     await client.close();
@@ -54,6 +55,7 @@ describe('MCP endpoint', () => {
     expect(ins).toContain('call setup_project');
     expect(ins).toContain('run `tabula status` before the first `tabula push`');
     expect(ins).toContain('find_notes');
+    expect(ins).toMatch(/`tabula` command is not available.*write_file/s);
     await client.close();
   });
 
@@ -79,12 +81,52 @@ describe('MCP endpoint', () => {
     expect(JSON.parse(textOf(await client.callTool({ name: 'list_files', arguments: { project: 'demo' } })))).toMatchObject([
       { path: 'docs/handoff/state.md', state: true },
     ]);
-    expect(textOf(await client.callTool({ name: 'read_file', arguments: { project: 'demo', path: 'docs/handoff/state.md' } })))
-      .toBe('Next: ship the CLI');
+    const read = (await client.callTool({ name: 'read_file', arguments: { project: 'demo', path: 'docs/handoff/state.md' } })).content as Content;
+    expect(read.map((c) => c.type)).toEqual(['text', 'text']);
+    expect(read[0]!.text).toMatch(/^\[file docs\/handoff\/state\.md · version 1 · sha256 [0-9a-f]{64} · 18 characters\]$/);
+    expect(read[1]!.text).toBe('Next: ship the CLI');
     const missing = await client.callTool({ name: 'read_file', arguments: { project: 'demo', path: 'docs/nope.md' } });
     expect(textOf(missing)).toMatch(/^404: file "docs\/nope\.md" does not exist/);
     const hits = JSON.parse(textOf(await client.callTool({ name: 'search', arguments: { query: 'ship', project: 'demo' } })));
     expect(hits).toMatchObject([{ type: 'file', path: 'docs/handoff/state.md' }]);
+    await client.close();
+  });
+
+  it('writes, reads back, updates and deletes a synced file over the connector, labelled claude-ai', async () => {
+    const client = await connect(`/mcp/${TEST_SECRET}`);
+    const call = (name: string, args: Record<string, unknown>) => client.callTool({ name, arguments: args });
+    const path = 'docs/superpowers/specs/2026-11-02-cloud.md';
+    const noConfig = await call('write_file', { project: 'demo', path, content: '# Spec' });
+    expect(noConfig.isError).toBe(true);
+    expect(textOf(noConfig)).toMatch(/^400: .*run `tabula push` once on a computer with the repository/);
+
+    await setSyncConfig(db, 'demo', { sync: ['docs/**'], state: ['docs/handoff/*.md'] });
+    const created = JSON.parse(textOf(await call('write_file', { project: 'demo', path, content: '# Spec' })));
+    expect(created).toEqual({ path, sha256: expect.stringMatching(/^[0-9a-f]{64}$/), version: 1, changed: true, state: false });
+    expect(await getFile(db, 'demo', path)).toMatchObject({ content: '# Spec', updatedBy: 'claude-ai' });
+    const listed = JSON.parse(textOf(await call('list_files', { project: 'demo' })));
+    expect(listed).toMatchObject([{ path, sha256: created.sha256, version: 1 }]);
+    const read = (await call('read_file', { project: 'demo', path })).content as Content;
+    expect(read[0]!.text).toContain(`sha256 ${created.sha256}`);
+
+    const noBase = await call('write_file', { project: 'demo', path, content: '# Spec 2' });
+    expect(noBase.isError).toBe(true);
+    expect(textOf(noBase)).toMatch(/^409: .*already exists.*read_file/s);
+    const updated = JSON.parse(textOf(await call('write_file', { project: 'demo', path, content: '# Spec 2', base_sha256: created.sha256 })));
+    expect(updated).toMatchObject({ version: 2, changed: true });
+    const stale = await call('write_file', { project: 'demo', path, content: '# Mine', base_sha256: created.sha256 });
+    expect(textOf(stale)).toMatch(/^409: /);
+    expect(textOf(stale)).toContain(updated.sha256);
+
+    const outside = await call('write_file', { project: 'demo', path: 'src/x.ts', content: 'x' });
+    expect(textOf(outside)).toMatch(/^400: .*docs\/\*\*/);
+    expect(textOf(await call('write_file', { project: 'global', path, content: 'x' }))).toMatch(/^400: /);
+    expect(textOf(await call('write_file', { project: 'demo', path: 'docs/.env', content: 'x' }))).toMatch(/^400: .*\.env/);
+
+    const noDeleteBase = await call('delete_file', { project: 'demo', path }).catch((e: Error) => e);
+    expect(noDeleteBase instanceof Error || (noDeleteBase as { isError?: boolean }).isError === true).toBe(true);
+    expect(JSON.parse(textOf(await call('delete_file', { project: 'demo', path, base_sha256: updated.sha256 })))).toEqual({ path, deleted: true });
+    expect(JSON.parse(textOf(await call('list_files', { project: 'demo' })))).toEqual([]);
     await client.close();
   });
 

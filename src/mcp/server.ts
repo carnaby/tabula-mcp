@@ -2,8 +2,9 @@ import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import {
   type AgentContext, agentDeprecate, agentFindNotes, agentFindThoughts, agentGet, agentListFiles, agentListProjects,
-  agentReadFile, agentRecall, agentRemember, agentSaveThought, agentSearch, agentUpdateThought,
+  agentDeleteFile, agentReadFile, agentRecall, agentRemember, agentSaveThought, agentSearch, agentUpdateThought, agentWriteFile,
   agentCreateReport, agentGetFrame, agentGetReport, agentListReports, agentUpdateReport, agentViewAttachment, type AgentImage,
+  type AgentFileRead,
 } from '../agent/operations.js';
 import { REPORT_STATUSES } from '../domain/reports.js';
 import { badRequest, DomainError } from '../domain/errors.js';
@@ -13,7 +14,8 @@ import { TOOL_DESCRIPTIONS as D } from './descriptions.js';
 import { claudeMdSection, TABULA_JSON } from './snippet.js';
 
 const SERVER_INSTRUCTIONS = `Tabula keeps each project's files that are not in git (handoff state, private specs and plans) and the global rules that apply to every project. It ranks below the code and the client's own local memory: on a conflict they win.
-Use Tabula for a project only when its CLAUDE.md (or project instructions) has a "Memory (Tabula)" section naming its Tabula project. Without that section do not call recall, search, list_files or read_file, and never guess a project slug.
+Use Tabula for a project only when its CLAUDE.md (or project instructions) has a "Memory (Tabula)" section naming its Tabula project. Without that section do not call recall, search, list_files, read_file, write_file or delete_file, and never guess a project slug.
+Where the \`tabula\` command is not available (Claude Code on the web, claude.ai), the synced files are not on disk: call recall with include_state: true, read files with read_file, and save every new or changed synced file (spec, plan, progress.md, handoff state) with write_file. On a computer with the repository and the \`tabula\` command, edit the files on disk and run \`tabula push\` instead.
 Never write project memories: remember and deprecate work only on global rules, and only when the user explicitly asks.
 When the user explicitly asks to start using Tabula in a project: call setup_project with the project folder name as the slug, put the section it returns into CLAUDE.md (create the file if it is missing; replace an older "Memory (Tabula)" section), save the suggested .tabula.json in the repository root, run \`tabula status\` before the first \`tabula push\` and check the files it lists (a broad "sync" pattern can upload far more than intended), then call recall.
 Thoughts and Notes need no such section and work anywhere. Thoughts are the user's notebook of saved conversations: when the user explicitly asks to save something to Tabula, or to find or change a saved thought, use find_thoughts, save_thought and update_thought. Notes are the user's own notes: read them with find_notes and get only when the user mentions their notes.
@@ -41,6 +43,17 @@ async function runImageTool(log: McpLogger | undefined, fn: () => Promise<AgentI
         { type: 'text' as const, text: r.text },
       ],
     };
+  } catch (e) {
+    return runTool(log, () => Promise.reject(e));
+  }
+}
+
+/** read_file answers in separate text blocks, so the file's text is never mixed with the header or the footer. */
+async function runFileRead(log: McpLogger | undefined, fn: () => Promise<AgentFileRead>) {
+  try {
+    const r = await fn();
+    const blocks = [r.header, r.text, r.footer].filter((t): t is string => t !== undefined);
+    return { content: blocks.map((text) => ({ type: 'text' as const, text })) };
   } catch (e) {
     return runTool(log, () => Promise.reject(e));
   }
@@ -75,7 +88,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
       description: D.recall,
       inputSchema: z.object({
         project: projectParam,
-        include_state: z.boolean().default(true).describe('Include the content of the project state files. Claude Code passes false: the files are on disk.'),
+        include_state: z.boolean().default(true).describe('Include the content of the project state files. Pass false only when the `tabula` command restored them to disk (Claude Code on a computer with the repository).'),
       }),
     },
     ({ project, include_state }) => run(() => agentRecall(ctx, project, include_state)),
@@ -166,7 +179,36 @@ export function buildMcpServer(ctx: McpContext): McpServer {
         offset: z.number().int().min(0).default(0).describe('Character offset for long files; the previous reply names it.'),
       }),
     },
-    (a) => run(() => agentReadFile(ctx, a)),
+    (a) => runFileRead(ctx.log, () => agentReadFile(ctx, a)),
+  );
+
+  const sha256Param = z.string().regex(/^[0-9a-f]{64}$/, 'a lowercase hex sha256 (64 characters)');
+
+  server.registerTool(
+    'write_file',
+    {
+      description: D.write_file,
+      inputSchema: z.object({
+        project: projectParam,
+        path: z.string().describe('Path relative to the repository root, e.g. "docs/superpowers/specs/2026-11-02-topic.md"; must match the project\'s sync patterns.'),
+        content: z.string().describe('The whole new text of the file (UTF-8, at most 1 MiB).'),
+        base_sha256: sha256Param.optional().describe('The sha256 from the read_file header of the version you changed. Required when the file exists; omit for a new file.'),
+      }),
+    },
+    (a) => run(() => agentWriteFile(ctx, a)),
+  );
+
+  server.registerTool(
+    'delete_file',
+    {
+      description: D.delete_file,
+      inputSchema: z.object({
+        project: projectParam,
+        path: z.string().describe('Path exactly as list_files shows it.'),
+        base_sha256: sha256Param.describe('The sha256 of the current version, from list_files or the read_file header.'),
+      }),
+    },
+    (a) => run(() => agentDeleteFile(ctx, a)),
   );
 
   server.registerTool(

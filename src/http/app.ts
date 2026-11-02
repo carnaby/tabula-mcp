@@ -11,8 +11,8 @@ import { registerCliRoutes } from './cli.js';
 import { MediaStore } from '../media/store.js';
 import { registerMediaRoute } from './reports-api.js';
 
-// The secret in the /mcp/<secret> path must never reach the logs.
-const maskUrl = (url: string) => url.replace(/^\/mcp\/[^/?#]+/, '/mcp/***');
+// The secret in the /mcp/<secret> path and the signature of /media links (valid for hours) must never reach the logs.
+const maskUrl = (url: string) => url.replace(/^\/mcp\/[^/?#]+/, '/mcp/***').replace(/([?&]sig=)[^&#]*/g, '$1***');
 
 export async function buildApp(deps: {
   config: Config;
@@ -46,7 +46,11 @@ export async function buildApp(deps: {
   });
 
   app.setErrorHandler<FastifyError>((err, _req, reply) => {
-    if (err instanceof DomainError) return reply.code(err.status).send({ error: err.code, message: err.message });
+    if (err instanceof DomainError) {
+      // The client gets a short message; what caused it (paths, ffmpeg output) goes to the log.
+      if (err.cause) app.log[err.status >= 500 ? 'error' : 'warn']({ err: err.cause }, err.message);
+      return reply.code(err.status).send({ error: err.code, message: err.message });
+    }
     const status = (err as { statusCode?: number }).statusCode ?? 500;
     if (status >= 500) {
       app.log.error(err);

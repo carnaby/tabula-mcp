@@ -11,10 +11,21 @@ const { db, close } = createDb(config.databaseUrl);
 const store = new MediaStore(config.media.dir, config.media.maxBytes);
 const app = await buildApp({ config, db, store });
 
+// Without usable media storage Tabula still runs: only bug report uploads and new frames fail (503).
+const mediaProblem = await store.startup();
+if (mediaProblem) {
+  app.log.error(
+    { dir: store.root, problem: mediaProblem },
+    'MEDIA STORAGE IS NOT USABLE: uploads to bug reports will fail until the directory exists and is writable (check TABULA_MEDIA_DIR and the volume)',
+  );
+}
+
 // Video and audio of closed reports are deleted after a grace period; checked every 15 minutes.
 const purge = async () => {
   try {
-    const n = await purgeClosedMedia(db, store, config.media.purgeAfterHours);
+    const n = await purgeClosedMedia(db, store, config.media.purgeAfterHours, new Date(), (err, id) =>
+      app.log.error({ err, attachment: id }, 'could not delete the media of a closed report; retrying later'),
+    );
     if (n > 0) app.log.info({ deleted: n }, 'deleted media of closed reports');
   } catch (e) {
     app.log.error(e);

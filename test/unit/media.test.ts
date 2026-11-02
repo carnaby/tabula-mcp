@@ -1,8 +1,12 @@
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parseTimestamp } from '../../src/domain/reports.js';
+import { childEnv, downscaleImage, probeDurationMs, Semaphore } from '../../src/media/ffmpeg.js';
 import { signMediaPath, verifyMediaSignature } from '../../src/media/sign.js';
 import { sniff } from '../../src/media/sniff.js';
-import { PNG } from '../media-fixtures.js';
+import { HAS_FFMPEG, headerDuration, hugePng, liveWebm, PNG } from '../media-fixtures.js';
 
 const pad = (head: number[] | string, n = 64) => {
   const b = Buffer.alloc(n);
@@ -46,6 +50,59 @@ describe('parseTimestamp', () => {
     expect(parseTimestamp(12.25)).toBe(12_250);
     expect(() => parseTimestamp('soon')).toThrow(/mm:ss/);
     expect(() => parseTimestamp(-1)).toThrow();
+  });
+
+  it('refuses moments past 24 hours (they would not fit the database column either)', () => {
+    expect(parseTimestamp('24:00:00')).toBe(86_400_000);
+    expect(() => parseTimestamp('99999999')).toThrow(/past 24:00:00/);
+    expect(() => parseTimestamp(86_400.5)).toThrow(/past 24:00:00/);
+    expect(() => parseTimestamp('1e9')).toThrow(/mm:ss/);
+  });
+});
+
+describe('ffmpeg hardening', () => {
+  it('passes the child only PATH (and SYSTEMROOT on Windows), never secrets', () => {
+    const env = { PATH: '/usr/bin', TABULA_TOKEN: 'x'.repeat(32), DATABASE_URL: 'postgres://u:p@db/t', SYSTEMROOT: 'C:/Windows' };
+    expect(childEnv(env, 'linux')).toEqual({ PATH: '/usr/bin' });
+    expect(childEnv(env, 'win32')).toEqual({ PATH: '/usr/bin', SYSTEMROOT: 'C:/Windows' });
+  });
+
+  it('runs at most `size` tasks at once and lets the rest wait their turn', async () => {
+    const sem = new Semaphore(2);
+    let running = 0;
+    let peak = 0;
+    const task = (ms: number) =>
+      sem.run(async () => {
+        peak = Math.max(peak, ++running);
+        await new Promise((r) => setTimeout(r, ms));
+        running--;
+        return ms;
+      });
+    const failing = sem.run(() => Promise.reject(new Error('boom')));
+    const results = await Promise.all([task(20), task(10), task(5), task(1), failing.catch((e: Error) => e.message)]);
+    expect(results).toEqual([20, 10, 5, 1, 'boom']);
+    expect(peak).toBe(2);
+    // A failed task frees its slot too.
+    expect(await Promise.all([task(1), task(1)])).toEqual([1, 1]);
+  });
+
+  it.skipIf(!HAS_FFMPEG)('refuses to decode a picture with more pixels than the limit', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tabula-png-'));
+    const file = join(dir, 'huge.png');
+    writeFileSync(file, hugePng());
+    await expect(downscaleImage({ ffmpeg: 'ffmpeg', ffprobe: 'ffprobe' }, file, 'image/png')).rejects.toThrow(/max pixel/);
+  });
+
+  it.skipIf(!HAS_FFMPEG)('measures a streamed WebM without a duration in its header (MediaRecorder) by its packets', async (ctx) => {
+    const webm = liveWebm();
+    if (!webm) return ctx.skip();
+    const dir = mkdtempSync(join(tmpdir(), 'tabula-webm-'));
+    const file = join(dir, 'rec.webm');
+    writeFileSync(file, webm);
+    expect(headerDuration(file)).toBeNull();
+    const ms = await probeDurationMs({ ffmpeg: 'ffmpeg', ffprobe: 'ffprobe' }, file, 'video/webm');
+    expect(ms).toBeGreaterThan(2900);
+    expect(ms).toBeLessThan(3200);
   });
 });
 

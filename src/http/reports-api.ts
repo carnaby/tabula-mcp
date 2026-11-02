@@ -3,11 +3,11 @@ import { z } from 'zod';
 import type { Config } from '../config.js';
 import type { Db } from '../db/client.js';
 import {
-  addAttachment, type Attachment, createReport, deleteAttachment, deleteReport, frameAt, listAttachments, openReportCounts,
+  addAttachment, type Attachment, CLOSED_REPORT, createReport, deleteAttachment, deleteReport, frameAt, listAttachments, openReportCounts,
   pageReports, parseTimestamp, REPORT_SORTS, REPORT_STATUSES, requireAttachment, requireReport, updateReport,
 } from '../domain/reports.js';
 import { MAX_PAGE_SIZE } from '../domain/paging.js';
-import { badRequest, notFound } from '../domain/errors.js';
+import { badRequest, conflict, notFound } from '../domain/errors.js';
 import { signMediaPath, verifyMediaSignature } from '../media/sign.js';
 import type { MediaStore } from '../media/store.js';
 import { parse } from './parse.js';
@@ -110,7 +110,15 @@ export const reportRoutes: FastifyPluginAsync<MediaDeps> = async (app, { db, con
     upload.addContentTypeParser('*', (_req, _payload, done) => done(null));
     upload.post('/reports/:id/attachments', async (req, reply) => {
       const { id } = parse(idParams, req.params);
-      await requireReport(db, id);
+      // Refusals that don't need the body come before it is read (it may be a gigabyte); the body is then left
+      // unread, so the connection is closed after the reply.
+      try {
+        if ((await requireReport(db, id)).status === 'done') throw conflict(CLOSED_REPORT);
+        await store.ensureWritable();
+      } catch (e) {
+        reply.header('connection', 'close');
+        throw e;
+      }
       const declared = typeof req.headers['content-type'] === 'string' ? req.headers['content-type'] : undefined;
       const rawName = req.headers['x-file-name'];
       let fileName: string | undefined;

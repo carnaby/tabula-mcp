@@ -2,9 +2,9 @@ import { createHash, randomUUID } from 'node:crypto';
 import { and, asc, count, desc, eq, inArray, isNull, lt } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { reportAttachments, reports } from '../db/schema.js';
-import { downscaleImage, extractFrame, type FfmpegPaths, probeDurationMs } from '../media/ffmpeg.js';
+import { downscaleImage, extractFrame, type FfmpegPaths, NoFrameError, probeDurationMs, remuxWebm } from '../media/ffmpeg.js';
 import type { MediaStore, StoredFile } from '../media/store.js';
-import { badRequest, conflict, notFound } from './errors.js';
+import { badRequest, conflict, notFound, unavailable } from './errors.js';
 import { matchesPrefix, type Page, type PageQuery, pageWindow, prefixTsQuery } from './paging.js';
 import { requireProject } from './projects.js';
 import { charCount, rejectNul } from './validation.js';
@@ -226,22 +226,51 @@ const safeFileName = (raw: string | undefined, ext: string): string => {
   return name || `attachment.${ext}`;
 };
 
+export const CLOSED_REPORT = 'the report is closed; reopen it before adding files';
+
+/**
+ * A WebM rewritten by ffmpeg with its duration and seek index; the original when ffmpeg can't (or isn't installed).
+ * The original temporary file is replaced on success.
+ */
+async function remuxed(store: MediaStore, paths: FfmpegPaths, file: StoredFile): Promise<StoredFile> {
+  const out = store.tempPath();
+  try {
+    await remuxWebm(paths, file.tmpPath, file.type.mime, out);
+    const { size, sha256 } = await store.digest(out);
+    await store.discard(file.tmpPath);
+    return { ...file, tmpPath: out, size, sha256 };
+  } catch {
+    await store.discard(out);
+    return file;
+  }
+}
+
+/** After a failed insert: a report deleted meanwhile must not keep a directory that the upload recreated. */
+async function cleanupDeletedReport(db: Db, store: MediaStore, reportId: string): Promise<void> {
+  if (!(await getReport(db, reportId))) await store.removeReport(reportId).catch(() => {});
+}
+
 /** Store an uploaded file (already streamed to a temporary file by MediaStore.receive) as an attachment. */
 export async function addAttachment(
   db: Db,
   store: MediaStore,
   paths: FfmpegPaths,
   reportId: string,
-  file: StoredFile,
+  upload: StoredFile,
   fileName: string | undefined,
   editor: Editor,
 ): Promise<Attachment> {
+  let file = upload;
   try {
     const report = await requireReport(db, reportId);
-    if (report.status === 'done') throw conflict('the report is closed; reopen it before adding files');
+    if (report.status === 'done') throw conflict(CLOSED_REPORT);
     const id = randomUUID();
     const key = `${reportId}/${id}.${file.type.ext}`;
-    const durationMs = file.type.kind === 'image' ? null : await probeDurationMs(paths, file.tmpPath);
+    let durationMs: number | null = null;
+    if (file.type.kind !== 'image') {
+      if (file.type.ext === 'webm') file = await remuxed(store, paths, file);
+      durationMs = await probeDurationMs(paths, file.tmpPath, file.type.mime);
+    }
     await store.commit(file.tmpPath, key);
     try {
       const [row] = await db
@@ -255,6 +284,7 @@ export async function addAttachment(
       return row!;
     } catch (e) {
       await store.remove(key);
+      await cleanupDeletedReport(db, store, reportId);
       throw e;
     }
   } catch (e) {
@@ -269,17 +299,23 @@ export async function deleteAttachment(db: Db, store: MediaStore, id: string): P
   await store.remove(row.storageKey);
 }
 
+/** No recording is longer; also keeps the moment within the database's integer column. */
+export const MAX_TIMESTAMP_MS = 24 * 3600 * 1000;
+
 /** "2:41", "1:02:03", "161" or "161.5" (seconds) → milliseconds. */
 export function parseTimestamp(raw: string | number): number {
+  let ms: number;
   if (typeof raw === 'number') {
     if (!Number.isFinite(raw) || raw < 0) throw badRequest('at must be a non-negative number of seconds');
-    return Math.round(raw * 1000);
+    ms = Math.round(raw * 1000);
+  } else {
+    const m = /^\s*(?:(\d+):)?(?:(\d+):)?(\d+(?:\.\d+)?)\s*$/.exec(raw);
+    if (!m) throw badRequest(`at "${raw}" must be seconds (161.5) or mm:ss / hh:mm:ss (2:41)`);
+    const parts = [m[1], m[2], m[3]].filter((x) => x !== undefined).map(Number);
+    ms = Math.round(parts.reduce((acc, p) => acc * 60 + p, 0) * 1000);
   }
-  const m = /^\s*(?:(\d+):)?(?:(\d+):)?(\d+(?:\.\d+)?)\s*$/.exec(raw);
-  if (!m) throw badRequest(`at "${raw}" must be seconds (161.5) or mm:ss / hh:mm:ss (2:41)`);
-  const parts = [m[1], m[2], m[3]].filter((x) => x !== undefined).map(Number);
-  const secs = parts.reduce((acc, p) => acc * 60 + p, 0);
-  return Math.round(secs * 1000);
+  if (ms > MAX_TIMESTAMP_MS) throw badRequest(`at ${raw} is past 24:00:00; no recording is that long`);
+  return ms;
 }
 
 /**
@@ -307,27 +343,48 @@ export async function frameAt(
   if (existing) {
     return { frame: existing, image: await readAll(store, existing.storageKey), created: false };
   }
+  await store.ensureWritable();
   let image: Buffer;
   try {
-    image = await extractFrame(paths, store.path(video.storageKey), atMs);
+    image = await extractFrame(paths, store.path(video.storageKey), video.mime, atMs);
   } catch (e) {
-    throw badRequest(`could not take a frame at ${(atMs / 1000).toFixed(1)} s: ${(e as Error).message}`);
+    const at = `could not take a frame at ${(atMs / 1000).toFixed(1)} s`;
+    if (e instanceof NoFrameError) throw badRequest(`${at}: ${e.message}`);
+    // ffmpeg's own message names server paths: it goes to the log only.
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') throw Object.assign(unavailable(`${at}: ffmpeg is not installed on the server`), { cause: e });
+    throw Object.assign(badRequest(`${at}: the video could not be decoded there`), { cause: e });
   }
   const id = randomUUID();
   const key = `${video.reportId}/${id}.jpg`;
   await store.writeBuffer(key, image);
   const secs = Math.floor(atMs / 1000);
   const label = `${Math.floor(secs / 60)}m${String(secs % 60).padStart(2, '0')}s`;
-  const [frame] = await db
-    .insert(reportAttachments)
-    .values({
-      id, reportId: video.reportId, kind: 'frame', mime: 'image/jpeg', size: image.length,
-      sha256: createHash('sha256').update(image).digest('hex'),
-      fileName: `${video.fileName.replace(/\.[^.]+$/, '')}-${label}.jpg`, storageKey: key, sourceId: videoId, atMs,
-      createdBy: editor.label,
-    })
-    .returning();
-  return { frame: frame!, image, created: true };
+  let frame: Attachment | undefined;
+  try {
+    [frame] = await db
+      .insert(reportAttachments)
+      .values({
+        id, reportId: video.reportId, kind: 'frame', mime: 'image/jpeg', size: image.length,
+        sha256: createHash('sha256').update(image).digest('hex'),
+        fileName: `${video.fileName.replace(/\.[^.]+$/, '')}-${label}.jpg`, storageKey: key, sourceId: videoId, atMs,
+        createdBy: editor.label,
+      })
+      // The same moment asked for twice at once: the first one wins.
+      .onConflictDoNothing({ target: [reportAttachments.sourceId, reportAttachments.atMs] })
+      .returning();
+  } catch (e) {
+    await store.remove(key);
+    await cleanupDeletedReport(db, store, video.reportId);
+    throw e;
+  }
+  if (frame) return { frame, image, created: true };
+  await store.remove(key);
+  const [saved] = await db
+    .select()
+    .from(reportAttachments)
+    .where(and(eq(reportAttachments.sourceId, videoId), eq(reportAttachments.atMs, atMs), eq(reportAttachments.kind, 'frame')));
+  if (!saved) throw conflict('the frame was deleted meanwhile; ask again');
+  return { frame: saved, image: await readAll(store, saved.storageKey), created: false };
 }
 
 async function readAll(store: MediaStore, key: string): Promise<Buffer> {
@@ -344,7 +401,7 @@ export async function attachmentImage(db: Db, store: MediaStore, paths: FfmpegPa
     throw badRequest(`attachment ${id} is ${a.kind === 'audio' ? 'an audio recording' : 'a video'}; use get_frame for a still from a video`);
   }
   try {
-    return { attachment: a, image: await downscaleImage(paths, store.path(a.storageKey)), mime: 'image/jpeg' };
+    return { attachment: a, image: await downscaleImage(paths, store.path(a.storageKey), a.mime), mime: 'image/jpeg' };
   } catch {
     // Without ffmpeg (or for a format it can't read) the original is sent if it is small enough.
     if (a.size <= 4 * 1024 * 1024 && a.mime !== 'image/heic') return { attachment: a, image: await readAll(store, a.storageKey), mime: a.mime };
@@ -354,9 +411,16 @@ export async function attachmentImage(db: Db, store: MediaStore, paths: FfmpegPa
 
 /**
  * Video and audio of reports closed more than `hours` ago are deleted from disk; photos, frames and the text stay.
- * The rows remain with purged_at set, so the report still shows what was there.
+ * The rows remain with purged_at set, so the report still shows what was there. A file that can't be deleted is
+ * reported to onError and tried again next time; the others go on. Returns how many were deleted.
  */
-export async function purgeClosedMedia(db: Db, store: MediaStore, hours: number, now = new Date()): Promise<number> {
+export async function purgeClosedMedia(
+  db: Db,
+  store: MediaStore,
+  hours: number,
+  now = new Date(),
+  onError: (err: unknown, attachmentId: string) => void = () => {},
+): Promise<number> {
   const cutoff = new Date(now.getTime() - hours * 3600 * 1000);
   const due = await db
     .select({ id: reportAttachments.id, key: reportAttachments.storageKey })
@@ -370,10 +434,16 @@ export async function purgeClosedMedia(db: Db, store: MediaStore, hours: number,
         lt(reports.closedAt, cutoff),
       ),
     );
+  let deleted = 0;
   for (const a of due) {
-    await store.remove(a.key);
-    await db.update(reportAttachments).set({ purgedAt: now }).where(eq(reportAttachments.id, a.id));
+    try {
+      await store.remove(a.key);
+      await db.update(reportAttachments).set({ purgedAt: now }).where(eq(reportAttachments.id, a.id));
+      deleted++;
+    } catch (e) {
+      onError(e, a.id);
+    }
   }
-  return due.length;
+  return deleted;
 }
 

@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "report_attachments_frame_idx" ON "report_attachments" USING btree ("source_id","at_ms");

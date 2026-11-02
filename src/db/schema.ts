@@ -263,5 +263,7 @@ export const reportAttachments = pgTable(
   (t) => [
     index('report_attachments_report_idx').on(t.reportId, t.createdAt),
     uniqueIndex('report_attachments_storage_key_idx').on(t.storageKey),
+    // One saved frame per moment of a video (concurrent requests for the same moment end up with one).
+    uniqueIndex('report_attachments_frame_idx').on(t.sourceId, t.atMs),
   ],
 );

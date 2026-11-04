@@ -57,6 +57,20 @@
       "when": 1793640346978,
       "tag": "0007_sync_configs",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793772856359,
+      "tag": "0008_report_jobs",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793772857190,
+      "tag": "0009_transcription_backlog",
+      "breakpoints": true
     }
   ]
 }

@@ -7,6 +7,7 @@ import {
   customType,
   index,
   integer,
+  jsonb,
   pgEnum,
   pgTable,
   text,
@@ -277,3 +278,67 @@ export const reportAttachments = pgTable(
     uniqueIndex('report_attachments_frame_idx').on(t.sourceId, t.atMs),
   ],
 );
+
+export const jobStatus = pgEnum('job_status', ['queued', 'running', 'done', 'failed']);
+export const jobKind = pgEnum('job_kind', ['transcribe']);
+
+/** One line of a transcript; times in milliseconds from the start of the recording. */
+export type TranscriptSegment = { start_ms: number; end_ms: number; text: string };
+
+/**
+ * Work for the transcription worker, a PC that pulls jobs over HTTPS (Tabula never connects to it). A worker holds a
+ * job under a lease and extends it with heartbeats; a lease that runs out puts the job back in the queue.
+ */
+export const reportJobs = pgTable(
+  'report_jobs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    attachmentId: uuid('attachment_id')
+      .notNull()
+      .references(() => reportAttachments.id, { onDelete: 'cascade' }),
+    kind: jobKind('kind').notNull().default('transcribe'),
+    status: jobStatus('status').notNull().default('queued'),
+    /** How many times a worker took the job; a lease that ran out counts as well. */
+    attempts: integer('attempts').notNull().default(0),
+    /** Not handed out before this moment (the back-off after a failed attempt). */
+    runAfter: timestamp('run_after', { withTimezone: true }).notNull().defaultNow(),
+    /** New with every claim: proves that the worker reporting on the job is the one holding it. */
+    leaseId: uuid('lease_id'),
+    leaseUntil: timestamp('lease_until', { withTimezone: true }),
+    /** The worker that took it last (its host name). */
+    worker: text('worker'),
+    error: text('error'),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+    ...timestamps,
+  },
+  (t) => [
+    uniqueIndex('report_jobs_attachment_kind_idx').on(t.attachmentId, t.kind),
+    index('report_jobs_queue_idx').on(t.status, t.runAfter),
+  ],
+);
+
+/** Transcripts of video and audio. They stay when the recording is deleted after the report closes: small and worth keeping. */
+export const reportTranscripts = pgTable(
+  'report_transcripts',
+  {
+    attachmentId: uuid('attachment_id')
+      .primaryKey()
+      .references(() => reportAttachments.id, { onDelete: 'cascade' }),
+    language: text('language'),
+    model: text('model').notNull(),
+    /** The segments' text, one per line: what full-text search reads. */
+    text: text('text').notNull(),
+    segments: jsonb('segments').$type<TranscriptSegment[]>().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    search: tsvector('search').generatedAlwaysAs(sql`to_tsvector('simple'::regconfig, left("text", 100000))`),
+  },
+  (t) => [index('report_transcripts_search_idx').using('gin', t.search)],
+);
+
+/** When each transcription worker last called in, for the UI's "worker last seen". */
+export const workers = pgTable('workers', {
+  name: text('name').primaryKey(),
+  version: text('version'),
+  lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+});

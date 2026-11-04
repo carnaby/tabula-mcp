@@ -3,11 +3,11 @@ import { z } from 'zod';
 import {
   type AgentContext, agentDeprecate, agentFindNotes, agentFindThoughts, agentGet, agentListFiles, agentListProjects,
   agentDeleteFile, agentReadFile, agentRecall, agentRemember, agentSaveThought, agentSearch, agentUpdateThought, agentWriteFile,
-  agentCreateReport, agentGetFrame, agentGetReport, agentListReports, agentUpdateReport, agentViewAttachment, type AgentImage,
+  agentCreateReport, agentGetFrame, agentGetReport, agentGetTranscript, agentListReports, agentUpdateReport, agentViewAttachment, type AgentImage,
   type AgentFileRead,
 } from '../agent/operations.js';
 import { REPORT_STATUSES } from '../domain/reports.js';
-import { badRequest, DomainError } from '../domain/errors.js';
+import { badRequest, DomainError, loggableError } from '../domain/errors.js';
 import { createProject } from '../domain/projects.js';
 import { MEMORY_KINDS, validateProjectSlug } from '../domain/validation.js';
 import { TOOL_DESCRIPTIONS as D } from './descriptions.js';
@@ -19,7 +19,7 @@ Where the \`tabula\` command is not available (Claude Code on the web, claude.ai
 Never write project memories: remember and deprecate work only on global rules, and only when the user explicitly asks.
 When the user explicitly asks to start using Tabula in a project: call setup_project with the project folder name as the slug, put the section it returns into CLAUDE.md (create the file if it is missing; replace an older "Memory (Tabula)" section), save the suggested .tabula.json in the repository root, run \`tabula status\` before the first \`tabula push\` and check the files it lists (a broad "sync" pattern can upload far more than intended), then call recall.
 Thoughts and Notes need no such section and work anywhere. Thoughts are the user's notebook of saved conversations: when the user explicitly asks to save something to Tabula, or to find or change a saved thought, use find_thoughts, save_thought and update_thought. Notes are the user's own notes: read them with find_notes and get only when the user mentions their notes.
-Bug reports belong to a project and need no such section either: when the user asks about bug reports or to process them, use list_reports and get_report, look at photos and video moments with view_attachment and get_frame, and write the tasks with update_report. To record a new bug with create_report, take the project slug from list_projects; never guess it.`;
+Bug reports belong to a project and need no such section either: when the user asks about bug reports or to process them, use list_reports and get_report; read the transcripts of videos and voice notes first (get_report shows them, get_transcript the rest), pick the moments the user points at and look at them with get_frame, look at photos with view_attachment, then write the tasks with update_report. To record a new bug with create_report, take the project slug from list_projects; never guess it.`;
 
 /** Returned by setup_project: the first push uploads everything "sync" matches, so look before it does. */
 const SETUP_NEXT_STEP =
@@ -66,10 +66,10 @@ async function runTool(log: McpLogger | undefined, fn: () => Promise<unknown>) {
     return { content: [{ type: 'text' as const, text }] };
   } catch (e) {
     if (e instanceof DomainError) {
-      if (e.cause) log?.error({ err: e.cause, msg: e.message });
+      if (e.cause) log?.error({ err: loggableError(e.cause), msg: e.message });
       return { content: [{ type: 'text' as const, text: `${e.status}: ${e.message}` }], isError: true };
     }
-    log?.error(e);
+    log?.error(loggableError(e));
     return { content: [{ type: 'text' as const, text: '500: internal error in Tabula; retry later' }], isError: true };
   }
 }
@@ -332,6 +332,18 @@ export function buildMcpServer(ctx: McpContext): McpServer {
       }),
     },
     (a) => runImageTool(ctx.log, () => agentGetFrame(ctx, a)),
+  );
+
+  server.registerTool(
+    'get_transcript',
+    {
+      description: D.get_transcript,
+      inputSchema: z.object({
+        attachment_id: attachmentId,
+        offset: z.number().int().min(0).default(0).describe("Character offset; the previous reply's last line names it."),
+      }),
+    },
+    (a) => run(() => agentGetTranscript(ctx, a)),
   );
 
   return server;

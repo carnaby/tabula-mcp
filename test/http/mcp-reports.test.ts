@@ -5,10 +5,11 @@ import { join } from 'node:path';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { claimJob, completeJob } from '../../src/domain/jobs.js';
 import { buildApp } from '../../src/http/app.js';
 import { MediaStore } from '../../src/media/store.js';
 import { seedProject, TEST_TOKEN, testConfig, useTestDb } from '../helpers.js';
-import { HAS_FFMPEG, PNG, testVideo } from '../media-fixtures.js';
+import { HAS_FFMPEG, PNG, silentWav, testVideo } from '../media-fixtures.js';
 
 const db = useTestDb();
 const mediaDir = mkdtempSync(join(tmpdir(), 'tabula-mcp-media-'));
@@ -25,9 +26,9 @@ afterAll(() => app.close());
 beforeEach(() => seedProject(db, 'demo'));
 
 type Content = Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
-async function tool(name: string, args: Record<string, unknown>) {
+async function tool(name: string, args: Record<string, unknown>, origin = base) {
   const client = new Client({ name: 'tabula-test', version: '0.0.0' });
-  await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), {
+  await client.connect(new StreamableHTTPClientTransport(new URL(`${origin}/mcp`), {
     requestInit: { headers: { Authorization: `Bearer ${TEST_TOKEN}`, 'X-Tabula-Agent': 'claude-ai' } },
   }));
   try {
@@ -118,5 +119,62 @@ describe('bug reports over MCP', () => {
     expect(text(late.content)).toMatch(/past its end/);
     const audioAsVideo = await tool('view_attachment', { id: video.id });
     expect(text(audioAsVideo.content)).toMatch(/use get_frame/);
+  });
+
+  it('shows the transcript of a recording in get_report and pages through it with get_transcript', async () => {
+    const created = json((await tool('create_report', { project: 'demo', title: 'Player freezes' })).content);
+    const audio = await uploadFile(created.id, silentWav(1), 'audio/wav', 'voice.wav');
+    let report = json((await tool('get_report', { id: created.id })).content);
+    expect(report.attachments[0].transcript.status).toBe('queued');
+    expect(report.attachments[0].transcript.note).toMatch(/never connected.*tabula worker --once/);
+
+    const claimed = (await claimJob(db, 'pc'))!;
+    // Long enough for more than one part of get_transcript (about 100 000 characters).
+    const segments = Array.from({ length: 2000 }, (_, i) => ({
+      start_ms: i * 3000, end_ms: i * 3000 + 2500, text: `Veta číslo ${i} o tom, čo sa deje na obrazovke.`,
+    }));
+    segments[53] = { start_ms: 161_000, end_ms: 163_000, text: 'Tu sa tlačidlo zasekne.' };
+    await completeJob(db, claimed.job.id, claimed.job.leaseId!, { language: 'sk', model: 'large-v3', durationMs: 6_000_000, segments });
+
+    report = json((await tool('get_report', { id: created.id })).content);
+    const t = report.attachments[0].transcript;
+    expect(t).toMatchObject({ status: 'done', language: 'sk' });
+    expect(t.text.split('\n')[0]).toBe('[0:00] Veta číslo 0 o tom, čo sa deje na obrazovke.');
+    expect(t.text).toContain('[2:41] Tu sa tlačidlo zasekne.');
+    expect(t.text.length).toBeLessThanOrEqual(6000);
+    expect(t.more).toMatch(/get_transcript .*offset \d+/);
+
+    const page1 = text((await tool('get_transcript', { attachment_id: audio.id.slice(0, 8) })).content);
+    expect(page1).toMatch(/^\[transcript of voice\.wav · [\d:]+ · sk · \d+ characters\]\n\[0:00\] Veta/);
+    const next = Number(/offset: (\d+)\]$/.exec(page1)![1]);
+    const page2 = text((await tool('get_transcript', { attachment_id: audio.id, offset: next })).content);
+    expect(page2).toMatch(new RegExp(`^\\[transcript of voice\\.wav .* · from character ${next}\\]\\n\\[\\d+:\\d+(:\\d+)?\\] Veta`));
+  });
+
+  it('says transcription is not enabled when the server has no worker token', async () => {
+    const off = await buildApp({ config: { ...config, workerToken: undefined }, db, store: new MediaStore(mediaDir, config.media.maxBytes) });
+    await off.listen({ port: 0, host: '127.0.0.1' });
+    const origin = `http://127.0.0.1:${(off.server.address() as AddressInfo).port}`;
+    try {
+      const created = json((await tool('create_report', { project: 'demo', title: 'No worker' }, origin)).content);
+      const audio = await uploadFile(created.id, silentWav(1), 'audio/wav', 'voice.wav');
+      const report = json((await tool('get_report', { id: created.id }, origin)).content);
+      expect(report.attachments[0].transcript.status).toBe('queued');
+      expect(report.attachments[0].transcript.note).toMatch(/not enabled on this server/);
+      expect(report.attachments[0].transcript.note).not.toMatch(/tabula worker/);
+      expect(text((await tool('get_transcript', { attachment_id: audio.id }, origin)).content)).toMatch(/not enabled on this server/);
+    } finally {
+      await off.close();
+    }
+  });
+
+  it('get_transcript explains why there is no transcript', async () => {
+    const created = json((await tool('create_report', { project: 'demo', title: 'Silent' })).content);
+    const audio = await uploadFile(created.id, silentWav(1), 'audio/wav', 'voice.wav');
+    const waiting = await tool('get_transcript', { attachment_id: audio.id });
+    expect(waiting.isError).toBe(true);
+    expect(text(waiting.content)).toMatch(/^404: .*waiting for the transcription worker/);
+    const photo = await uploadFile(created.id, PNG, 'image/png', 'p.png');
+    expect(text((await tool('get_transcript', { attachment_id: photo.id })).content)).toMatch(/^400: .*only video and audio/);
   });
 });

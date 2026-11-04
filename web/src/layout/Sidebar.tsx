@@ -1,10 +1,29 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api, clearToken } from '../api';
+import { workerAlive } from '../features/reports/Transcript';
+import { timeAgo } from '../format';
 import { useQuery } from '../hooks/data';
 import { promptInstall, useCanInstall } from '../pwa';
 import { href, type Route } from '../router';
-import type { Project } from '../types';
+import type { Project, WorkerStatus } from '../types';
 import { Button, Icon, type IconName, IconButton, Input, Kbd, Logo, Segmented, useConfirm, useTheme } from '../ui';
+
+/** A quiet line under Bug reports: is the transcription worker running? Hidden until a worker connected or something waits. */
+function WorkerLine({ status }: { status: WorkerStatus | undefined }) {
+  if (!status || !status.enabled || (!status.lastSeenAt && !status.queued)) return null;
+  const alive = workerAlive(status);
+  const seen = alive ? 'Transcription worker online' : status.lastSeenAt ? `Worker last seen ${timeAgo(status.lastSeenAt)}` : 'Worker never connected';
+  return (
+    <div
+      className="worker-line"
+      data-alive={alive}
+      title={status.queued && !alive ? `${status.queued} recording(s) waiting — run tabula worker --once on your PC` : undefined}
+    >
+      <span className="worker-line__dot" aria-hidden="true" />
+      <span className="t-truncate">{seen}{status.queued ? ` · ${status.queued} waiting` : ''}</span>
+    </div>
+  );
+}
 
 function NavItem({ to, icon, label, count, active }: { to: string; icon: IconName; label: string; count?: number; active: boolean }) {
   return (
@@ -24,6 +43,13 @@ export function Sidebar({
   const [theme, setTheme] = useTheme();
   const canInstall = useCanInstall();
   const reportCounts = useQuery((s) => api.reportCounts(s), [], { topics: ['reports'] });
+  const worker = useQuery((s) => api.transcriptionStatus(s), [], { topics: ['reports'] });
+  const reloadWorker = worker.reload;
+  // "Online" goes stale while the sidebar stays open: look again every minute.
+  useEffect(() => {
+    const timer = setInterval(reloadWorker, 60_000);
+    return () => clearInterval(timer);
+  }, [reloadWorker]);
   const openReports = Object.values(reportCounts.data ?? {}).reduce((a, b) => a + b, 0);
   const [filter, setFilter] = useState('');
   const { confirm } = useConfirm();
@@ -53,6 +79,7 @@ export function Sidebar({
 
         <div className="nav-section">Testing</div>
         <NavItem to={href.reports()} icon="bug" label="Bug reports" count={openReports || undefined} active={route.name === 'reports' || route.name === 'report'} />
+        <WorkerLine status={worker.data} />
 
         <div className="nav-section">For agents</div>
         <NavItem to={href.global()} icon="globe" label="Global" count={global?.memory_count} active={route.name === 'global'} />

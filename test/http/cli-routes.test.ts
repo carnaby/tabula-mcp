@@ -15,6 +15,10 @@ describe('CLI download', () => {
       expect(file.statusCode).toBe(200);
       expect(file.headers['content-type']).toMatch(/^text\/javascript/);
       expect(file.body).toBe(readFileSync(CLI_URL, 'utf8'));
+      const script = await app.inject({ method: 'GET', url: '/cli/transcribe.py' });
+      expect(script.statusCode).toBe(200);
+      expect(script.headers['content-type']).toMatch(/^text\/x-python/);
+      expect(script.body).toBe(readFileSync(new URL('../../cli/transcribe.py', import.meta.url), 'utf8'));
       const cli = (await import(CLI_URL.href)) as { VERSION: string };
       expect((await app.inject({ method: 'GET', url: '/cli/version' })).json()).toEqual({ version: cli.VERSION });
     } finally {

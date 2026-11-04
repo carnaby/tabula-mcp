@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { and, asc, count, desc, eq, inArray, isNull, lt } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { reportAttachments, reports } from '../db/schema.js';
-import { downscaleImage, extractFrame, type FfmpegPaths, NoFrameError, probeDurationMs, remuxWebm } from '../media/ffmpeg.js';
+import { downscaleImage, extractFrame, type FfmpegPaths, hasAudioStream, NoFrameError, probeDurationMs, remuxWebm } from '../media/ffmpeg.js';
 import type { MediaStore, StoredFile } from '../media/store.js';
 import { badRequest, conflict, notFound, unavailable } from './errors.js';
+import { enqueueTranscription, failPendingJobs } from './jobs.js';
 import { matchesPrefix, type Page, type PageQuery, pageWindow, prefixTsQuery } from './paging.js';
 import { requireProject } from './projects.js';
 import { charCount, rejectNul } from './validation.js';
@@ -156,6 +157,11 @@ export type ReportSort = (typeof REPORT_SORTS)[number];
 /** "open" = new and triaged: everything not closed yet. */
 export type ReportStatusFilter = ReportStatus | 'open' | 'all';
 
+/** A report whose recordings' transcripts match a prefix query. */
+const transcriptMatches = (tsq: string) => sql`EXISTS (
+  SELECT 1 FROM report_transcripts t JOIN report_attachments a ON a.id = t.attachment_id
+  WHERE a.report_id = ${reports.id} AND t.search @@ to_tsquery('simple', ${tsq}))`;
+
 export async function pageReports(
   db: Db,
   f: { projectId?: string; status?: ReportStatusFilter; q?: string } & PageQuery<ReportSort>,
@@ -166,7 +172,7 @@ export async function pageReports(
   const where = and(
     f.projectId ? eq(reports.projectId, f.projectId) : undefined,
     status === 'open' ? inArray(reports.status, ['new', 'triaged']) : status === 'all' ? undefined : eq(reports.status, status),
-    tsq ? matchesPrefix(reports.search, tsq) : undefined,
+    tsq ? or(matchesPrefix(reports.search, tsq), transcriptMatches(tsq)) : undefined,
   );
   const order = (f.dir ?? 'desc') === 'asc' ? asc : desc;
   const [items, [total]] = await Promise.all([
@@ -267,26 +273,33 @@ export async function addAttachment(
     const id = randomUUID();
     const key = `${reportId}/${id}.${file.type.ext}`;
     let durationMs: number | null = null;
+    let transcribe = false;
     if (file.type.kind !== 'image') {
       if (file.type.ext === 'webm') file = await remuxed(store, paths, file);
       durationMs = await probeDurationMs(paths, file.tmpPath, file.type.mime);
+      // A video without a sound track has nothing to transcribe; when ffprobe can't tell, the worker finds out.
+      transcribe = file.type.kind === 'audio' || (await hasAudioStream(paths, file.tmpPath, file.type.mime)) !== false;
     }
     await store.commit(file.tmpPath, key);
+    let row: Attachment;
     try {
-      const [row] = await db
+      const [inserted] = await db
         .insert(reportAttachments)
         .values({
           id, reportId, kind: file.type.kind, mime: file.type.mime, size: file.size, sha256: file.sha256,
           fileName: safeFileName(fileName, file.type.ext), storageKey: key, durationMs, createdBy: editor.label,
         })
         .returning();
+      row = inserted!;
       await db.update(reports).set({ updatedAt: new Date() }).where(eq(reports.id, reportId));
-      return row!;
     } catch (e) {
       await store.remove(key);
       await cleanupDeletedReport(db, store, reportId);
       throw e;
     }
+    // After the row is safe: a failure here must not delete the stored file.
+    if (transcribe) await enqueueTranscription(db, row.id);
+    return row;
   } catch (e) {
     await store.discard(file.tmpPath);
     throw e;
@@ -438,6 +451,8 @@ export async function purgeClosedMedia(
   for (const a of due) {
     try {
       await store.remove(a.key);
+      // Job rows first, then the attachment row: completeJob locks them in that order too.
+      await failPendingJobs(db, [a.id], now);
       await db.update(reportAttachments).set({ purgedAt: now }).where(eq(reportAttachments.id, a.id));
       deleted++;
     } catch (e) {

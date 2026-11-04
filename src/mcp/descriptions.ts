@@ -38,7 +38,7 @@ expected_version (from find_thoughts or get) is REQUIRED when you pass body or t
 
   list_reports: `List bug reports of a project (or of all projects): id, title, status, attachment counts. By default only open ones (status new or triaged). Bug reports are captured by the user on the phone — text, photos, screen recordings and voice notes — and wait for an agent to turn them into tasks. Use it when the user asks about bug reports ("hlásenia", "bugy") or asks you to process them.`,
 
-  get_report: `Read one bug report: the user's description, the triage written so far, and its attachments (photos, videos, audio, saved frames) with durations and download links valid for 24 hours. Look at photos and frames with view_attachment; for a moment in a video use get_frame. The links also work with curl if you prefer to process a file locally.`,
+  get_report: `Read one bug report: the user's description, the triage written so far, and its attachments (photos, videos, audio, saved frames) with durations and download links valid for 24 hours. Videos and voice notes carry a transcript — lines "[2:41] what the user said" (the first part; get_transcript returns the rest) — or, until the user's transcription worker has run, its status. Read the transcript first: it says what the user points at and when. Look at photos and frames with view_attachment; for a moment in a video use get_frame. The links also work with curl if you prefer to process a file locally.`,
 
   create_report: `Create a bug report for a project when the user asks you to record a bug (e.g. "zapíš bug do Tabuly pre music-creator"). Title: what is broken, one line. description: the user's words and the steps to reproduce. Files are added by the user in the Tabula app. project is the slug from list_projects; never guess it.`,
 
@@ -47,5 +47,7 @@ expected_version (from get_report) is REQUIRED when you replace triage or title 
 
   view_attachment: `Look at a photo or a saved frame of a bug report (returned as an image). For a video use get_frame with a moment; audio cannot be viewed.`,
 
-  get_frame: `Take a still from a report's video at a given moment ("2:41", "1:02:03" or seconds, e.g. 161.5) and look at it. The frame is saved to the report, so it stays after the video is deleted; asking again for the same moment returns the saved one. Use it for the moments that matter — when the user says "here", "look", or describes what the screen shows — rather than sampling the whole video.`,
+  get_transcript: `Read the transcript of a bug report's video or voice note: one line per phrase, "[2:41] what the user said", in parts of 50 000 characters (get_report already shows the first part). To continue, pass the offset named in the previous reply's last line. Use the times to choose moments for get_frame. If the recording has no transcript yet, the error says why: waiting for the user's transcription worker, being transcribed, failed, or never queued.`,
+
+  get_frame: `Take a still from a report's video at a given moment ("2:41", "1:02:03" or seconds, e.g. 161.5) and look at it. The frame is saved to the report, so it stays after the video is deleted; asking again for the same moment returns the saved one. Pick the moments from the transcript: where the user says "here", "look", "this button", "tu", "pozri" or describes what the screen shows, ask for the time of that line (a second or two later when the line starts the sentence). Without a transcript ask for a few moments spread over the video rather than sampling all of it.`,
 } as const;

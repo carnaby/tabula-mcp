@@ -1,7 +1,7 @@
 import type {
   FileRevision, FileRevisionContent, Memory, MemoryKind, MemorySort, Note, NoteSort, Page, Project, RecallPreview, SearchHit, Source, Thought,
   ProjectFile, ProjectFileContent, ThoughtRevision, ThoughtSort,
-  Attachment, ReportDetail, Report, ReportSort, ReportStatus, ReportSummary,
+  Attachment, TranscriptState, WorkerStatus, ReportDetail, Report, ReportSort, ReportStatus, ReportSummary,
 } from './types';
 
 const TOKEN_KEY = 'tabula.token';
@@ -114,6 +114,8 @@ export const api = {
   deleteReport: (id: string) => request<void>('DELETE', `/reports/${id}`),
   deleteAttachment: (id: string) => request<void>('DELETE', `/attachments/${id}`),
   saveFrame: (videoId: string, atSeconds: number) => request<Attachment>('POST', `/attachments/${videoId}/frame`, { at: atSeconds }),
+  retryTranscript: (attachmentId: string) => request<TranscriptState>('POST', `/attachments/${attachmentId}/transcript/retry`),
+  transcriptionStatus: (signal?: S) => request<WorkerStatus>('GET', '/transcription/status', undefined, signal),
 
   search: (q: string, signal?: S) => request<SearchHit[]>('GET', `/search${qs({ q, limit: 30 })}`, undefined, signal),
   recall: (project: string, signal?: S) => request<RecallPreview>('GET', `/recall/${encodeURIComponent(project)}`, undefined, signal),

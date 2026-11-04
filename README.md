@@ -69,6 +69,7 @@ A repository opts in with a `.tabula.json` in its root, committed:
 | `tabula rm <path>` | deletes a file on the server (restorable in the UI) |
 | `tabula pull --hook` | for the SessionStart hook: silent without `.tabula.json` or a login, at most 5 seconds (when time runs out it keeps what it restored and says how many files are missing), always exit 0 |
 | `tabula login <url>` · `install` · `update` | credentials (or `TABULA_URL` / `TABULA_TOKEN`), PATH shims and the hook snippet, self-update |
+| `tabula worker [--once] [--log]` · `worker setup` · `worker doctor` | transcribes bug-report recordings on a PC with an NVIDIA GPU — see [Transcription worker](#transcription-worker) |
 
 Each clone keeps the hash it last synced for every file in `<git-dir>/tabula-sync.json` (per worktree, never committed). The server accepts a change only if it is based on the server's current version, so two machines editing the same file produce a **conflict** instead of a silent overwrite: merge by hand, or take one side with `--force`. Exit codes: 0 OK, 1 error, 2 finished with conflicts.
 
@@ -79,6 +80,84 @@ To restore the files at the start of every Claude Code session, add the hook fro
 ```
 
 On Windows use the absolute path that `tabula install` prints, e.g. `node "C:/Users/<you>/.tabula/tabula.mjs" pull --hook`.
+
+### Transcription worker
+
+Voice notes and screen recordings in bug reports are transcribed with timestamps, so an agent reads "[2:41] here the button stops responding" and asks `get_frame` for exactly that moment. Tabula itself runs on small hardware without a GPU, so the work is done by **`tabula worker`** on a computer with an NVIDIA GPU. The worker pulls jobs from Tabula over HTTPS — nothing connects to that computer — and while it is off, jobs wait in the queue. Recordings travel only between your own machines; no third-party service is involved.
+
+Requirements on that computer: an NVIDIA GPU with a current driver (RTX 50xx cards need a driver with CUDA 12.8 or newer), Python 3.9 or newer (on Windows from python.org, with the `py` launcher), `ffmpeg` on `PATH` (Windows: `winget install Gyan.FFmpeg`) and the `tabula` command. No CUDA toolkit is needed: the CUDA libraries come as pip packages.
+
+1. On the server set `TABULA_WORKER_TOKEN` (at least 32 characters, e.g. `openssl rand -hex 32`, different from `TABULA_TOKEN`) and restart Tabula. This token opens only `/api/worker/*`. The worker does not use `TABULA_TOKEN` at all: it uses only its own worker token, which opens nothing but `/api/worker/*`. Without `TABULA_WORKER_TOKEN` recordings are still queued, but the app and the agent tools say "Transcription is not enabled on this server" (instead of asking you to start a worker) until you set it.
+2. On the GPU computer:
+
+   ```powershell
+   tabula worker setup https://tabula.example.com   # asks for the worker token, creates the Python environment, installs faster-whisper
+   tabula worker doctor                             # checks ffmpeg, Python, CUDA and the GPU, then transcribes a 5 s sample
+   ```
+
+   `setup` checks the token first, then creates a virtual environment in `%LOCALAPPDATA%\tabula\whisper\venv` (`$XDG_DATA_HOME/tabula/whisper/venv`, by default `~/.local/share/tabula/whisper/venv`, outside Windows) and installs `faster-whisper>=1.2.1,<2`, `ctranslate2>=4.8.4,<5`, `nvidia-cublas-cu12>=12.9,<13` and `nvidia-cudnn-cu12>=9,<10` into it. It puts `transcribe.py` into the `whisper` folder next to the environment (`%LOCALAPPDATA%\tabula\whisper\transcribe.py`) and saves the settings in the `worker` section of `~/.tabula/config.json`. The first transcription downloads the Whisper model (`large-v3`, about 3 GB) into the Hugging Face cache.
+
+   `setup` reuses a worker token stored for the same URL and never takes `TABULA_WORKER_TOKEN` from the environment: without a stored token it asks for one, or reads it from standard input with `--token-stdin` (for scripts).
+
+| Command | What it does |
+|---|---|
+| `tabula worker` | waits for jobs and transcribes them until Ctrl+C (a job in progress goes back to the queue) |
+| `tabula worker --once` | transcribes what is queued, then exits |
+| `tabula worker --log` | logs to `%LOCALAPPDATA%\tabula\worker.log` instead of the console (for the Task Scheduler) |
+| `tabula worker setup [<url>] [--token-stdin]` | creates or updates the Python environment and saves the worker token |
+| `tabula worker doctor` | checks the whole chain and says what to fix |
+
+Each job runs in its own Python process, which loads the model and exits, so a waiting worker holds no GPU memory and the GPU stays free for games and 3D work. There is no fallback to the CPU: without CUDA the worker gives the job back and stops, and `doctor` says why.
+
+The settings in `~/.tabula/config.json` (`setup` writes them; edit what you want to change):
+
+```json
+{
+  "worker": {
+    "url": "https://tabula.example.com",
+    "token": "<TABULA_WORKER_TOKEN>",
+    "model": "large-v3",
+    "language": "sk",
+    "device": "cuda",
+    "compute_type": "float16",
+    "beam_size": 5,
+    "initial_prompt": "Tabula, bug report, Fastify, Drizzle",
+    "ffmpeg": "ffmpeg"
+  }
+}
+```
+
+`setup` also writes `python` (the environment's interpreter) and `script` (`transcribe.py`); leave them as they are.
+
+- `model`: `large-v3`, or `large-v3-turbo` (faster, nearly as good).
+- `language`: a language code, or `auto` to detect it for each recording.
+- `initial_prompt`: names of your projects and technical words, so Whisper spells them right.
+- `ffmpeg`: the program to run, if it is not on `PATH` (a full path works).
+- `TABULA_WORKER_TOKEN` and `TABULA_URL` in the environment override the saved values; `TABULA_DATA_DIR` moves the data folder.
+
+The log shows job ids, sizes, lengths, times, project and report title — never tokens or what was said. A job that fails is offered again after 1 and after 4 minutes; after the third failure the report shows it as failed with *Try again*. If the computer sleeps or the worker stops in the middle of a job, its 10-minute lease runs out and the job goes back to the queue. Transcripts stay when the recording is deleted after the report is closed, and search finds their words.
+
+#### Starting the worker automatically (Windows)
+
+Usually you start the worker when you need it — `tabula worker --once` — and the report page reminds you when a recording waits and shows when the worker was last seen. To run it in the background whenever you sign in, create a task in PowerShell (creating a task that starts at sign-in needs a PowerShell opened with *Run as administrator*; the task still runs as you):
+
+```powershell
+$node = (Get-Command node).Source
+$cli = "$HOME\.tabula\tabula.mjs"
+schtasks /Create /TN "Tabula worker" /SC ONLOGON /IT /RL LIMITED /F /TR "powershell.exe -NoProfile -WindowStyle Hidden -Command & '$node' '$cli' worker --log"
+```
+
+At sign-in a console window may flash briefly; the worker itself then runs without a window.
+
+| To … | Run |
+|---|---|
+| start it now | `schtasks /Run /TN "Tabula worker"` |
+| stop it (a job in progress returns to the queue within 10 minutes) | `schtasks /End /TN "Tabula worker"` |
+| keep the task but stop starting it at sign-in | `schtasks /Change /TN "Tabula worker" /DISABLE` (`/ENABLE` turns it back on) |
+| remove it | `schtasks /Delete /TN "Tabula worker" /F` |
+| watch the log | `Get-Content "$env:LOCALAPPDATA\tabula\worker.log" -Tail 20 -Wait` |
+
+The Task Scheduler stops a task after 3 days by default; to keep the worker running longer, open *Task Scheduler → Tabula worker → Settings* and clear *Stop the task if it runs longer than*.
 
 ### The recall digest
 
@@ -124,7 +203,8 @@ At the start of a session the agent calls `recall` once and gets plain text:
 | `deprecate(id, reason)` | Retires a global rule the agent wrote. Refuses human-written records. |
 | `find_notes(query?, tag?, limit?)` | Reads your Notes — only when you mention them. |
 | `save_thought` · `update_thought` · `find_thoughts` | The Thoughts notebook, on request; edits use `expected_version` and keep the previous version. |
-| `list_reports(project?, status?, query?)` · `get_report(id)` | Bug reports and their attachments (photos, videos, voice notes, saved frames) with links valid for 24 hours. |
+| `list_reports(project?, status?, query?)` · `get_report(id)` | Bug reports and their attachments (photos, videos, voice notes, saved frames) with links valid for 24 hours; videos and voice notes carry their transcript (`[2:41] what was said`) or its status. `query` also matches transcripts. |
+| `get_transcript(attachment_id, offset?)` | The whole transcript of a video or voice note in parts of 50 000 characters, with the times to pick frames from. |
 | `create_report(project, title, description?)` · `update_report(id, triage? \| append_triage?, status?, expected_version?)` | Records a bug on request; writes the analysis and tasks (the triage) and the status. `expected_version` is required to replace the triage or the title and to close a report (closing deletes its video and audio after the grace period). |
 | `view_attachment(id)` · `get_frame(video_id, at)` | A photo or saved frame as an image; a still from a video at a moment (`"2:41"`), saved to the report so it survives the video. |
 | `list_projects()` · `setup_project(id, name?, description?)` | Projects with file counts; onboarding on explicit request (returns the CLAUDE.md section, a `.tabula.json` and the next step: `tabula status` before the first push). |
@@ -159,7 +239,7 @@ A responsive React app with its own small UI kit (`web/src/ui`), light and dark 
 - **Thoughts** and **Notes** — card grids with search, tag chips, sort and pinning; a Markdown editor with Write / Split / Preview and Ctrl/⌘ S. Thoughts also keep a version history and warn when an agent changed the text while you were typing.
 - **Global** — the rules table (kind, author, status, prefix search; edit, retire, supersede) and the recall preview.
 - **Project** — **State** (the state files rendered as Markdown), **Files** (list, preview, the last 20 versions with restore, delete and restore), **Recall preview** (the exact digest with a budget meter) and **Setup** (the CLAUDE.md section, a `.tabula.json`, the install commands and the hook).
-- **Bug reports** — capture a bug on the phone while testing: pick the project, say what's wrong, add photos, screen recordings (from the gallery, or *Record screen* on a desktop) and voice notes. Uploads start at once and show their progress. While a video is paused, *Save frame* keeps that moment as a picture. An agent writes the **triage** (cause and tasks) into the report; it shows up when you come back to the window. Also a tab on each project.
+- **Bug reports** — capture a bug on the phone while testing: pick the project, say what's wrong, add photos, screen recordings (from the gallery, or *Record screen* on a desktop) and voice notes. Uploads start at once and show their progress. While a video is paused, *Save frame* keeps that moment as a picture. An agent writes the **triage** (cause and tasks) into the report; it shows up when you come back to the window. Also a tab on each project. Videos and voice notes get a transcript with clickable times once the transcription worker has processed them (see below); a line under *Bug reports* in the sidebar shows whether the worker is running.
 - **Search** (Ctrl/⌘ K) — global rules, project files, notes, thoughts and bug reports at once; words match as prefixes.
 
 **Install it as an app.** Tabula is a PWA: in Chrome or Edge use *Install app* in the sidebar (or the install icon in the address bar); on iPhone use Share → *Add to Home Screen*. A service worker caches only the app shell and the hashed build assets — `/api` and `/mcp` always go to the network, so data is never stale and the token never ends up in a cache. Installation needs HTTPS (or `localhost`).
@@ -243,6 +323,7 @@ Any client that speaks Streamable HTTP with the classic `initialize` handshake (
 | `DATABASE_URL` | yes | — | Postgres connection string (set by Compose) |
 | `TABULA_TOKEN` | yes | — | Bearer token for MCP and the UI, at least 32 characters |
 | `TABULA_CONNECTOR_SECRET` | no | — | Enables `/mcp/<secret>` for clients that can't send headers, at least 32 characters |
+| `TABULA_WORKER_TOKEN` | no | — | Enables the transcription worker's API (`/api/worker/*`) for `tabula worker`; at least 32 characters and different from `TABULA_TOKEN`. Without it that API answers `503` |
 | `PORT` | no | `3000` | Port the server listens on |
 | `HOST` | no | `0.0.0.0` | Interface to bind |
 | `WEB_DIST` | no | `web/dist` | Path to the UI build |
@@ -303,6 +384,7 @@ test/           Vitest: unit, database, HTTP/MCP and end-to-end CLI tests
 - **Bug-report attachments** are accepted only as photos, video or audio, recognised from the file's bytes (never from the name or the client's content type), so an HTML or SVG file can't be uploaded and run on Tabula's origin. They are served from `/media/<id>` with a signed, expiring link instead of the token (`<video>` and `<img>` can't send one), with `nosniff`, a sandboxing CSP and range support. The signing key is derived from `TABULA_TOKEN`: rotating the token invalidates every link. Signatures are masked in request logs.
 - **ffmpeg reads untrusted files**, so it runs with only `PATH` in its environment (never the token or the database URL), reads local files only, with the demuxer fixed by the detected type, refuses pictures over 64 megapixels, and at most two ffmpeg/ffprobe processes run at once. Its error output stays in the server log.
 - **There is no total storage quota and no limit on concurrent uploads**, only `TABULA_MEDIA_MAX_MB` per file: with a single token, whoever can upload can already do everything else. Watch the free space of the media volume; video and audio of closed reports are deleted after `TABULA_MEDIA_PURGE_HOURS`.
+- **The transcription worker has its own token**, `TABULA_WORKER_TOKEN`, valid only on `/api/worker/*` (take a job, extend its lease, hand in the transcript or the error); `TABULA_TOKEN` is refused there and the worker token is refused everywhere else, including `/mcp`. The worker downloads recordings only through the signed, expiring `/media` links that come with its jobs. `/cli/transcribe.py` is public like the CLI. The worker passes its child processes (ffmpeg, Python) an environment without `TABULA_*` variables and never logs tokens or transcript text.
 - `/cli/tabula.mjs` and `/cli/version` are public: they serve the CLI from this repository and no data.
 - Input is validated at the boundary: length limits, slug format, and NUL characters rejected before they reach Postgres.
 

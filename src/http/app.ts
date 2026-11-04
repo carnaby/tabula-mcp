@@ -4,12 +4,13 @@ import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
 import type { Config } from '../config.js';
 import type { Db } from '../db/client.js';
-import { DomainError } from '../domain/errors.js';
+import { DomainError, loggableError } from '../domain/errors.js';
 import { registerMcpRoutes } from '../mcp/routes.js';
 import { apiRoutes } from './api.js';
 import { registerCliRoutes } from './cli.js';
 import { MediaStore } from '../media/store.js';
 import { registerMediaRoute } from './reports-api.js';
+import { workerRoutes } from './worker-api.js';
 
 // The secret in the /mcp/<secret> path and the signature of /media links (valid for hours) must never reach the logs.
 const maskUrl = (url: string) => url.replace(/^\/mcp\/[^/?#]+/, '/mcp/***').replace(/([?&]sig=)[^&#]*/g, '$1***');
@@ -48,12 +49,13 @@ export async function buildApp(deps: {
   app.setErrorHandler<FastifyError>((err, _req, reply) => {
     if (err instanceof DomainError) {
       // The client gets a short message; what caused it (paths, ffmpeg output) goes to the log.
-      if (err.cause) app.log[err.status >= 500 ? 'error' : 'warn']({ err: err.cause }, err.message);
+      if (err.cause) app.log[err.status >= 500 ? 'error' : 'warn']({ err: loggableError(err.cause) }, err.message);
       return reply.code(err.status).send({ error: err.code, message: err.message });
     }
     const status = (err as { statusCode?: number }).statusCode ?? 500;
     if (status >= 500) {
-      app.log.error(err);
+      // Never the query values (transcripts, file contents) that database errors carry.
+      app.log.error(loggableError(err) as Error);
       return reply.code(status).send({ error: 'internal', message: 'internal error' });
     }
     return reply.code(status).send({ error: 'bad_request', message: err.message });
@@ -63,6 +65,8 @@ export async function buildApp(deps: {
   registerCliRoutes(app);
   registerMcpRoutes(app, { ...deps, store });
   registerMediaRoute(app, { db: deps.db, config: deps.config, store });
+  // A sibling of the /api plugin, so the main token's preHandler does not apply here and vice versa.
+  await app.register(workerRoutes, { prefix: '/api/worker', db: deps.db, config: deps.config });
   await app.register(apiRoutes, { prefix: '/api', db: deps.db, config: deps.config, store });
 
   const webRoot = resolve(deps.config.webDist);

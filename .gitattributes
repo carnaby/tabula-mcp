@@ -1,2 +1,3 @@
 # Served to every platform and parsed for its VERSION line: always LF.
 cli/tabula.mjs text eol=lf
+cli/transcribe.py text eol=lf

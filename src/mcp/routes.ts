@@ -29,6 +29,7 @@ export function registerMcpRoutes(app: FastifyInstance, deps: { db: Db; config: 
   const handle = async (req: FastifyRequest, reply: FastifyReply, agentLabel: string) => {
     const server = buildMcpServer({
       db: deps.db, agentLabel, log: req.log,
+      workerEnabled: !!deps.config.workerToken,
       media: { store: deps.store, token: deps.config.token, paths: deps.config.media, baseUrl: originOf(req) },
     });
     const transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });

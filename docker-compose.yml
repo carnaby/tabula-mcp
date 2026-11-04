@@ -23,6 +23,7 @@ services:
       DATABASE_URL: postgres://tabula:${POSTGRES_PASSWORD}@db:5432/tabula
       TABULA_TOKEN: ${TABULA_TOKEN:?set TABULA_TOKEN in .env}
       TABULA_CONNECTOR_SECRET: ${TABULA_CONNECTOR_SECRET:-}
+      TABULA_WORKER_TOKEN: ${TABULA_WORKER_TOKEN:-}
     ports:
       - "${TABULA_PORT:-3000}:3000"
     volumes:

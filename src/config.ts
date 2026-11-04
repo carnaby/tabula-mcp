@@ -9,6 +9,10 @@ const schema = z.object({
     emptyToUndefined,
     z.string().min(32, 'TABULA_CONNECTOR_SECRET must be at least 32 characters').optional(),
   ),
+  TABULA_WORKER_TOKEN: z.preprocess(
+    emptyToUndefined,
+    z.string().min(32, 'TABULA_WORKER_TOKEN must be at least 32 characters').optional(),
+  ),
   PORT: z.coerce.number().int().positive().default(3000),
   HOST: z.string().default('0.0.0.0'),
   WEB_DIST: z.string().default('web/dist'),
@@ -23,6 +27,8 @@ export type Config = {
   databaseUrl: string;
   token: string;
   connectorSecret: string | undefined;
+  /** Bearer token of the transcription worker: valid only on /api/worker/*. Unset = the worker API answers 503. */
+  workerToken: string | undefined;
   port: number;
   host: string;
   webDist: string;
@@ -44,10 +50,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error(`Invalid configuration: ${msg}`);
   }
   const e = parsed.data;
+  if (e.TABULA_WORKER_TOKEN !== undefined && e.TABULA_WORKER_TOKEN === e.TABULA_TOKEN) {
+    throw new Error('Invalid configuration: TABULA_WORKER_TOKEN must differ from TABULA_TOKEN (the worker token opens only the worker API)');
+  }
+  if (e.TABULA_WORKER_TOKEN !== undefined && e.TABULA_WORKER_TOKEN === e.TABULA_CONNECTOR_SECRET) {
+    throw new Error('Invalid configuration: TABULA_WORKER_TOKEN must differ from TABULA_CONNECTOR_SECRET (the connector URL must not accept the worker token)');
+  }
   return {
     databaseUrl: e.DATABASE_URL,
     token: e.TABULA_TOKEN,
     connectorSecret: e.TABULA_CONNECTOR_SECRET,
+    workerToken: e.TABULA_WORKER_TOKEN,
     port: e.PORT,
     host: e.HOST,
     webDist: e.WEB_DIST,

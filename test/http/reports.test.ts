@@ -1,9 +1,11 @@
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { reportJobs } from '../../src/db/schema.js';
+import { MEDIA_GONE } from '../../src/domain/jobs.js';
 import { purgeClosedMedia } from '../../src/domain/reports.js';
 import { buildApp } from '../../src/http/app.js';
 import { MediaStore } from '../../src/media/store.js';
@@ -98,6 +100,35 @@ describe('bug reports', () => {
 
     expect((await call('DELETE', `/api/attachments/${a.id}`)).statusCode).toBe(204);
     expect(readdirSync(join(mediaDir, r.id))).toEqual([]);
+  });
+
+  it('queues the transcription of audio, never of photos', async () => {
+    const r = await newReport();
+    const voice = (await upload(r.id, mp3, 'audio/mpeg', 'voice.mp3')).json();
+    await upload(r.id, PNG, 'image/png');
+    const jobs = await db.select({ attachmentId: reportJobs.attachmentId, status: reportJobs.status }).from(reportJobs);
+    expect(jobs).toEqual([{ attachmentId: voice.id, status: 'queued' }]);
+  });
+
+  it.skipIf(!HAS_FFMPEG)('queues a video only when it has a sound track', async () => {
+    await withBigApp(async (app2) => {
+      const r = await newReport();
+      const silent = (await uploadTo(app2, r.id, testVideo(), 'video/mp4', 'silent.mp4')).json();
+      const webm = liveWebm();
+      const sound = webm ? (await uploadTo(app2, r.id, webm, 'video/webm', 'sound.webm')).json() : null;
+      const queued = (await db.select({ id: reportJobs.attachmentId }).from(reportJobs)).map((j) => j.id);
+      expect(queued).not.toContain(silent.id);
+      if (sound) expect(queued).toContain(sound.id);
+    });
+  });
+
+  it('fails the job of a recording deleted after closing before the worker got to it', async () => {
+    const r = await newReport();
+    const voice = (await upload(r.id, mp3, 'audio/mpeg', 'voice.mp3')).json();
+    await call('PATCH', `/api/reports/${r.id}`, { status: 'done' });
+    expect(await purgeClosedMedia(db, store, 0, new Date(Date.now() + 1000))).toBe(1);
+    const [job] = await db.select().from(reportJobs).where(eq(reportJobs.attachmentId, voice.id));
+    expect(job).toMatchObject({ status: 'failed', error: MEDIA_GONE });
   });
 
   it('refuses HTML, SVG and oversized files and leaves nothing behind', async () => {

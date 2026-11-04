@@ -98,7 +98,7 @@ export type QuickHit = {
   updated_at: string;
 };
 
-/** The UI's global search box: prefix match over memories, notes, thoughts, project files and bug reports, best match first. */
+/** The UI's global search box: prefix match over memories, notes, thoughts, project files, bug reports and their transcripts, best match first. */
 export async function quickSearch(db: Db, p: { q: string; limit?: number }): Promise<QuickHit[]> {
   const tsq = prefixTsQuery(p.q);
   if (!tsq) return [];
@@ -126,11 +126,19 @@ export async function quickSearch(db: Db, p: { q: string; limit?: number }): Pro
           left(f.content, 100000), 'active', f.updated_at, ts_rank(f.search, q.tsq)
         FROM project_files f, q WHERE f.search @@ q.tsq AND f.deleted_at IS NULL
         UNION ALL
-        -- Closed reports rank like deprecated memories: below everything still open.
+        -- Closed reports rank like deprecated memories: below everything still open. The transcripts of a report's
+        -- recordings count too, at half the weight of its own text; a report is listed once.
         SELECT r.id, 'report', r.project_id, NULL, r.title,
-          r.body || ' ' || r.triage, CASE WHEN r.status = 'done' THEN 'deprecated' ELSE 'active' END, r.updated_at,
-          ts_rank(r.search, q.tsq)
-        FROM reports r, q WHERE r.search @@ q.tsq
+          r.body || ' ' || r.triage || coalesce(' ' || tx.text, ''),
+          CASE WHEN r.status = 'done' THEN 'deprecated' ELSE 'active' END, r.updated_at,
+          CASE WHEN r.search @@ q.tsq THEN ts_rank(r.search, q.tsq) ELSE 0 END + coalesce(tx.rank, 0)
+        FROM reports r CROSS JOIN q
+        LEFT JOIN LATERAL (
+          SELECT string_agg(left(t.text, 20000), ' ') AS text, max(ts_rank(t.search, q.tsq)) / 2 AS rank
+          FROM report_transcripts t JOIN report_attachments a ON a.id = t.attachment_id
+          WHERE a.report_id = r.id AND t.search @@ q.tsq
+        ) tx ON true
+        WHERE r.search @@ q.tsq OR tx.text IS NOT NULL
       ) hits
       ORDER BY (status = 'active') DESC, rank DESC, updated_at DESC
       LIMIT ${limit}

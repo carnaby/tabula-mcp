@@ -214,7 +214,7 @@ export async function releaseJob(db: Db, id: string, lease: string, now = new Da
       .update(reportJobs)
       .set({
         status: 'queued', attempts: sql`greatest(${reportJobs.attempts} - 1, 0)`, leaseId: null, leaseUntil: null, runAfter: now,
-        updatedAt: now,
+        finishedAt: null, updatedAt: now,
       })
       .where(eq(reportJobs.id, id));
   });
@@ -248,6 +248,11 @@ export async function failPendingJobs(db: Db, attachmentIds: string[], now = new
     .update(reportJobs)
     .set({ status: 'failed', error: MEDIA_GONE, leaseId: null, leaseUntil: null, finishedAt: now, updatedAt: now })
     .where(and(inArray(reportJobs.attachmentId, attachmentIds), inArray(reportJobs.status, ['queued', 'running'])));
+  // A job that failed on its last expired lease still holds that lease id; without clearing it a late heartbeat would revive it.
+  await db
+    .update(reportJobs)
+    .set({ leaseId: null, updatedAt: now })
+    .where(and(inArray(reportJobs.attachmentId, attachmentIds), eq(reportJobs.status, 'failed'), sql`${reportJobs.leaseId} IS NOT NULL`));
 }
 
 /** Every authenticated worker call is a sign of life. */

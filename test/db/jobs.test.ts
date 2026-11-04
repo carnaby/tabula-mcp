@@ -189,6 +189,23 @@ describe('transcription jobs', () => {
     expect(await claimJob(db, 'w')).toBeNull();
   });
 
+  it('does not let a late heartbeat revive a job that failed and whose recording was then deleted', async () => {
+    const a = await queued();
+    const first = (await claimJob(db, 'w', at(0)))!;
+    await claimJob(db, 'w', at(LEASE_MS + 1000));
+    await claimJob(db, 'w', at(2 * LEASE_MS + 2000));
+    expect(await expireLeases(db, at(3 * LEASE_MS + 3000))).toBe(1);
+    const stuck = await jobOf(a.id);
+    expect(stuck.status).toBe('failed');
+    expect(stuck.leaseId).not.toBeNull();
+    const lease = stuck.leaseId!;
+    expect(first.job.leaseId).not.toBe(lease);
+    await db.update(reportAttachments).set({ purgedAt: new Date() }).where(eq(reportAttachments.id, a.id));
+    await failPendingJobs(db, [a.id], at(3 * LEASE_MS + 4000));
+    await expect(heartbeatJob(db, stuck.id, lease, at(3 * LEASE_MS + 5000))).rejects.toMatchObject({ code: 'conflict' });
+    expect(await jobOf(a.id)).toMatchObject({ status: 'failed', leaseId: null });
+  });
+
   it('wakes a waiting claim when a recording is queued', async () => {
     const a = await recording();
     const started = Date.now();

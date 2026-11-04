@@ -113,6 +113,20 @@ export async function probeDurationMs(paths: FfmpegPaths, file: string, mime: st
   }
 }
 
+/** Whether the file has an audio stream: true or false, or null when ffprobe is missing or can't read the file. */
+export async function hasAudioStream(paths: FfmpegPaths, file: string, mime: string): Promise<boolean | null> {
+  try {
+    const out = await run(
+      paths.ffprobe,
+      ['-v', 'error', ...input(file, mime), '-select_streams', 'a', '-show_entries', 'stream=index', '-of', 'csv=p=0'],
+      20_000,
+    );
+    return out.toString().trim().length > 0;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Rewrite a WebM without re-encoding so it gets a duration and a seek index: MediaRecorder writes neither, and
  * without them the browser can't seek in the video and its length is unknown. Throws when ffmpeg can't.

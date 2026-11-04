@@ -1,6 +1,6 @@
 import { sql } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { memories, notes, projectFileRevisions, projectFiles, projects } from '../../src/db/schema.js';
+import { memories, notes, projectFileRevisions, projectFiles, projects, reportAttachments, reportJobs, reports, reportTranscripts } from '../../src/db/schema.js';
 import { seedProject, useTestDb } from '../helpers.js';
 
 const db = useTestDb();
@@ -68,5 +68,34 @@ describe('schema', () => {
     });
     await db.delete(projectFiles);
     expect(await db.select().from(projectFileRevisions)).toEqual([]);
+  });
+
+  it('keeps one transcription job per recording, indexes transcripts, and drops both with the recording', async () => {
+    await seedProject(db, 'demo');
+    const [r] = await db.insert(reports).values({ projectId: 'demo', title: 'T', source: 'human', editedBy: 'human' }).returning();
+    const [a] = await db
+      .insert(reportAttachments)
+      .values({
+        reportId: r!.id, kind: 'audio', mime: 'audio/wav', size: 1, sha256: 'x', fileName: 'v.wav',
+        storageKey: `${r!.id}/v.wav`, createdBy: 'human',
+      })
+      .returning();
+    await db.insert(reportJobs).values({ attachmentId: a!.id });
+    await expect(db.insert(reportJobs).values({ attachmentId: a!.id })).rejects.toMatchObject({
+      cause: { message: expect.stringMatching(/report_jobs_attachment_kind_idx/) },
+    });
+    const [job] = await db.select().from(reportJobs);
+    expect(job).toMatchObject({ kind: 'transcribe', status: 'queued', attempts: 0, leaseId: null });
+
+    const text = 'Tlačidlo prehrávania nereaguje';
+    await db.insert(reportTranscripts).values({
+      attachmentId: a!.id, language: 'sk', model: 'large-v3', text, segments: [{ start_ms: 0, end_ms: 900, text }],
+    });
+    const [v] = await db.execute<{ search: string }>(sql`SELECT search::text AS search FROM report_transcripts`);
+    expect(v!.search).toContain("'prehrávania'");
+
+    await db.delete(reportAttachments);
+    expect(await db.select().from(reportJobs)).toEqual([]);
+    expect(await db.select({ id: reportTranscripts.attachmentId }).from(reportTranscripts)).toEqual([]);
   });
 });

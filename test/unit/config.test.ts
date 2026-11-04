@@ -10,6 +10,7 @@ describe('loadConfig', () => {
       databaseUrl: 'postgres://u:p@localhost:5432/db',
       token: TOKEN,
       connectorSecret: undefined,
+      workerToken: undefined,
       port: 3000,
       host: '0.0.0.0',
       webDist: 'web/dist',
@@ -37,5 +38,16 @@ describe('loadConfig', () => {
     expect(() =>
       loadConfig({ DATABASE_URL: 'postgres://x', TABULA_TOKEN: TOKEN, TABULA_CONNECTOR_SECRET: 'abc' }),
     ).toThrow(/TABULA_CONNECTOR_SECRET/);
+  });
+
+  it('reads the worker token and refuses a short one or one equal to TABULA_TOKEN or the connector secret', () => {
+    const W = 'w'.repeat(32);
+    const base = { DATABASE_URL: 'postgres://x', TABULA_TOKEN: TOKEN };
+    expect(loadConfig({ ...base, TABULA_WORKER_TOKEN: W }).workerToken).toBe(W);
+    expect(loadConfig({ ...base, TABULA_WORKER_TOKEN: '' }).workerToken).toBeUndefined();
+    expect(() => loadConfig({ ...base, TABULA_WORKER_TOKEN: 'short' })).toThrow(/TABULA_WORKER_TOKEN/);
+    expect(() => loadConfig({ ...base, TABULA_WORKER_TOKEN: TOKEN })).toThrow(/must differ/);
+    const S = 's'.repeat(32);
+    expect(() => loadConfig({ ...base, TABULA_CONNECTOR_SECRET: S, TABULA_WORKER_TOKEN: S })).toThrow(/TABULA_CONNECTOR_SECRET/);
   });
 });

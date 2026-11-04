@@ -514,6 +514,16 @@
 }
 .att__frame img { width: 120px; height: 72px; object-fit: cover; border-radius: var(--radius-sm); border: 1px solid var(--border); }
 .att__frame:hover img { border-color: var(--accent-strong); }
+.att__frame[data-selected] img { border-color: var(--accent-strong); outline: 2px solid var(--accent-strong); outline-offset: -1px; }
+.att__frame-wrap { position: relative; flex: none; }
+.att__frame-note { position: absolute; top: 4px; left: 4px; display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--accent-strong); color: #fff; pointer-events: none; }
+.att__frame-note .t-icon { width: 11px; height: 11px; }
+.att__note { position: relative; padding: 0 10px 10px; }
+.att__note .t-textarea { width: 100%; min-height: 0; font-size: var(--text-sm); resize: vertical; }
+/* A non-breaking space keeps the line's height so the textarea does not jump. */
+.att__note-state { display: block; min-height: 1.2em; margin-bottom: 2px; font-size: 12px; }
+.att__note-text { flex-basis: 100%; white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--text-sm); color: var(--text-muted); }
+.att__frame-del.t-icon-btn { position: absolute; top: 4px; right: 4px; width: 32px; height: 32px; }
 
 .transcript {
   list-style: none;
@@ -525,7 +535,8 @@
   overflow-y: auto;
   font-size: var(--text-sm);
 }
-.transcript__line { display: flex; gap: 10px; align-items: baseline; min-width: 0; }
+.transcript__line { display: flex; gap: 10px; align-items: baseline; min-width: 0; border-radius: var(--radius-sm); }
+.transcript__line[data-active] { background: var(--accent-soft); color: var(--accent-soft-fg); }
 .transcript__text { min-width: 0; overflow-wrap: anywhere; }
 .transcript__time {
   flex: none;
@@ -537,6 +548,7 @@
   font: 600 12px/1.6 var(--font-mono);
 }
 button.transcript__time { cursor: pointer; }
+.transcript__line[data-active] button.transcript__time { color: var(--accent-soft-fg); }
 button.transcript__time:hover { background: var(--accent-soft); }
 span.transcript__time { color: var(--text-subtle); }
 .transcript__note {

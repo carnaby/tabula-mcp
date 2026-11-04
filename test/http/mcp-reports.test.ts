@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { eq } from 'drizzle-orm';
+import { reportAttachments } from '../../src/db/schema.js';
 import { claimJob, completeJob } from '../../src/domain/jobs.js';
 import { buildApp } from '../../src/http/app.js';
 import { MediaStore } from '../../src/media/store.js';
@@ -119,6 +121,28 @@ describe('bug reports over MCP', () => {
     expect(text(late.content)).toMatch(/past its end/);
     const audioAsVideo = await tool('view_attachment', { id: video.id });
     expect(text(audioAsVideo.content)).toMatch(/use get_frame/);
+  });
+
+  it('shows the note of a frame in get_report and view_attachment', async () => {
+    const { id } = json((await tool('create_report', { project: 'demo', title: 'Spinner' })).content);
+    const frame = await uploadFile(id, PNG, 'image/png', 'f.png');
+    const plain = await uploadFile(id, PNG, 'image/png', 'p.png');
+    await db.update(reportAttachments).set({ kind: 'frame', atMs: 2000 }).where(eq(reportAttachments.id, frame.id));
+    const before = json((await tool('get_report', { id })).content);
+    expect(before.attachments.every((a: object) => !('note' in a))).toBe(true);
+    await fetch(`${base}/api/attachments/${frame.id}`, {
+      method: 'PATCH', headers: { Authorization: `Bearer ${TEST_TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify({ note: 'The spinner never stops.' }),
+    });
+    const report = json((await tool('get_report', { id })).content);
+    expect(report.attachments.find((a: { id: string }) => a.id === frame.id).note).toBe('The spinner never stops.');
+    expect('note' in report.attachments.find((a: { id: string }) => a.id === plain.id)).toBe(false);
+    expect(JSON.parse(text((await tool('view_attachment', { id: frame.id })).content)).note).toBe('The spinner never stops.');
+    const { tools } = await (async () => {
+      const c = new Client({ name: 'tabula-test', version: '0.0.0' });
+      await c.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { Authorization: `Bearer ${TEST_TOKEN}` } } }));
+      try { return await c.listTools(); } finally { await c.close(); }
+    })();
+    for (const n of ['get_report', 'view_attachment']) expect(tools.find((t) => t.name === n)!.description).toMatch(/frames may carry the user's note/);
   });
 
   it('shows the transcript of a recording in get_report and pages through it with get_transcript', async () => {

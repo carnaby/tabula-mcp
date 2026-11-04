@@ -1,8 +1,8 @@
-import { type Dispatch, type SetStateAction, useRef, useState } from 'react';
+import { type Dispatch, type SetStateAction, useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../api';
 import { formatSize } from '../../format';
 import type { Attachment, TranscriptState, WorkerStatus } from '../../types';
-import { Badge, Button, Icon, IconButton, useConfirm, useToast } from '../../ui';
+import { Badge, Button, Icon, IconButton, Textarea, useConfirm, useToast } from '../../ui';
 import { clock } from './Recorder';
 import { Transcript } from './Transcript';
 import type { Upload } from './uploads';
@@ -12,11 +12,80 @@ function seek(media: HTMLMediaElement | null, ms: number) {
   if (!media) return;
   media.currentTime = ms / 1000;
   void media.play().catch(() => {});
-  media.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  media.scrollIntoView({ block: 'nearest', behavior: reduce ? 'auto' : 'smooth' });
+}
+
+const NOTE_MAX = 2000;
+
+/** The user's note on a saved frame: saved on blur and on Ctrl/Cmd+Enter, when it changed. */
+function FrameNote({ frame, onSaved }: { frame: Attachment; onSaved: (f: Attachment) => void }) {
+  const notify = useToast();
+  const [draft, setDraft] = useState(frame.note ?? '');
+  const [state, setState] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const latest = useRef(draft);
+  latest.current = draft;
+  // The last value known to be on the server, and whether a save is under way (with a change waiting behind it).
+  const savedRef = useRef(frame.note ?? '');
+  const inFlight = useRef(false);
+  const pending = useRef(false);
+  useEffect(() => {
+    if (state !== 'saved') return;
+    const h = window.setTimeout(() => setState('idle'), 2000);
+    return () => window.clearTimeout(h);
+  }, [state]);
+  const save = async (): Promise<void> => {
+    if (inFlight.current) {
+      pending.current = true;
+      return;
+    }
+    const sent = latest.current.trim();
+    if (sent === savedRef.current) return;
+    inFlight.current = true;
+    setState('saving');
+    try {
+      const f = await api.setFrameNote(frame.id, sent || null);
+      savedRef.current = f.note ?? '';
+      onSaved({ ...frame, note: f.note });
+      // Text typed while the request was under way stays.
+      if (latest.current.trim() === sent) setDraft(f.note ?? '');
+      setState('saved');
+    } catch (e) {
+      setState('idle');
+      pending.current = false;
+      notify((e as Error).message, { tone: 'danger' });
+    } finally {
+      inFlight.current = false;
+    }
+    if (pending.current) {
+      pending.current = false;
+      await save();
+    }
+  };
+  return (
+    <div className="att__note">
+      <span className="att__note-state t-subtle" role="status">{state === 'saving' ? 'Saving…' : state === 'saved' ? 'Saved' : ' '}</span>
+      <Textarea
+        rows={2}
+        maxLength={NOTE_MAX}
+        value={draft}
+        placeholder={`Note — what the video doesn't say (frame at ${clock(frame.atMs ?? 0)})`}
+        aria-label={`Note on the frame at ${clock(frame.atMs ?? 0)}`}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => void save()}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            void save();
+          }
+        }}
+      />
+          </div>
+  );
 }
 
 function VideoCard({
-  a, frames, worker, onFrame, onTranscript, onDelete,
+  a, frames, worker, onFrame, onTranscript, onDelete, onDeleteFrame, onNote,
 }: {
   a: Attachment;
   frames: Attachment[];
@@ -24,22 +93,28 @@ function VideoCard({
   onFrame: (f: Attachment) => void;
   onTranscript: (t: TranscriptState) => void;
   onDelete: () => void;
+  onDeleteFrame: (f: Attachment) => void;
+  onNote: (f: Attachment) => void;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
   const [busy, setBusy] = useState(false);
   const [t, setT] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Derived, so a deleted frame is no longer selected.
+  const selected = frames.find((f) => f.id === selectedId) ?? null;
   const notify = useToast();
+  const onSeek = useCallback((ms: number) => seek(ref.current, ms), []);
   return (
     <figure className="att att--wide">
       {a.url ? (
-        <video ref={ref} className="att__media" src={a.url} controls playsInline preload="metadata" onTimeUpdate={(e) => setT(e.currentTarget.currentTime)} />
+        <video ref={ref} className="att__media" src={a.url} controls playsInline preload="metadata" onTimeUpdate={(e) => setT(e.currentTarget.currentTime)} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} />
       ) : (
         <div className="att__gone"><Icon name="film" /> Video deleted after the report was closed</div>
       )}
       <figcaption className="att__cap">
         <span className="t-truncate">{a.fileName}</span>
         <span className="t-subtle t-nowrap">{a.durationMs !== null ? clock(a.durationMs) : ''} · {formatSize(a.size)}</span>
-        <span className="t-spacer" />
         {a.url && (
           <Button
             size="sm"
@@ -61,30 +136,38 @@ function VideoCard({
             Save frame {clock(t * 1000)}
           </Button>
         )}
+        <span className="t-spacer" />
         <IconButton size="sm" icon="trash" label="Delete video" onClick={onDelete} />
       </figcaption>
       {frames.length > 0 && (
         <div className="att__frames">
           {frames.map((f) => (
-            <button
-              key={f.id}
-              type="button"
-              className="att__frame"
-              title={`Go to ${clock(f.atMs ?? 0)}`}
-              onClick={() => {
-                if (ref.current) {
-                  ref.current.currentTime = (f.atMs ?? 0) / 1000;
-                  ref.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-                } else if (f.url) window.open(f.url, '_blank', 'noopener');
-              }}
-            >
-              {f.url && <img src={f.url} alt={`Frame at ${clock(f.atMs ?? 0)}`} loading="lazy" />}
-              <span>{clock(f.atMs ?? 0)}</span>
-            </button>
+            <div key={f.id} className="att__frame-wrap">
+              <button
+                type="button"
+                className="att__frame"
+                data-selected={f.id === selected?.id || undefined}
+                aria-pressed={f.id === selected?.id}
+                title={`Play from ${clock(f.atMs ?? 0)}`}
+                onClick={() => {
+                  setSelectedId(f.id);
+                  if (ref.current) seek(ref.current, f.atMs ?? 0);
+                  else if (f.url) window.open(f.url, '_blank', 'noopener');
+                }}
+              >
+                {f.url && <img src={f.url} alt={`Frame at ${clock(f.atMs ?? 0)}`} loading="lazy" />}
+                <span>{clock(f.atMs ?? 0)}</span>
+              </button>
+              {f.note && <span className="att__frame-note" title="Has a note" role="img" aria-label="Has a note"><Icon name="pencil" /></span>}
+              {f.id === selected?.id && (
+                <IconButton size="sm" variant="danger-solid" className="att__frame-del" icon="trash" label="Delete frame" onClick={() => onDeleteFrame(f)} />
+              )}
+            </div>
           ))}
         </div>
       )}
-      <Transcript a={a} worker={worker} onSeek={a.url ? (ms) => seek(ref.current, ms) : undefined} onChange={onTranscript} />
+      {selected && <FrameNote key={selected.id} frame={selected} onSaved={onNote} />}
+      <Transcript a={a} worker={worker} onSeek={a.url ? onSeek : undefined} onChange={onTranscript} currentMs={t * 1000} playing={playing} />
     </figure>
   );
 }
@@ -93,10 +176,13 @@ function AudioCard({
   a, worker, onTranscript, onDelete,
 }: { a: Attachment; worker: WorkerStatus | undefined; onTranscript: (t: TranscriptState) => void; onDelete: () => void }) {
   const ref = useRef<HTMLAudioElement>(null);
+  const [t, setT] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const onSeek = useCallback((ms: number) => seek(ref.current, ms), []);
   return (
     <figure className="att att--wide">
       {a.url ? (
-        <audio ref={ref} className="att__audio" src={a.url} controls preload="metadata" />
+        <audio ref={ref} className="att__audio" src={a.url} controls preload="metadata" onTimeUpdate={(e) => setT(e.currentTarget.currentTime)} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} />
       ) : (
         <div className="att__gone"><Icon name="mic" /> Voice note deleted after the report was closed</div>
       )}
@@ -107,7 +193,7 @@ function AudioCard({
         <span className="t-spacer" />
         <IconButton size="sm" icon="trash" label="Delete voice note" onClick={onDelete} />
       </figcaption>
-      <Transcript a={a} worker={worker} onSeek={a.url ? (ms) => seek(ref.current, ms) : undefined} onChange={onTranscript} />
+      <Transcript a={a} worker={worker} onSeek={a.url ? onSeek : undefined} onChange={onTranscript} currentMs={t * 1000} playing={playing} />
     </figure>
   );
 }
@@ -165,6 +251,8 @@ export function Attachments({
           onFrame={(f) => onChanged((list) => (list.some((x) => x.id === f.id) ? list : [...list, f]))}
           onTranscript={(t) => setTranscript(v.id, t)}
           onDelete={() => void remove(v)}
+          onDeleteFrame={(f) => void remove(f)}
+          onNote={(f) => onChanged((list) => list.map((x) => (x.id === f.id ? { ...x, note: f.note } : x)))}
         />
       ))}
       {audios.map((x) => (
@@ -185,6 +273,7 @@ export function Attachments({
                 {a.kind === 'frame' && <Badge tone="accent" icon="aperture">{clock(a.atMs ?? 0)}</Badge>}
                 {a.createdBy !== 'human' && <Badge icon="bot">{a.createdBy}</Badge>}
                 <span className="t-truncate t-subtle">{a.fileName}</span>
+                {a.kind === 'frame' && a.note && <span className="att__note-text">{a.note}</span>}
                 <span className="t-spacer" />
                 <IconButton size="sm" icon="trash" label="Delete" onClick={() => void remove(a)} />
               </figcaption>

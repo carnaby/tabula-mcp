@@ -266,6 +266,8 @@ export const reportAttachments = pgTable(
     /** Frames: the video they were taken from and the moment. */
     sourceId: uuid('source_id').references((): AnyPgColumn => reportAttachments.id, { onDelete: 'set null' }),
     atMs: integer('at_ms'),
+    /** Frames: what the user wants to say about the moment, which the video does not (max 2 000 characters). */
+    note: text('note'),
     createdBy: text('created_by').notNull(),
     /** Set when the bytes were deleted (video and audio after the report is closed); the row stays as a record. */
     purgedAt: timestamp('purged_at', { withTimezone: true }),

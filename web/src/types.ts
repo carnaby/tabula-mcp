@@ -129,6 +129,8 @@ export type Attachment = {
   durationMs: number | null;
   sourceId: string | null;
   atMs: number | null;
+  /** Frames: the user's note. */
+  note: string | null;
   createdBy: string;
   createdAt: string;
   purgedAt: string | null;

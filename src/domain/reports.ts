@@ -12,7 +12,7 @@ import { charCount, rejectNul } from './validation.js';
 
 export const REPORT_STATUSES = ['new', 'triaged', 'done'] as const;
 export type ReportStatus = (typeof REPORT_STATUSES)[number];
-export const REPORT_LIMITS = { title: 200, body: 20_000, triage: 50_000, fileName: 200 } as const;
+export const REPORT_LIMITS = { title: 200, body: 20_000, triage: 50_000, fileName: 200, frameNote: 2000 } as const;
 
 /** Who is writing: the human in the UI, or an agent with its label. */
 export type Editor = { source: 'agent' | 'human'; label: string };
@@ -304,6 +304,19 @@ export async function addAttachment(
     await store.discard(file.tmpPath);
     throw e;
   }
+}
+
+/** The note on a saved frame: trimmed, blank or null clears it. Allowed on closed reports too. */
+export async function setFrameNote(db: Db, id: string, raw: string | null): Promise<Attachment> {
+  const a = await requireAttachment(db, id);
+  if (a.kind !== 'frame') throw badRequest('only a saved frame takes a note');
+  const note = raw === null ? '' : raw.trim();
+  rejectNul(note, 'note');
+  const n = charCount(note);
+  if (n > REPORT_LIMITS.frameNote) throw badRequest(`note is ${n} characters; the limit is ${REPORT_LIMITS.frameNote}`);
+  const [row] = await db.update(reportAttachments).set({ note: note || null }).where(eq(reportAttachments.id, id)).returning();
+  if (!row) throw notFound(`attachment ${id} does not exist`);
+  return row;
 }
 
 export async function deleteAttachment(db: Db, store: MediaStore, id: string): Promise<void> {

@@ -1453,13 +1453,23 @@ async function workerSetup(urlArg, flags) {
   if (!/^https?:\/\/[^/]+/.test(url)) {
     throw new CliError('usage: tabula worker setup <url>, e.g. tabula worker setup https://tabula.example.com (or tabula login <url> first)');
   }
-  let token = current.token;
+  // Only the token stored in config.json for this very URL is reused: never one from the environment (it must not be
+  // persisted unasked) and never one that belongs to another server (it must not be sent there).
+  const onDisk = readConfigFile();
+  const stored = onDisk.worker && typeof onDisk.worker === 'object' && !Array.isArray(onDisk.worker) ? onDisk.worker : {};
+  const storedUrl = String(stored.url || onDisk.url || '').replace(/\/+$/, '');
+  let token = storedUrl === url && typeof stored.token === 'string' ? stored.token : '';
   if (!token || flags.has('--token-stdin')) {
     const fromStdin = flags.has('--token-stdin') || !process.stdin.isTTY;
     token = (fromStdin ? await readStdin() : await promptHidden('Worker token (TABULA_WORKER_TOKEN of the server): ')).trim();
   }
   if (!token) throw new CliError('no worker token given');
-  const check = await workerFetch({ url, token }, 'GET', '/api/worker/ping', undefined, { timeoutMs: 30000 });
+  let check;
+  try {
+    check = await workerFetch({ url, token }, 'GET', '/api/worker/ping', undefined, { timeoutMs: 30000 });
+  } catch (e) {
+    throw e.unreachable ? new CliError(`${e.message}; check the URL and the network`) : e;
+  }
   if (check.status !== 200) throw new CliError(`checking the worker token: HTTP ${check.status}${check.data?.message ? ` — ${check.data.message}` : ''}`);
   out(`The worker token works on ${url} (${check.data.queued} job(s) waiting).`);
 

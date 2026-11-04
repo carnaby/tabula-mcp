@@ -23,7 +23,7 @@ import time
 ENVIRONMENT = 3
 
 # Running out of GPU memory (a game is running) is a failure of the moment, not of the setup: that job is retried later.
-OUT_OF_MEMORY = re.compile(r"out of memory|CUDA_ERROR_OUT_OF_MEMORY", re.IGNORECASE)
+OUT_OF_MEMORY = re.compile(r"out of memory|CUDA_ERROR_OUT_OF_MEMORY|ALLOC_FAILED", re.IGNORECASE)
 # Failures of the GPU setup rather than of this recording.
 LIBRARY_ERROR = re.compile(r"cublas|cudnn|cuda driver|no cuda|cuda.*(not available|unavailable)|\.dll", re.IGNORECASE)
 

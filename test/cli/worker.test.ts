@@ -12,6 +12,7 @@ import { runCli, tempDir, useServer } from './harness.js';
 type Job = { id: string; lease: string };
 type CliWorker = {
   WORKER_DEFAULTS: Record<string, unknown>;
+  WHISPER_PACKAGES: string[];
   runJob(cfg: Record<string, unknown>, job: Job, opts: { log: (line: string) => void; stop: AbortSignal }): Promise<string>;
 };
 // A non-literal specifier keeps TypeScript from looking for type declarations of the plain .mjs file.
@@ -356,5 +357,33 @@ describe('tabula worker doctor and setup', () => {
     const r = await run(tempDir('tabula home '), ['setup', '--token-stdin'], {}, TEST_WORKER_TOKEN);
     expect(r.code).toBe(1);
     expect(r.stderr).toMatch(/usage: tabula worker setup <url>/);
+  });
+
+  it('setup reports an unreachable server as an error line, not a stack trace', async () => {
+    const r = await run(tempDir('tabula home '), ['setup', 'http://127.0.0.1:9', '--token-stdin'], {}, TEST_WORKER_TOKEN);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toMatch(/^tabula: cannot reach http:\/\/127\.0\.0\.1:9/);
+    expect(r.stderr).not.toMatch(/unexpected error/);
+  });
+
+  it('setup never sends a stored token to another URL and never takes the token from the environment', async () => {
+    const home = workerHome({ url: 'http://127.0.0.1:9' }); // a valid token, stored for a different URL
+    const other = await run(home, ['setup', server.url]);
+    expect(other.code).toBe(1);
+    expect(other.stderr).toMatch(/no worker token given/);
+    const viaEnv = await run(workerHome({ token: '' }), ['setup', server.url], { TABULA_WORKER_TOKEN: TEST_WORKER_TOKEN });
+    expect(viaEnv.code).toBe(1);
+    expect(viaEnv.stderr).toMatch(/no worker token given/);
+    expect(existsSync(join(home, 'data', 'whisper'))).toBe(false);
+  });
+
+  it('pins the versions of the worker packages', () => {
+    expect(cli.WHISPER_PACKAGES).toEqual(['faster-whisper>=1.2.1,<2', 'ctranslate2>=4.8.4,<5', 'nvidia-cublas-cu12>=12.9,<13', 'nvidia-cudnn-cu12>=9,<10']);
+  });
+
+  it('refuses --token-stdin on a plain worker run', async () => {
+    const r = await run(workerHome(), ['--token-stdin']);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toMatch(/tabula worker does not take --token-stdin/);
   });
 });

@@ -28,7 +28,8 @@ export type AgentMedia = {
   /** Origin the agent reached Tabula at, for absolute attachment links. */
   baseUrl?: string;
 };
-export type AgentContext = { db: Db; agentLabel: string; media?: AgentMedia };
+/** `workerEnabled`: the server has a TABULA_WORKER_TOKEN, so a transcription worker can connect (absent = yes). */
+export type AgentContext = { db: Db; agentLabel: string; media?: AgentMedia; workerEnabled?: boolean };
 
 /** Project memories were replaced by synced files; agents keep only the global rules, and only on request. */
 export const GLOBAL_ONLY =
@@ -261,7 +262,8 @@ function ago(d: Date, now = Date.now()): string {
 }
 
 /** Why a recording has no transcript (yet), in words an agent can pass on. */
-function pendingText(s: TranscriptState | undefined, lastSeen: Date | null): string {
+function pendingText(s: TranscriptState | undefined, lastSeen: Date | null, workerEnabled = true): string {
+  if (!workerEnabled) return 'transcription is not enabled on this server (no TABULA_WORKER_TOKEN); recordings stay untranscribed until the owner enables it';
   if (!s || s.status === 'none') {
     return 'it was not queued for transcription (a video without sound, or uploaded before the worker existed); the user can start it with "Transcribe" in the Tabula app';
   }
@@ -271,9 +273,9 @@ function pendingText(s: TranscriptState | undefined, lastSeen: Date | null): str
   return `waiting for the transcription worker (${seen}); the user starts it on their PC with \`tabula worker --once\``;
 }
 
-function transcriptForAgent(a: Attachment, s: TranscriptState | undefined, lastSeen: Date | null) {
+function transcriptForAgent(a: Attachment, s: TranscriptState | undefined, lastSeen: Date | null, workerEnabled: boolean) {
   if (!isRecording(a)) return {};
-  if (s?.status !== 'done') return { transcript: { status: s?.status ?? 'none', note: pendingText(s, lastSeen) } };
+  if (s?.status !== 'done') return { transcript: { status: s?.status ?? 'none', note: pendingText(s, lastSeen, workerEnabled) } };
   const lines = transcriptLines(s.segments);
   if (!lines) return { transcript: { status: 'done', language: s.language, text: '', note: 'no speech in the recording' } };
   const part = sliceLines(lines, 0, REPORT_TRANSCRIPT_CHARS);
@@ -334,7 +336,7 @@ export async function agentGetReport(ctx: AgentContext, id: string) {
   const lastSeen = waiting ? await lastWorkerSeen(ctx.db) : null;
   return {
     ...reportForAgent(r),
-    attachments: files.map((a) => ({ ...attachmentForAgent(a, m), ...transcriptForAgent(a, states.get(a.id), lastSeen) })),
+    attachments: files.map((a) => ({ ...attachmentForAgent(a, m), ...transcriptForAgent(a, states.get(a.id), lastSeen, ctx.workerEnabled !== false) })),
   };
 }
 
@@ -396,7 +398,7 @@ export async function agentGetTranscript(ctx: AgentContext, input: { attachment_
   const a = await requireAttachment(ctx.db, id);
   if (!isRecording(a)) throw badRequest(`attachment ${id} is ${a.kind === 'image' ? 'a photo' : 'a frame'}; only video and audio are transcribed`);
   const s = (await transcriptStates(ctx.db, [id])).get(id);
-  if (s?.status !== 'done') throw notFound(`attachment ${id} has no transcript yet: ${pendingText(s, await lastWorkerSeen(ctx.db))}`);
+  if (s?.status !== 'done') throw notFound(`attachment ${id} has no transcript yet: ${pendingText(s, await lastWorkerSeen(ctx.db), ctx.workerEnabled !== false)}`);
   const lines = transcriptLines(s.segments);
   const offset = Math.max(0, Math.trunc(input.offset ?? 0));
   if (offset > 0 && offset >= lines.length) return `[offset ${offset} is past the end of the transcript (${lines.length} characters)]`;

@@ -26,9 +26,9 @@ afterAll(() => app.close());
 beforeEach(() => seedProject(db, 'demo'));
 
 type Content = Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
-async function tool(name: string, args: Record<string, unknown>) {
+async function tool(name: string, args: Record<string, unknown>, origin = base) {
   const client = new Client({ name: 'tabula-test', version: '0.0.0' });
-  await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), {
+  await client.connect(new StreamableHTTPClientTransport(new URL(`${origin}/mcp`), {
     requestInit: { headers: { Authorization: `Bearer ${TEST_TOKEN}`, 'X-Tabula-Agent': 'claude-ai' } },
   }));
   try {
@@ -149,6 +149,23 @@ describe('bug reports over MCP', () => {
     const next = Number(/offset: (\d+)\]$/.exec(page1)![1]);
     const page2 = text((await tool('get_transcript', { attachment_id: audio.id, offset: next })).content);
     expect(page2).toMatch(new RegExp(`^\\[transcript of voice\\.wav .* · from character ${next}\\]\\n\\[\\d+:\\d+(:\\d+)?\\] Veta`));
+  });
+
+  it('says transcription is not enabled when the server has no worker token', async () => {
+    const off = await buildApp({ config: { ...config, workerToken: undefined }, db, store: new MediaStore(mediaDir, config.media.maxBytes) });
+    await off.listen({ port: 0, host: '127.0.0.1' });
+    const origin = `http://127.0.0.1:${(off.server.address() as AddressInfo).port}`;
+    try {
+      const created = json((await tool('create_report', { project: 'demo', title: 'No worker' }, origin)).content);
+      const audio = await uploadFile(created.id, silentWav(1), 'audio/wav', 'voice.wav');
+      const report = json((await tool('get_report', { id: created.id }, origin)).content);
+      expect(report.attachments[0].transcript.status).toBe('queued');
+      expect(report.attachments[0].transcript.note).toMatch(/not enabled on this server/);
+      expect(report.attachments[0].transcript.note).not.toMatch(/tabula worker/);
+      expect(text((await tool('get_transcript', { attachment_id: audio.id }, origin)).content)).toMatch(/not enabled on this server/);
+    } finally {
+      await off.close();
+    }
   });
 
   it('get_transcript explains why there is no transcript', async () => {

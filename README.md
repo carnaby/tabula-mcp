@@ -87,7 +87,7 @@ Voice notes and screen recordings in bug reports are transcribed with timestamps
 
 Requirements on that computer: an NVIDIA GPU with a current driver (RTX 50xx cards need a driver with CUDA 12.8 or newer), Python 3.9 or newer (on Windows from python.org, with the `py` launcher), `ffmpeg` on `PATH` (Windows: `winget install Gyan.FFmpeg`) and the `tabula` command. No CUDA toolkit is needed: the CUDA libraries come as pip packages.
 
-1. On the server set `TABULA_WORKER_TOKEN` (at least 32 characters, e.g. `openssl rand -hex 32`, different from `TABULA_TOKEN`) and restart Tabula. This token opens only `/api/worker/*`. The worker does not use `TABULA_TOKEN` at all: it uses only its own worker token, which opens nothing but `/api/worker/*`.
+1. On the server set `TABULA_WORKER_TOKEN` (at least 32 characters, e.g. `openssl rand -hex 32`, different from `TABULA_TOKEN`) and restart Tabula. This token opens only `/api/worker/*`. The worker does not use `TABULA_TOKEN` at all: it uses only its own worker token, which opens nothing but `/api/worker/*`. Without `TABULA_WORKER_TOKEN` recordings are still queued, but the app and the agent tools say "Transcription is not enabled on this server" (instead of asking you to start a worker) until you set it.
 2. On the GPU computer:
 
    ```powershell
@@ -135,7 +135,7 @@ The settings in `~/.tabula/config.json` (`setup` writes them; edit what you want
 - `ffmpeg`: the program to run, if it is not on `PATH` (a full path works).
 - `TABULA_WORKER_TOKEN` and `TABULA_URL` in the environment override the saved values; `TABULA_DATA_DIR` moves the data folder.
 
-The log shows job ids, lengths and times — never tokens or what was said. A job that fails is offered again after 1 and after 4 minutes; after the third failure the report shows it as failed with *Try again*. If the computer sleeps or the worker stops in the middle of a job, its 10-minute lease runs out and the job goes back to the queue. Transcripts stay when the recording is deleted after the report is closed, and search finds their words.
+The log shows job ids, sizes, lengths, times, project and report title — never tokens or what was said. A job that fails is offered again after 1 and after 4 minutes; after the third failure the report shows it as failed with *Try again*. If the computer sleeps or the worker stops in the middle of a job, its 10-minute lease runs out and the job goes back to the queue. Transcripts stay when the recording is deleted after the report is closed, and search finds their words.
 
 #### Starting the worker automatically (Windows)
 

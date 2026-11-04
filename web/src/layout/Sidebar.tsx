@@ -10,7 +10,7 @@ import { Button, Icon, type IconName, IconButton, Input, Kbd, Logo, Segmented, u
 
 /** A quiet line under Bug reports: is the transcription worker running? Hidden until a worker connected or something waits. */
 function WorkerLine({ status }: { status: WorkerStatus | undefined }) {
-  if (!status || (!status.lastSeenAt && !status.queued)) return null;
+  if (!status || !status.enabled || (!status.lastSeenAt && !status.queued)) return null;
   const alive = workerAlive(status);
   const seen = alive ? 'Transcription worker online' : status.lastSeenAt ? `Worker last seen ${timeAgo(status.lastSeenAt)}` : 'Worker never connected';
   return (

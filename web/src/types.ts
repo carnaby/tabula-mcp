@@ -111,6 +111,8 @@ export type TranscriptState =
   | { status: 'done'; language: string | null; model: string; segments: TranscriptSegment[]; createdAt: string };
 /** The transcription worker as the server last saw it; job counts are of open reports. */
 export type WorkerStatus = {
+  /** False when the server has no TABULA_WORKER_TOKEN: jobs queue, but no worker can connect. */
+  enabled: boolean;
   lastSeenAt: string | null;
   workers: { name: string; version: string | null; lastSeenAt: string }[];
   queued: number;

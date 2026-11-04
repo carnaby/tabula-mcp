@@ -526,6 +526,7 @@
   font-size: var(--text-sm);
 }
 .transcript__line { display: flex; gap: 10px; align-items: baseline; min-width: 0; }
+.transcript__text { min-width: 0; overflow-wrap: anywhere; }
 .transcript__time {
   flex: none;
   padding: 0 4px;

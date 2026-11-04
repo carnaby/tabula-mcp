@@ -122,7 +122,7 @@ export const reportRoutes: FastifyPluginAsync<MediaDeps> = async (app, { db, con
   });
 
   /** When the worker was last seen and how many recordings of open reports wait. */
-  app.get('/transcription/status', () => transcriptionStatus(db));
+  app.get('/transcription/status', async () => ({ enabled: !!config.workerToken, ...(await transcriptionStatus(db)) }));
 
   // Uploads: the raw file is the request body (no multipart), streamed straight to disk.
   await app.register(async (upload) => {

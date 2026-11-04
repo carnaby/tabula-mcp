@@ -43,13 +43,13 @@ export function Transcript({
         {t.segments.map((s, i) => (
           <li key={i} className="transcript__line">
             {onSeek ? (
-              <button type="button" className="transcript__time" title={`Play from ${clock(s.start_ms)}`} onClick={() => onSeek(s.start_ms)}>
+              <button type="button" className="transcript__time" title={`Play from ${clock(s.start_ms)}`} aria-label={`Play from ${clock(s.start_ms)}`} onClick={() => onSeek(s.start_ms)}>
                 {clock(s.start_ms)}
               </button>
             ) : (
               <span className="transcript__time">{clock(s.start_ms)}</span>
             )}
-            <span>{s.text}</span>
+            <span className="transcript__text">{s.text}</span>
           </li>
         ))}
       </ol>
@@ -74,6 +74,9 @@ export function Transcript({
         <Button size="sm" icon="mic" loading={busy} onClick={() => void retry()}>Transcribe</Button>
       </p>
     );
+  }
+  if (worker && !worker.enabled) {
+    return <p className="transcript__note"><Icon name="inbox" /> Transcription is not enabled on this server.</p>;
   }
   const alive = workerAlive(worker);
   return (

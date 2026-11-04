@@ -260,6 +260,17 @@ describe('worker API', () => {
     expect((await send({ segments: [] })).statusCode).toBe(200);
   });
 
+  it('reports whether transcription is enabled on this server', async () => {
+    expect((await asUser('GET', '/transcription/status')).json().enabled).toBe(true);
+    const off = await buildApp({ config: testConfig({ workerToken: undefined }), db });
+    try {
+      const res = await off.inject({ method: 'GET', url: '/api/transcription/status', headers: main });
+      expect(res.json()).toMatchObject({ enabled: false, queued: 0 });
+    } finally {
+      await off.close();
+    }
+  });
+
   it('remembers when and which worker was last seen', async () => {
     await asWorker('GET', '/ping');
     const s = (await asUser('GET', '/transcription/status')).json();

@@ -6,6 +6,7 @@ import {
   addAttachment, type Attachment, CLOSED_REPORT, createReport, deleteAttachment, deleteReport, frameAt, listAttachments, openReportCounts,
   pageReports, parseTimestamp, REPORT_SORTS, REPORT_STATUSES, requireAttachment, requireReport, updateReport,
 } from '../domain/reports.js';
+import { isRecording, retryTranscription, transcriptionStatus, transcriptStates } from '../domain/jobs.js';
 import { MAX_PAGE_SIZE } from '../domain/paging.js';
 import { badRequest, conflict, notFound } from '../domain/errors.js';
 import { signMediaPath, verifyMediaSignature } from '../media/sign.js';
@@ -33,6 +34,15 @@ export const attachmentView = (a: Attachment, token: string, ttl = UI_LINK_TTL) 
   purgedAt: a.purgedAt,
   url: a.purgedAt ? null : signMediaPath(token, a.id, ttl),
 });
+
+/** Attachments as the UI gets them: video and audio carry their transcript or its state; photos and frames null. */
+async function withTranscripts(db: Db, list: Attachment[], token: string) {
+  const states = await transcriptStates(db, list.filter(isRecording).map((a) => a.id));
+  return list.map((a) => ({
+    ...attachmentView(a, token),
+    transcript: isRecording(a) ? (states.get(a.id) ?? { status: 'none' as const }) : null,
+  }));
+}
 
 export type MediaDeps = { db: Db; config: Config; store: MediaStore };
 
@@ -67,7 +77,7 @@ export const reportRoutes: FastifyPluginAsync<MediaDeps> = async (app, { db, con
   app.get('/reports/:id', async (req) => {
     const { id } = parse(idParams, req.params);
     const report = await requireReport(db, id);
-    return { ...report, attachments: (await listAttachments(db, id)).map((a) => attachmentView(a, token)) };
+    return { ...report, attachments: await withTranscripts(db, await listAttachments(db, id), token) };
   });
 
   app.patch('/reports/:id', (req) => {
@@ -104,6 +114,16 @@ export const reportRoutes: FastifyPluginAsync<MediaDeps> = async (app, { db, con
     return attachmentView(frame, token);
   });
 
+  /** "Try again" after a failed transcription, or "Transcribe" for a recording that was never queued. */
+  app.post('/attachments/:id/transcript/retry', async (req) => {
+    const { id } = parse(idParams, req.params);
+    await retryTranscription(db, id);
+    return (await transcriptStates(db, [id])).get(id) ?? { status: 'none' };
+  });
+
+  /** When the worker was last seen and how many recordings of open reports wait. */
+  app.get('/transcription/status', () => transcriptionStatus(db));
+
   // Uploads: the raw file is the request body (no multipart), streamed straight to disk.
   await app.register(async (upload) => {
     upload.removeAllContentTypeParsers();
@@ -136,7 +156,8 @@ export const reportRoutes: FastifyPluginAsync<MediaDeps> = async (app, { db, con
         throw e;
       }
       const a = await addAttachment(db, store, paths, id, file, fileName, HUMAN);
-      return reply.code(201).send(attachmentView(a, token));
+      const [view] = await withTranscripts(db, [a], token);
+      return reply.code(201).send(view);
     });
   });
 };

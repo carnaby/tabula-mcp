@@ -1,6 +1,7 @@
 import { loadConfig } from './config.js';
 import { createDb } from './db/client.js';
 import { runMigrations } from './db/migrate.js';
+import { expireLeases } from './domain/jobs.js';
 import { purgeClosedMedia } from './domain/reports.js';
 import { buildApp } from './http/app.js';
 import { MediaStore } from './media/store.js';
@@ -27,6 +28,8 @@ const purge = async () => {
       app.log.error({ err, attachment: id }, 'could not delete the media of a closed report; retrying later'),
     );
     if (n > 0) app.log.info({ deleted: n }, 'deleted media of closed reports');
+    const expired = await expireLeases(db);
+    if (expired > 0) app.log.warn({ jobs: expired }, 'transcription jobs whose worker stopped answering went back to the queue');
   } catch (e) {
     app.log.error(e);
   }

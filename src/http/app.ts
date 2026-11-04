@@ -10,6 +10,7 @@ import { apiRoutes } from './api.js';
 import { registerCliRoutes } from './cli.js';
 import { MediaStore } from '../media/store.js';
 import { registerMediaRoute } from './reports-api.js';
+import { workerRoutes } from './worker-api.js';
 
 // The secret in the /mcp/<secret> path and the signature of /media links (valid for hours) must never reach the logs.
 const maskUrl = (url: string) => url.replace(/^\/mcp\/[^/?#]+/, '/mcp/***').replace(/([?&]sig=)[^&#]*/g, '$1***');
@@ -63,6 +64,8 @@ export async function buildApp(deps: {
   registerCliRoutes(app);
   registerMcpRoutes(app, { ...deps, store });
   registerMediaRoute(app, { db: deps.db, config: deps.config, store });
+  // A sibling of the /api plugin, so the main token's preHandler does not apply here and vice versa.
+  await app.register(workerRoutes, { prefix: '/api/worker', db: deps.db, config: deps.config });
   await app.register(apiRoutes, { prefix: '/api', db: deps.db, config: deps.config, store });
 
   const webRoot = resolve(deps.config.webDist);

@@ -4,14 +4,16 @@
 // The server also imports this file for its glob matcher (src/domain/glob.ts): importing it must stay free of side
 // effects beyond defining functions and constants.
 // Exit codes: 0 OK, 1 error, 2 finished with conflicts.
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
-  chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync,
-  writeFileSync,
+  appendFileSync, chmodSync, copyFileSync, createWriteStream, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync,
+  renameSync, rmSync, statSync, writeFileSync,
 } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, hostname, tmpdir } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 
 export const VERSION = '1.2.0';
@@ -218,8 +220,7 @@ function writeConfigFile(data) {
   const file = configFile();
   const tmp = `${file}.${process.pid}.tmp`;
   rmSync(tmp, { force: true });
-  writeFileSync(tmp, `${JSON.stringify(data, null, 2)}
-`, { mode: 0o600, flag: 'wx' });
+  writeFileSync(tmp, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
   renameSync(tmp, file);
   return file;
 }
@@ -412,6 +413,28 @@ function writeAtomic(repo, path, bytes) {
       // a locked temporary file is the next run's to replace; never hide the real outcome behind it
     }
   }
+}
+
+export const WORKER_DEFAULTS = Object.freeze({
+  model: 'large-v3', language: 'sk', device: 'cuda', compute_type: 'float16', beam_size: 5, initial_prompt: '', ffmpeg: 'ffmpeg',
+});
+
+/**
+ * The worker's settings: the "worker" section of config.json over the defaults. TABULA_URL and TABULA_WORKER_TOKEN
+ * win; the URL falls back to the one of tabula login. The worker never uses the main token.
+ */
+function readWorkerConfig() {
+  const saved = readConfigFile();
+  const w = saved.worker && typeof saved.worker === 'object' && !Array.isArray(saved.worker) ? saved.worker : {};
+  const merged = { ...WORKER_DEFAULTS, ...w };
+  return {
+    ...merged,
+    url: String(process.env.TABULA_URL || w.url || saved.url || '').replace(/\/+$/, ''),
+    token: String(process.env.TABULA_WORKER_TOKEN || w.token || ''),
+    python: merged.python ?? '',
+    script: String(merged.script || join(dataHome(), 'whisper', 'transcribe.py')),
+    beam_size: Number.isInteger(merged.beam_size) && merged.beam_size > 0 ? merged.beam_size : WORKER_DEFAULTS.beam_size,
+  };
 }
 
 // ------------------------------------------------------------------ server
@@ -959,6 +982,361 @@ async function newerVersion(url) {
   }
 }
 
+// ------------------------------------------------------------------ transcription worker
+
+/** How often a running job's lease is extended. TABULA_WORKER_HEARTBEAT_MS exists for the tests and can only shorten it. */
+const HEARTBEAT_MS = Math.min(60000, Number(process.env.TABULA_WORKER_HEARTBEAT_MS) || 60000);
+/** The server holds a claim open this long when the queue is empty. */
+const CLAIM_WAIT_S = 30;
+const LOG_ROTATE_BYTES = 5 * 1024 * 1024;
+/** How long after ffmpeg or the transcriber failed a Ctrl+C still makes it a release instead of a failure. */
+const STOP_GRACE_MS = 1000;
+
+/** The host name as an HTTP header value (ASCII only); the server lower-cases and checks it. */
+const workerId = () => hostname().replace(/[^\x21-\x7e]/g, '').slice(0, 63) || 'worker';
+
+/** Child programs get the user's environment without Tabula's tokens. */
+function childEnv() {
+  return Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^TABULA_/i.test(k)));
+}
+
+const sleep = (ms, signal) =>
+  new Promise((resolveSleep) => {
+    const done = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', done);
+      resolveSleep();
+    };
+    const timer = setTimeout(done, ms);
+    signal?.addEventListener('abort', done, { once: true });
+  });
+
+/**
+ * Run a program without a shell, so paths with spaces need no quoting. Resolves { code, stdout, stderr } (stderr's
+ * last 8 KB); kills it when `signal` aborts or after `timeoutMs`. A missing program rejects with `missing: true`.
+ */
+function runProcess(command, args, { input, signal, timeoutMs = 600000 } = {}) {
+  const [cmd, ...pre] = command;
+  return new Promise((resolveRun, reject) => {
+    let child;
+    try {
+      child = spawn(cmd, [...pre, ...args], { env: childEnv(), windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    } catch (e) {
+      reject(e);
+      return;
+    }
+    const stdout = [];
+    let stderr = '';
+    let timedOut = false;
+    const kill = () => child.kill();
+    const timer = setTimeout(() => {
+      timedOut = true;
+      kill();
+    }, timeoutMs);
+    signal?.addEventListener('abort', kill, { once: true });
+    const settle = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', kill);
+    };
+    child.stdout.on('data', (d) => stdout.push(d));
+    child.stderr.setEncoding('utf8').on('data', (d) => {
+      stderr = (stderr + d).slice(-8192);
+    });
+    child.stdin.on('error', () => {}); // a program that does not read its input closes the pipe early
+    child.on('error', (e) => {
+      settle();
+      reject(e.code === 'ENOENT' ? Object.assign(new Error(`${cmd} was not found`), { missing: true }) : e);
+    });
+    child.on('close', (code) => {
+      settle();
+      if (signal?.aborted) return reject(Object.assign(new Error('stopped'), { aborted: true }));
+      if (timedOut) return reject(new Error(`${basename(cmd)} did not finish within ${Math.round(timeoutMs / 60000)} min`));
+      resolveRun({ code, stdout: Buffer.concat(stdout).toString('utf8'), stderr });
+    });
+    child.stdin.end(input ?? '');
+  });
+}
+
+/**
+ * A call to /api/worker/* with the worker token. No answer → Error with `unreachable`; 401 → CliError with `rejected`;
+ * a server without the worker API enabled → CliError.
+ */
+async function workerFetch(cfg, method, path, body, { timeoutMs = 60000, signal } = {}) {
+  let res;
+  try {
+    res = await fetch(cfg.url + path, {
+      method,
+      headers: {
+        authorization: `Bearer ${cfg.token}`,
+        'x-tabula-worker': workerId(),
+        'x-tabula-version': VERSION,
+        ...(body !== undefined && { 'content-type': 'application/json' }),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.any([AbortSignal.timeout(timeoutMs), ...(signal ? [signal] : [])]),
+    });
+  } catch (e) {
+    if (signal?.aborted) throw Object.assign(new Error('stopped'), { aborted: true });
+    const why = e.name === 'TimeoutError' || e.name === 'AbortError' ? 'timed out' : (e.cause?.code ?? e.message);
+    throw Object.assign(new Error(`cannot reach ${cfg.url}: ${why}`), { unreachable: true });
+  }
+  const data = res.status === 204 ? null : await res.json().catch(() => null);
+  if (res.status === 401) {
+    throw Object.assign(new CliError('Tabula rejected the worker token; run tabula worker setup again (it needs TABULA_WORKER_TOKEN, not TABULA_TOKEN)'), { rejected: true });
+  }
+  if (res.status === 503 && /TABULA_WORKER_TOKEN/.test(data?.message ?? '')) {
+    throw new CliError(`${cfg.url} has no transcription worker enabled: set TABULA_WORKER_TOKEN on the server and restart it`);
+  }
+  return { status: res.status, data };
+}
+
+/** The next job, or null when the queue stayed empty for `waitS` seconds. */
+async function claimNext(cfg, waitS, signal) {
+  const r = await workerFetch(cfg, 'POST', '/api/worker/jobs/claim', { wait: waitS }, { timeoutMs: (waitS + 30) * 1000, signal });
+  if (r.status === 204) return null;
+  if (r.status === 200 && r.data?.id) return r.data;
+  throw Object.assign(new Error(`claim: HTTP ${r.status}${r.data?.message ? ` — ${r.data.message}` : ''}`), { unreachable: r.status >= 500 });
+}
+
+/** Stream the recording to `file` through its signed link (no token). 404/410 mean it is gone for good. */
+async function download(cfg, mediaPath, file, signal) {
+  let res;
+  try {
+    res = await fetch(cfg.url + mediaPath, { signal: AbortSignal.any([signal, AbortSignal.timeout(3600000)]) });
+  } catch (e) {
+    if (signal.aborted) throw Object.assign(new Error('stopped'), { aborted: true });
+    throw new Error(`download failed: ${e.cause?.code ?? e.message}`);
+  }
+  if (res.status === 410) throw Object.assign(new Error('the recording was deleted on the server'), { permanent: true });
+  if (res.status === 404) throw Object.assign(new Error('the recording is missing on the server'), { permanent: true });
+  if (!res.ok || !res.body) throw new Error(`download failed: HTTP ${res.status}`);
+  await pipeline(Readable.fromWeb(res.body), createWriteStream(file), { signal });
+}
+
+/**
+ * ffmpeg or the transcriber ended with an error by itself (the worker did not kill it). Tagged `exited`: on Windows a
+ * Ctrl+C reaches these programs too, and one may exit before the worker sees the signal (see runJob).
+ */
+const exitError = (message, more) => Object.assign(new Error(message), { exited: true, ...more });
+
+/** 16 kHz mono WAV for Whisper; false when the recording has no sound track. */
+async function extractAudio(cfg, input, wav, signal) {
+  let r;
+  try {
+    r = await runProcess(
+      commandLine(cfg.ffmpeg, 'ffmpeg'),
+      ['-nostdin', '-v', 'error', '-i', input, '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', '-y', wav],
+      { signal, timeoutMs: 1800000 },
+    );
+  } catch (e) {
+    if (e.missing) {
+      throw Object.assign(new Error('ffmpeg was not found: install it and open a new terminal, or set worker.ffmpeg in config.json'), { environment: true });
+    }
+    throw e;
+  }
+  if (r.code === 0) return true;
+  if (isNoAudioError(r.stderr)) return false;
+  throw exitError(`ffmpeg could not read the recording: ${shortError(r.stderr)}`);
+}
+
+const environmentError = (message) => Object.assign(new Error(message), { environment: true });
+
+/** One Python process per recording: the model leaves the GPU's memory when the process ends. */
+async function transcribe(cfg, wav, signal) {
+  if (!cfg.python || (Array.isArray(cfg.python) && !cfg.python.length)) throw environmentError('no Python environment for transcription: run tabula worker setup');
+  if (!existsSync(cfg.script)) throw environmentError(`transcribe.py is missing at ${cfg.script}: run tabula worker setup`);
+  const options = {
+    wav,
+    model: cfg.model,
+    language: cfg.language && cfg.language !== 'auto' ? cfg.language : null,
+    device: cfg.device,
+    compute_type: cfg.compute_type,
+    initial_prompt: cfg.initial_prompt || null,
+    beam_size: cfg.beam_size,
+  };
+  let r;
+  try {
+    r = await runProcess(commandLine(cfg.python, 'python'), [cfg.script], { input: JSON.stringify(options), signal, timeoutMs: 4 * 3600000 });
+  } catch (e) {
+    if (e.missing) throw environmentError(`${e.message}: run tabula worker setup`);
+    throw e;
+  }
+  if (r.code === TRANSCRIBER_ENVIRONMENT_EXIT) throw exitError(shortError(r.stderr), { environment: true });
+  if (r.code !== 0) throw exitError(`transcription failed (exit ${r.code}): ${shortError(r.stderr)}`);
+  let parsed;
+  try {
+    parsed = JSON.parse(r.stdout);
+  } catch {
+    throw exitError('the transcriber did not print JSON');
+  }
+  return normalizeTranscript(parsed);
+}
+
+/** Log lines with the local time; with --log they go to worker.log in the data folder instead of the console. */
+function makeLog(toFile) {
+  const file = join(dataHome(), 'worker.log');
+  if (toFile) mkdirSync(dirname(file), { recursive: true });
+  const p = (n) => String(n).padStart(2, '0');
+  return (line) => {
+    const d = new Date();
+    const text = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())} ${line}\n`;
+    if (!toFile) return void process.stdout.write(text);
+    try {
+      if (existsSync(file) && statSync(file).size > LOG_ROTATE_BYTES) renameSync(file, `${file}.1`);
+      appendFileSync(file, text);
+    } catch {
+      process.stdout.write(text); // a locked log file must not stop the worker
+    }
+  };
+}
+
+/** One job, start to end. Returns 'done', 'failed' (reported), 'lost' (the server took it back), 'released' or 'environment'. */
+export async function runJob(cfg, job, { log, stop }) {
+  const tag = `job ${job.id.slice(0, 8)}`;
+  const a = job.attachment;
+  const started = Date.now();
+  log(`${tag}: ${a.kind} ${a.duration_ms ? formatClock(a.duration_ms) : '(length unknown)'}, ${(a.size / 1048576).toFixed(1)} MB, project ${job.report.project}, "${job.report.title.slice(0, 60)}", attempt ${job.attempt}`);
+  const work = new AbortController();
+  const onStop = () => work.abort();
+  stop.addEventListener('abort', onStop);
+  let lost = false;
+  const beat = setInterval(() => {
+    workerFetch(cfg, 'POST', `/api/worker/jobs/${job.id}/heartbeat`, { lease: job.lease }, { timeoutMs: 30000 })
+      .then((r) => {
+        if (r.status === 409 || r.status === 404) {
+          lost = true;
+          work.abort();
+        }
+      })
+      .catch(() => {}); // the lease lasts 10 minutes; a later heartbeat may get through
+  }, HEARTBEAT_MS);
+  const report = (path, body) => workerFetch(cfg, 'POST', `/api/worker/jobs/${job.id}/${path}`, { lease: job.lease, ...body }, { timeoutMs: 60000 });
+  const dir = mkdtempSync(join(tmpdir(), 'tabula-worker-'));
+  try {
+    const input = join(dir, 'recording');
+    await download(cfg, job.media_path, input, work.signal);
+    const wav = join(dir, 'audio.wav');
+    const hasAudio = await extractAudio(cfg, input, wav, work.signal);
+    const result = hasAudio ? await transcribe(cfg, wav, work.signal) : { language: null, duration_ms: null, segments: [] };
+    // The transcript is the expensive part: a short network outage must not lose it.
+    let r;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        r = await report('complete', { model: cfg.model, ...result });
+        break;
+      } catch (e) {
+        if (!e.unreachable || attempt >= 5) throw e;
+        log(`${tag}: ${shortError(e.message)}; sending the transcript again in ${workerBackoffMs(attempt) / 1000} s`);
+        await sleep(workerBackoffMs(attempt));
+      }
+    }
+    if (r.status === 409 || r.status === 404) {
+      log(`${tag}: the server no longer expects this job (${shortError(r.data?.message ?? r.status)}); result dropped`);
+      return 'lost';
+    }
+    if (r.status !== 200) throw new Error(`the server refused the transcript: HTTP ${r.status}${r.data?.message ? ` — ${r.data.message}` : ''}`);
+    const took = ((Date.now() - started) / 1000).toFixed(1);
+    const audio = result.duration_ms ? ` from ${formatClock(result.duration_ms)} of audio` : '';
+    log(`${tag}: done in ${took} s, ${result.segments.length} segments${audio}${hasAudio ? '' : ' (no sound track)'}`);
+    return 'done';
+  } catch (e) {
+    // While stopping, whatever ffmpeg or the transcriber exited with gives the attempt back. On Windows Ctrl+C reaches
+    // them as well and one may exit first: a stop that follows the exit within STOP_GRACE_MS still counts.
+    if (e.exited && !stop.aborted) await sleep(STOP_GRACE_MS, stop);
+    if (lost) {
+      log(`${tag}: the server gave the job to another worker or cancelled it; stopped working on it`);
+      return 'lost';
+    }
+    if (stop.aborted || e.environment) {
+      await report('release', {}).catch(() => {});
+      if (stop.aborted) {
+        log(`${tag}: stopped; the job went back to the queue`);
+        return 'released';
+      }
+      log(`${tag}: ${shortError(e.message)}`);
+      log('the job went back to the queue; check the setup with tabula worker doctor, then start the worker again');
+      return 'environment';
+    }
+    const message = shortError(e.message);
+    const r = await report('fail', { error: message, permanent: e.permanent === true }).catch(() => null);
+    log(`${tag}: failed: ${message}${r?.data?.status === 'queued' ? ' (the server will offer it again later)' : ''}`);
+    return 'failed';
+  } finally {
+    clearInterval(beat);
+    stop.removeEventListener('abort', onStop);
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // a file still held by a killed process; the system cleans its temp folder
+    }
+  }
+}
+
+/** tabula worker [--once] [--log] */
+async function workerRun(flags) {
+  const cfg = readWorkerConfig();
+  if (!cfg.url) throw new CliError('no server URL: run tabula worker setup <url> (or tabula login <url> first)');
+  if (!cfg.token) throw new CliError('no worker token: run tabula worker setup');
+  const once = flags.has('--once');
+  const log = makeLog(flags.has('--log'));
+  const stop = new AbortController();
+  const onSignal = () => {
+    if (stop.signal.aborted) process.exit(130); // a second Ctrl+C: leave at once
+    log('stopping… (Ctrl+C again to quit at once)');
+    stop.abort();
+  };
+  process.on('SIGINT', onSignal);
+  process.on('SIGTERM', onSignal);
+  log(`tabula worker ${VERSION} ${once ? 'transcribing what is queued' : 'waiting for jobs (Ctrl+C stops)'}; server ${cfg.url}`);
+  const counts = { done: 0, failed: 0 };
+  let failures = 0;
+  try {
+    while (!stop.signal.aborted) {
+      let job;
+      try {
+        job = await claimNext(cfg, once ? 0 : CLAIM_WAIT_S, stop.signal);
+        if (failures) log('connected again');
+        failures = 0;
+      } catch (e) {
+        if (e instanceof CliError) throw e;
+        if (e.aborted || stop.signal.aborted) break;
+        if (once) throw new CliError(shortError(e.message));
+        failures++;
+        const wait = workerBackoffMs(failures);
+        log(`${shortError(e.message)}; trying again in ${wait / 1000} s`);
+        await sleep(wait, stop.signal);
+        continue;
+      }
+      if (!job) {
+        if (once) break;
+        continue;
+      }
+      const outcome = await runJob(cfg, job, { log, stop: stop.signal });
+      if (outcome === 'environment') return 1;
+      if (outcome === 'done') counts.done++;
+      if (outcome === 'failed') counts.failed++;
+    }
+  } finally {
+    process.off('SIGINT', onSignal);
+    process.off('SIGTERM', onSignal);
+  }
+  log(`worker stopped: ${counts.done} transcribed, ${counts.failed} failed`);
+  return 0;
+}
+
+/** Options of each worker subcommand ("run" is plain tabula worker). */
+const WORKER_FLAGS = { run: ['--once', '--log'] };
+
+async function workerCommand(args, flags) {
+  const sub = args.length ? args[0] : 'run';
+  if ((sub === 'run' && args.length) || !Object.hasOwn(WORKER_FLAGS, sub)) {
+    throw new CliError(`unknown worker command "${args[0]}"; run tabula help`);
+  }
+  const unknown = [...flags].find((f) => !WORKER_FLAGS[sub].includes(f));
+  if (unknown) throw new CliError(`tabula worker${sub === 'run' ? '' : ` ${sub}`} does not take ${unknown}`);
+  return workerRun(flags);
+}
+
 // ------------------------------------------------------------------ command line
 
 export class CliError extends Error {
@@ -982,6 +1360,8 @@ Usage:
   tabula rm <path>                     delete a file on the server (restorable in the Tabula UI)
   tabula install                       put tabula on PATH (~/.tabula/bin) and print the SessionStart hook
   tabula update                        replace this file with the version the server offers
+  tabula worker [--once] [--log]       transcribe bug-report recordings until Ctrl+C (--once: what is queued, then exit;
+                                       --log: write to worker.log in the data folder instead of the console)
 
 .tabula.json in the repository root: { "project"?: slug, "sync": [globs], "state"?: [globs] }
 Environment: TABULA_URL and TABULA_TOKEN override the saved login; TABULA_HOME (default ~/.tabula).
@@ -999,6 +1379,7 @@ function fail(e) {
 /** Options each command accepts (pull --hook is handled before this check). */
 const FLAGS = {
   help: [], version: [], login: ['--token-stdin'], status: [], push: ['--force'], pull: ['--force'], rm: [], install: [], update: [],
+  worker: ['--once', '--log'],
 };
 
 export async function main(argv) {
@@ -1023,6 +1404,7 @@ export async function main(argv) {
     if (cmd === 'login') return await login(args, flags);
     if (cmd === 'install') return install();
     if (cmd === 'update') return await update(readConnection());
+    if (cmd === 'worker') return await workerCommand(args, flags);
     const conn = requireConnection(readConnection());
     const repo = openRepo();
     const api = makeApi(conn);

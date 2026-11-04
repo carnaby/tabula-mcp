@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll } from 'vitest';
+import type { Config } from '../../src/config.js';
 import type { Db } from '../../src/db/client.js';
 import { buildApp } from '../../src/http/app.js';
 import { testConfig } from '../helpers.js';
@@ -14,11 +15,11 @@ import { testConfig } from '../helpers.js';
 export const CLI = fileURLToPath(new URL('../../cli/tabula.mjs', import.meta.url));
 
 /** A real Tabula server on an ephemeral port, for the CLI to talk to. */
-export function useServer(db: Db): { url: string } {
+export function useServer(db: Db, config: Config = testConfig()): { url: string } {
   const server = { url: '' };
   let app: FastifyInstance | undefined;
   beforeAll(async () => {
-    app = await buildApp({ config: testConfig(), db });
+    app = await buildApp({ config, db });
     await app.listen({ port: 0, host: '127.0.0.1' });
     server.url = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
   });

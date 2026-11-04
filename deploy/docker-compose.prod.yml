@@ -41,7 +41,8 @@ services:
       interval: 30m
 
   db:
-    image: postgres:16-alpine
+    # Postgres 17 since 2026-11. A data directory from 16 does not start under 17: see "Upgrading from Postgres 16" in the README.
+    image: postgres:17-alpine
     container_name: tabula-db
     restart: unless-stopped
     # Run as a host user so the data files are owned by it (bind mount, backups).

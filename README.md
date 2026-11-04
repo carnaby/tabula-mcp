@@ -254,14 +254,14 @@ flowchart LR
   CA[claude.ai connector] -->|MCP over HTTP| T
   UI[Web UI] -->|REST /api| T
   CLI[tabula command] -->|REST /api| T
-  T --> PG[(Postgres 16 + full-text search)]
+  T --> PG[(Postgres 17 + full-text search)]
 ```
 
 One Node.js process serves everything: the MCP endpoint (`/mcp`), the REST API for the UI and the CLI (`/api`), the CLI download (`/cli/tabula.mjs`, `/cli/version`), the static UI build and `/healthz`.
 
 - **Node 22, TypeScript, Fastify 5.** Domain logic (including project files with optimistic locking) lives in `src/domain` and is shared by the MCP tools and the REST API; `src/agent` adds the rules that apply only to agents (source tagging, read-only human records).
 - **MCP TypeScript SDK v2**, Streamable HTTP in **stateless** mode: every request gets a fresh server instance, so the process holds no session state and restarts are invisible to clients.
-- **Postgres 16 with Drizzle ORM.** Search uses a generated, weighted `tsvector` column with a GIN index and the `simple` configuration, because records mix Slovak and English and language-specific stemming would mangle one of them. No embeddings: the records are short and most reads go through `recall`, not search.
+- **Postgres 17 with Drizzle ORM.** Search uses a generated, weighted `tsvector` column with a GIN index and the `simple` configuration, because records mix Slovak and English and language-specific stemming would mangle one of them. No embeddings: the records are short and most reads go through `recall`, not search.
 - **React + Vite** UI, built into static files served by the same process.
 - **Migrations run automatically** on startup.
 
@@ -289,6 +289,21 @@ For anything beyond localhost, put Tabula behind a reverse proxy that terminates
 The proxy must pass `X-Forwarded-Proto` (and the original `Host`, or `X-Forwarded-Host`): the attachment links that agents get from `get_report` are absolute and built from them, so without it they start with `http://`. Its request body limit must be at least `TABULA_MEDIA_MAX_MB`.
 
 Bug-report attachments live in `TABULA_MEDIA_DIR` (`/data/media` in the image); mount a volume or a host directory there that the container's user (uid 1000, `node`) can write, or uploads are lost with the container. If the directory is missing or not writable, Tabula still starts and everything else works: it logs an error at startup, and uploads and new video frames answer `503` until the directory is fixed.
+
+### Upgrading from Postgres 16
+
+Since November 2026 both compose files use Postgres 17. A data directory created by Postgres 16 does not start under 17, so an existing installation moves its data with a dump. Run the first command while the old stack is still up, and keep the dump until the new stack works:
+
+```bash
+docker compose exec -T db pg_dump -U tabula tabula > tabula-pg16.sql
+docker compose down
+# move the old data aside: the tabula-pg volume, or $TABULA_DATA_DIR/db with deploy/docker-compose.prod.yml
+docker compose up -d db                                   # now Postgres 17, empty
+docker compose exec -T db psql -U tabula -d tabula -v ON_ERROR_STOP=1 < tabula-pg16.sql
+docker compose up -d                                      # the app starts on the restored data
+```
+
+Restore before the app starts: on an empty database the app would create the schema itself, and the dump would then conflict with it. To stay on 16 for now, pin `image: postgres:16-alpine` for `db` in a `docker-compose.override.yml`.
 
 ### Connect Claude Code
 
@@ -339,7 +354,7 @@ Any client that speaks Streamable HTTP with the classic `initialize` handshake (
 
 ```bash
 pnpm install
-pnpm db:dev                 # Postgres 16 in Docker (container tabula-dev-db, port 5432)
+pnpm db:dev                 # Postgres 17 in Docker (container tabula-dev-db, port 5432)
 cp .env.example .env        # then set TABULA_TOKEN
 pnpm dev                    # server with reload on PORT (default 3000)
 pnpm dev:web                # UI on http://localhost:5173, proxies /api to TABULA_API (default http://localhost:3000)

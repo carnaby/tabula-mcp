@@ -18,7 +18,7 @@ function assertThrowawayDatabase(url: string): void {
 export default async function setup(project: TestProject) {
   let url = process.env.TEST_DATABASE_URL;
   if (!url) {
-    container = await new PostgreSqlContainer('postgres:16-alpine').start();
+    container = await new PostgreSqlContainer('postgres:17-alpine').start();
     url = container.getConnectionUri();
   } else assertThrowawayDatabase(url);
   await runMigrations(url);

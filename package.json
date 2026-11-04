@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "tsx watch --env-file=.env src/main.ts",
     "dev:web": "vite --config web/vite.config.ts",
-    "db:dev": "docker start tabula-dev-db || docker run -d --name tabula-dev-db -e POSTGRES_DB=tabula -e POSTGRES_USER=tabula -e POSTGRES_PASSWORD=change-me -p 5432:5432 -v tabula-dev-pg:/var/lib/postgresql/data postgres:16-alpine",
+    "db:dev": "docker start tabula-dev-db || docker run -d --name tabula-dev-db -e POSTGRES_DB=tabula -e POSTGRES_USER=tabula -e POSTGRES_PASSWORD=change-me -p 5432:5432 -v tabula-dev-pg17:/var/lib/postgresql/data postgres:17-alpine",
     "build": "pnpm build:server && pnpm build:web",
     "build:server": "tsc -p tsconfig.build.json",
     "build:web": "vite build --config web/vite.config.ts",

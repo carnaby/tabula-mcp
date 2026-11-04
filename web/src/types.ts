@@ -104,6 +104,19 @@ export const REPORT_STATUS_INFO: Record<ReportStatus, { label: string; hint: str
   done: { label: 'Done', hint: 'Fixed and closed' },
 };
 export type AttachmentKind = 'image' | 'video' | 'audio' | 'frame';
+export type TranscriptSegment = { start_ms: number; end_ms: number; text: string };
+export type TranscriptState =
+  | { status: 'none' }
+  | { status: 'queued' | 'running' | 'failed'; attempts: number; error: string | null; retryAt: string | null }
+  | { status: 'done'; language: string | null; model: string; segments: TranscriptSegment[]; createdAt: string };
+/** The transcription worker as the server last saw it; job counts are of open reports. */
+export type WorkerStatus = {
+  lastSeenAt: string | null;
+  workers: { name: string; version: string | null; lastSeenAt: string }[];
+  queued: number;
+  running: number;
+  failed: number;
+};
 export type Attachment = {
   id: string;
   reportId: string;
@@ -119,6 +132,8 @@ export type Attachment = {
   purgedAt: string | null;
   /** Signed link, null once the file was deleted. */
   url: string | null;
+  /** Video and audio: the transcript or its state; null (or absent) for photos and frames. */
+  transcript?: TranscriptState | null;
 };
 export type Report = {
   id: string;

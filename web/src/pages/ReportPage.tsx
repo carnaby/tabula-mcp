@@ -69,6 +69,28 @@ function Editor({
     invalidate('reports');
   }, []);
   const up = useUploads(onUploaded);
+  const worker = useQuery((s) => api.transcriptionStatus(s), [], { topics: ['reports'] });
+
+  // While a recording waits for the worker or is being transcribed, look for its transcript every 10 s.
+  const pending = attachments.some((a) => a.transcript?.status === 'queued' || a.transcript?.status === 'running');
+  const reloadWorker = worker.reload;
+  useEffect(() => {
+    if (!base || !pending) return;
+    const timer = setInterval(async () => {
+      if (document.visibilityState !== 'visible') return;
+      try {
+        const latest = await api.report(base.id);
+        setAttachments((list) =>
+          list.map((a) => {
+            const fresh = latest.attachments.find((x) => x.id === a.id);
+            return fresh ? { ...a, transcript: fresh.transcript, durationMs: fresh.durationMs } : a;
+          }),
+        );
+        reloadWorker();
+      } catch { /* offline: the next tick tries again */ }
+    }, 10_000);
+    return () => clearInterval(timer);
+  }, [base, pending, reloadWorker]);
 
   const textDirty = base
     ? draft.title !== base.title || draft.body !== base.body
@@ -311,7 +333,7 @@ function Editor({
           )}
           <input ref={camera} type="file" accept="image/*,video/*" capture="environment" hidden onChange={(e) => { void addFiles([...(e.target.files ?? [])]); e.target.value = ''; }} />
           <input ref={gallery} type="file" accept="image/*,video/*,audio/*" multiple hidden onChange={(e) => { void addFiles([...(e.target.files ?? [])]); e.target.value = ''; }} />
-          <Attachments attachments={attachments} uploads={up.uploads} onChanged={setAttachments} onDismissUpload={up.dismiss} />
+          <Attachments attachments={attachments} uploads={up.uploads} worker={worker.data} onChanged={setAttachments} onDismissUpload={up.dismiss} />
         </section>
 
         {base && (

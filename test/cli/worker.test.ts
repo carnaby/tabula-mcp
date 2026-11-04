@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { reportJobs } from '../../src/db/schema.js';
 import { seedProject, TEST_TOKEN, TEST_WORKER_TOKEN, testConfig, useTestDb } from '../helpers.js';
 import { silentWav } from '../media-fixtures.js';
@@ -127,6 +129,70 @@ describe('tabula worker', () => {
     expect(r.code).toBe(0);
     expect(r.stdout).toMatch(/failed: transcription failed \(exit 1\): Traceback: boom \(the server will offer it again later\)/);
     expect(await jobOf(audio.id)).toMatchObject({ status: 'queued', attempts: 1, error: 'transcription failed (exit 1): Traceback: boom' });
+  });
+
+  it('keeps the last lines of the transcriber stderr, not the first', async () => {
+    const { audio } = await recording();
+    await runWorker(workerHome(), ['--once'], { FAKE_TRANSCRIBE: 'noisy' });
+    const error = (await jobOf(audio.id)).error!;
+    expect(error.length).toBeLessThanOrEqual(300);
+    expect(error).toMatch(/RuntimeError: the real message$/);
+    expect(error.split(/\s/).includes('')).toBe(false);
+  });
+
+  describe('when the server answers complete with an error', () => {
+    // A reverse proxy in front of the real server; `answer` may replace the answer of a complete call.
+    let proxy: Server;
+    let proxyUrl = '';
+    let completeCalls = 0;
+    let answer: (n: number) => { status: number; body: object } | null = () => null;
+    beforeAll(async () => {
+      proxy = createServer((req, res) => {
+        void (async () => {
+          const chunks: Buffer[] = [];
+          for await (const c of req) chunks.push(c as Buffer);
+          if (req.url?.endsWith('/complete')) {
+            const fake = answer(++completeCalls);
+            if (fake) {
+              res.writeHead(fake.status, { 'content-type': 'application/json' }).end(JSON.stringify(fake.body));
+              return;
+            }
+          }
+          const headers = Object.fromEntries(Object.entries(req.headers).filter(([k]) => !['host', 'connection', 'content-length'].includes(k))) as Record<string, string>;
+          const up = await fetch(server.url + req.url, { method: req.method, headers, body: chunks.length ? Buffer.concat(chunks) : undefined });
+          res.writeHead(up.status, { 'content-type': up.headers.get('content-type') ?? 'application/octet-stream' }).end(Buffer.from(await up.arrayBuffer()));
+        })();
+      });
+      await new Promise<void>((r) => proxy.listen(0, '127.0.0.1', r));
+      proxyUrl = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`;
+    });
+    afterAll(() => new Promise((r) => proxy.close(r)));
+    beforeEach(() => {
+      completeCalls = 0;
+    });
+
+    it('hands the transcript in again after 502/503/504 answers, without costing another attempt', async () => {
+      const { report, audio } = await recording();
+      answer = (n) => (n <= 3 ? { status: [502, 503, 504][n - 1]!, body: { message: 'upstream restarting' } } : null);
+      const r = await runWorker(workerHome({ url: proxyUrl }), ['--once'], { TABULA_WORKER_COMPLETE_RETRY_MS: '50' });
+      expect(r.code).toBe(0);
+      expect(r.stdout).toMatch(/HTTP 502; sending the transcript again/);
+      expect(r.stdout).toMatch(/done in/);
+      expect(completeCalls).toBe(4);
+      expect((await reportOf(report.id)).attachments[0].transcript).toMatchObject({ status: 'done' });
+      expect(await jobOf(audio.id)).toMatchObject({ status: 'done', attempts: 1 });
+    });
+
+    it('reports a rejected transcript (4xx) as a permanent failure, without another GPU run', async () => {
+      const { audio } = await recording();
+      answer = () => ({ status: 400, body: { message: 'segments must be in time order' } });
+      const r = await runWorker(workerHome({ url: proxyUrl }), ['--once']);
+      expect(r.stdout).toMatch(/failed: the server refused the transcript: HTTP 400/);
+      expect(r.stdout).not.toMatch(/offer it again/);
+      expect(await jobOf(audio.id)).toMatchObject({ status: 'failed', attempts: 1 });
+      expect(completeCalls).toBe(1);
+      answer = () => null;
+    });
   });
 
   it('gives the job back and stops when the GPU setup is broken', async () => {

@@ -169,6 +169,21 @@ export function shortError(text, max = 300) {
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 }
 
+/** The end of a program's stderr as one line: a traceback or earlier warnings come first, the real message last. */
+export function lastLines(text, max = 300) {
+  const lines = String(text ?? '').split(/\r?\n/).map((l) => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  if (!lines.length) return 'no details';
+  let out = '';
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const next = out ? `${lines[i]} | ${out}` : lines[i];
+    if (next.length > max) break;
+    out = next;
+  }
+  if (out) return out;
+  const last = lines[lines.length - 1];
+  return `…${last.slice(last.length - (max - 1))}`;
+}
+
 /** ffmpeg's complaint about a recording without a sound track (a screen recording without the microphone). */
 export const isNoAudioError = (stderr) => /does not contain any stream|matches no streams/i.test(String(stderr));
 
@@ -1003,6 +1018,11 @@ async function newerVersion(url) {
 // ------------------------------------------------------------------ transcription worker
 
 /** How often a running job's lease is extended. TABULA_WORKER_HEARTBEAT_MS exists for the tests and can only shorten it. */
+/** First wait between attempts to hand in a finished transcript; doubles up to a minute (about 3 minutes in all). */
+const COMPLETE_RETRY_MS = Number(process.env.TABULA_WORKER_COMPLETE_RETRY_MS) || 2000;
+const COMPLETE_ATTEMPTS = 8;
+/** A reverse proxy answers these while the Tabula container restarts. */
+const isProxyOutage = (status) => status === 502 || status === 503 || status === 504;
 const HEARTBEAT_MS = Math.min(60000, Number(process.env.TABULA_WORKER_HEARTBEAT_MS) || 60000);
 /** The server holds a claim open this long when the queue is empty. */
 const CLAIM_WAIT_S = 30;
@@ -1214,8 +1234,8 @@ async function transcribe(cfg, wav, signal) {
     if (e.cannotStart || e instanceof CliError) throw environmentError(`${e.message}: run tabula worker setup`);
     throw e;
   }
-  if (r.code === TRANSCRIBER_ENVIRONMENT_EXIT) throw exitError(shortError(r.stderr), { environment: true });
-  if (r.code !== 0) throw exitError(`transcription failed (exit ${r.code}): ${shortError(r.stderr)}`);
+  if (r.code === TRANSCRIBER_ENVIRONMENT_EXIT) throw exitError(lastLines(r.stderr), { environment: true });
+  if (r.code !== 0) throw exitError(`transcription failed (exit ${r.code}): ${lastLines(r.stderr)}`);
   try {
     return normalizeTranscript(JSON.parse(r.stdout));
   } catch (e) {
@@ -1275,21 +1295,32 @@ export async function runJob(cfg, job, { log, stop }) {
     const wav = join(dir, 'audio.wav');
     const hasAudio = await extractAudio(cfg, input, wav, work.signal);
     const result = hasAudio ? await transcribe(cfg, wav, work.signal) : { language: null, duration_ms: null, segments: [] };
-    // The transcript is the expensive part: a short network outage must not lose it.
+    // The transcript is the expensive part: a restarting server must not lose it. The heartbeat timer keeps running
+    // during these retries (about 3 minutes, the lease lasts 10), so the lease is renewed as soon as the server is back.
     let r;
     for (let attempt = 1; ; attempt++) {
+      let problem;
       try {
         r = await report('complete', { model: cfg.model, ...result });
-        break;
+        if (!isProxyOutage(r.status)) break;
+        problem = `HTTP ${r.status}`;
       } catch (e) {
-        if (!e.unreachable || attempt >= 5) throw e;
-        log(`${tag}: ${shortError(e.message)}; sending the transcript again in ${workerBackoffMs(attempt) / 1000} s`);
-        await sleep(workerBackoffMs(attempt));
+        if (!e.unreachable) throw e;
+        problem = shortError(e.message);
+        if (attempt >= COMPLETE_ATTEMPTS) throw e;
       }
+      if (attempt >= COMPLETE_ATTEMPTS) throw new Error(`the server did not accept the transcript: ${problem}`);
+      const wait = Math.min(60000, COMPLETE_RETRY_MS * 2 ** (attempt - 1));
+      log(`${tag}: ${problem}; sending the transcript again in ${wait / 1000} s`);
+      await sleep(wait);
     }
     if (r.status === 409 || r.status === 404) {
       log(`${tag}: the server no longer expects this job (${shortError(r.data?.message ?? r.status)}); result dropped`);
       return 'lost';
+    }
+    // Another 4xx (the transcript failed validation) cannot succeed on a second run: no more GPU runs for it.
+    if (r.status >= 400 && r.status < 500) {
+      throw Object.assign(new Error(`the server refused the transcript: HTTP ${r.status}${r.data?.message ? ` — ${r.data.message}` : ''}`), { permanent: true });
     }
     if (r.status !== 200) throw new Error(`the server refused the transcript: HTTP ${r.status}${r.data?.message ? ` — ${r.data.message}` : ''}`);
     const took = ((Date.now() - started) / 1000).toFixed(1);
@@ -1305,7 +1336,7 @@ export async function runJob(cfg, job, { log, stop }) {
       return 'lost';
     }
     if (stop.aborted || e.environment) {
-      await report('release', {}).catch(() => {});
+      await report('release', {}).catch((e) => log(`${tag}: could not give the job back (${shortError(e.message)}); its lease will run out`));
       if (stop.aborted) {
         log(`${tag}: stopped; the job went back to the queue`);
         return 'released';
@@ -1315,7 +1346,10 @@ export async function runJob(cfg, job, { log, stop }) {
       return 'environment';
     }
     const message = shortError(e.message);
-    const r = await report('fail', { error: message, permanent: e.permanent === true }).catch(() => null);
+    const r = await report('fail', { error: message, permanent: e.permanent === true }).catch((err) => {
+      log(`${tag}: could not report the failure (${shortError(err.message)}); its lease will run out`);
+      return null;
+    });
     log(`${tag}: failed: ${message}${r?.data?.status === 'queued' ? ' (the server will offer it again later)' : ''}`);
     return 'failed';
   } finally {

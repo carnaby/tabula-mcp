@@ -21,6 +21,14 @@ if (mode === 'fail') {
   process.stderr.write('Traceback: boom\n');
   process.exit(1);
 }
+if (mode === 'noisy') {
+  process.stderr.write(`Warning: ${'x'.repeat(400)}
+Traceback (most recent call last):
+  File "transcribe.py", line 1
+RuntimeError: the real message
+`);
+  process.exit(1);
+}
 if (mode === 'env') {
   process.stderr.write('transcribe.py: CUDA is not available (no NVIDIA GPU or driver found)\n');
   process.exit(3);

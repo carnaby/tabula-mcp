@@ -113,7 +113,7 @@ def transcribe(opts):
         )
         # Segments are produced lazily: the work happens while iterating.
         segments = [{"start_ms": round(s.start * 1000), "end_ms": round(s.end * 1000), "text": s.text.strip()} for s in pieces]
-    except (RuntimeError, OSError, ValueError) as e:
+    except Exception as e:  # also ImportError from a lazily loaded DLL; fail() exits with SystemExit and is not caught here
         fail(exit_code_for(str(e)), f"{type(e).__name__}: {e}")
     print(f"transcribed {len(audio) / 16000:.1f} s of audio in {time.time() - started:.1f} s", file=sys.stderr, flush=True)
     return {"language": info.language, "duration_ms": round(len(audio) / 16), "segments": segments}

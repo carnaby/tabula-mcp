@@ -989,15 +989,40 @@ const HEARTBEAT_MS = Math.min(60000, Number(process.env.TABULA_WORKER_HEARTBEAT_
 /** The server holds a claim open this long when the queue is empty. */
 const CLAIM_WAIT_S = 30;
 const LOG_ROTATE_BYTES = 5 * 1024 * 1024;
-/** How long after ffmpeg or the transcriber failed a Ctrl+C still makes it a release instead of a failure. */
+/** How long after ffmpeg or the transcriber failed a Ctrl+C still makes it a release instead of a failure (see runJob). */
 const STOP_GRACE_MS = 1000;
 
 /** The host name as an HTTP header value (ASCII only); the server lower-cases and checks it. */
 const workerId = () => hostname().replace(/[^\x21-\x7e]/g, '').slice(0, 63) || 'worker';
 
-/** Child programs get the user's environment without Tabula's tokens. */
+/**
+ * Child programs get the user's environment without Tabula's tokens. PYTHONUTF8: Python's stderr reaches the worker as
+ * UTF-8 on Windows too, not in the console's code page.
+ */
 function childEnv() {
-  return Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^TABULA_/i.test(k)));
+  return { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^TABULA_/i.test(k))), PYTHONUTF8: '1' };
+}
+
+/**
+ * End a child and everything it started. On Windows a venv's python.exe (and the py launcher) only starts the real
+ * interpreter as its own child: killing the direct child would leave that one running, holding the GPU's memory and
+ * the output pipes (so `close` would never come). taskkill /T ends the whole tree.
+ */
+function killTree(child) {
+  if (process.platform !== 'win32' || !child.pid) return void child.kill();
+  const tk = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+  tk.on('error', () => child.kill());
+  tk.on('close', (code) => {
+    if (code !== 0) child.kill();
+  });
+}
+
+/** A program that could not be started at all (missing, not executable, a .cmd without a shell): a broken setup. */
+function cannotStart(cmd, e) {
+  const missing = e?.code === 'ENOENT';
+  return Object.assign(new Error(missing ? `${cmd} was not found` : `${cmd} could not be started: ${e?.code ?? e?.message ?? e}`), {
+    missing, cannotStart: true,
+  });
 }
 
 const sleep = (ms, signal) =>
@@ -1013,22 +1038,24 @@ const sleep = (ms, signal) =>
 
 /**
  * Run a program without a shell, so paths with spaces need no quoting. Resolves { code, stdout, stderr } (stderr's
- * last 8 KB); kills it when `signal` aborts or after `timeoutMs`. A missing program rejects with `missing: true`.
+ * last 8 KB); kills it (with what it started) when `signal` aborts or after `timeoutMs`. A program that cannot be
+ * started rejects with `cannotStart: true` (and `missing: true` when it does not exist); a stop with `aborted: true`.
  */
 function runProcess(command, args, { input, signal, timeoutMs = 600000 } = {}) {
   const [cmd, ...pre] = command;
   return new Promise((resolveRun, reject) => {
+    if (signal?.aborted) return reject(Object.assign(new Error('stopped'), { aborted: true }));
     let child;
     try {
       child = spawn(cmd, [...pre, ...args], { env: childEnv(), windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     } catch (e) {
-      reject(e);
+      reject(cannotStart(cmd, e)); // e.g. EINVAL for a .cmd or .bat file, which needs a shell
       return;
     }
     const stdout = [];
     let stderr = '';
     let timedOut = false;
-    const kill = () => child.kill();
+    const kill = () => killTree(child);
     const timer = setTimeout(() => {
       timedOut = true;
       kill();
@@ -1045,7 +1072,7 @@ function runProcess(command, args, { input, signal, timeoutMs = 600000 } = {}) {
     child.stdin.on('error', () => {}); // a program that does not read its input closes the pipe early
     child.on('error', (e) => {
       settle();
-      reject(e.code === 'ENOENT' ? Object.assign(new Error(`${cmd} was not found`), { missing: true }) : e);
+      reject(cannotStart(cmd, e));
     });
     child.on('close', (code) => {
       settle();
@@ -1062,6 +1089,12 @@ function runProcess(command, args, { input, signal, timeoutMs = 600000 } = {}) {
  * a server without the worker API enabled → CliError.
  */
 async function workerFetch(cfg, method, path, body, { timeoutMs = 60000, signal } = {}) {
+  // `signal` cancels only the wait for the answer: once the headers are in, the body is read to the end, so a claimed
+  // job reaches runJob (which releases it) instead of being dropped until its lease runs out.
+  const waiting = new AbortController();
+  const cancel = () => waiting.abort();
+  if (signal?.aborted) cancel();
+  signal?.addEventListener('abort', cancel, { once: true });
   let res;
   try {
     res = await fetch(cfg.url + path, {
@@ -1073,12 +1106,14 @@ async function workerFetch(cfg, method, path, body, { timeoutMs = 60000, signal 
         ...(body !== undefined && { 'content-type': 'application/json' }),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
-      signal: AbortSignal.any([AbortSignal.timeout(timeoutMs), ...(signal ? [signal] : [])]),
+      signal: AbortSignal.any([AbortSignal.timeout(timeoutMs), waiting.signal]),
     });
   } catch (e) {
     if (signal?.aborted) throw Object.assign(new Error('stopped'), { aborted: true });
     const why = e.name === 'TimeoutError' || e.name === 'AbortError' ? 'timed out' : (e.cause?.code ?? e.message);
     throw Object.assign(new Error(`cannot reach ${cfg.url}: ${why}`), { unreachable: true });
+  } finally {
+    signal?.removeEventListener('abort', cancel);
   }
   const data = res.status === 204 ? null : await res.json().catch(() => null);
   if (res.status === 401) {
@@ -1114,10 +1149,13 @@ async function download(cfg, mediaPath, file, signal) {
 }
 
 /**
- * ffmpeg or the transcriber ended with an error by itself (the worker did not kill it). Tagged `exited`: on Windows a
- * Ctrl+C reaches these programs too, and one may exit before the worker sees the signal (see runJob).
+ * ffmpeg or the transcriber ended with an error by itself (the worker did not kill it). Tagged `exited`: a Ctrl+C in
+ * the terminal reaches these programs too (the whole console on Windows, the process group elsewhere), and one may
+ * exit before the worker sees the signal (see runJob).
  */
 const exitError = (message, more) => Object.assign(new Error(message), { exited: true, ...more });
+
+const environmentError = (message) => Object.assign(new Error(message), { environment: true });
 
 /** 16 kHz mono WAV for Whisper; false when the recording has no sound track. */
 async function extractAudio(cfg, input, wav, signal) {
@@ -1129,17 +1167,14 @@ async function extractAudio(cfg, input, wav, signal) {
       { signal, timeoutMs: 1800000 },
     );
   } catch (e) {
-    if (e.missing) {
-      throw Object.assign(new Error('ffmpeg was not found: install it and open a new terminal, or set worker.ffmpeg in config.json'), { environment: true });
-    }
+    if (e.missing) throw environmentError('ffmpeg was not found: install it and open a new terminal, or set worker.ffmpeg in config.json');
+    if (e.cannotStart || e instanceof CliError) throw environmentError(`${e.message}; check worker.ffmpeg in config.json`);
     throw e;
   }
   if (r.code === 0) return true;
   if (isNoAudioError(r.stderr)) return false;
   throw exitError(`ffmpeg could not read the recording: ${shortError(r.stderr)}`);
 }
-
-const environmentError = (message) => Object.assign(new Error(message), { environment: true });
 
 /** One Python process per recording: the model leaves the GPU's memory when the process ends. */
 async function transcribe(cfg, wav, signal) {
@@ -1158,18 +1193,16 @@ async function transcribe(cfg, wav, signal) {
   try {
     r = await runProcess(commandLine(cfg.python, 'python'), [cfg.script], { input: JSON.stringify(options), signal, timeoutMs: 4 * 3600000 });
   } catch (e) {
-    if (e.missing) throw environmentError(`${e.message}: run tabula worker setup`);
+    if (e.cannotStart || e instanceof CliError) throw environmentError(`${e.message}: run tabula worker setup`);
     throw e;
   }
   if (r.code === TRANSCRIBER_ENVIRONMENT_EXIT) throw exitError(shortError(r.stderr), { environment: true });
   if (r.code !== 0) throw exitError(`transcription failed (exit ${r.code}): ${shortError(r.stderr)}`);
-  let parsed;
   try {
-    parsed = JSON.parse(r.stdout);
-  } catch {
-    throw exitError('the transcriber did not print JSON');
+    return normalizeTranscript(JSON.parse(r.stdout));
+  } catch (e) {
+    throw exitError(e instanceof SyntaxError ? 'the transcriber did not print JSON' : e.message);
   }
-  return normalizeTranscript(parsed);
 }
 
 /** Log lines with the local time; with --log they go to worker.log in the data folder instead of the console. */
@@ -1199,6 +1232,7 @@ export async function runJob(cfg, job, { log, stop }) {
   const work = new AbortController();
   const onStop = () => work.abort();
   stop.addEventListener('abort', onStop);
+  if (stop.aborted) work.abort(); // stopped while the claim's answer was read: give the job straight back
   let lost = false;
   const beat = setInterval(() => {
     workerFetch(cfg, 'POST', `/api/worker/jobs/${job.id}/heartbeat`, { lease: job.lease }, { timeoutMs: 30000 })
@@ -1211,8 +1245,13 @@ export async function runJob(cfg, job, { log, stop }) {
       .catch(() => {}); // the lease lasts 10 minutes; a later heartbeat may get through
   }, HEARTBEAT_MS);
   const report = (path, body) => workerFetch(cfg, 'POST', `/api/worker/jobs/${job.id}/${path}`, { lease: job.lease, ...body }, { timeoutMs: 60000 });
-  const dir = mkdtempSync(join(tmpdir(), 'tabula-worker-'));
+  let dir;
   try {
+    try {
+      dir = mkdtempSync(join(tmpdir(), 'tabula-worker-'));
+    } catch (e) {
+      throw environmentError(`cannot create a temporary folder in ${tmpdir()}: ${e.code ?? e.message}`);
+    }
     const input = join(dir, 'recording');
     await download(cfg, job.media_path, input, work.signal);
     const wav = join(dir, 'audio.wav');
@@ -1240,7 +1279,7 @@ export async function runJob(cfg, job, { log, stop }) {
     log(`${tag}: done in ${took} s, ${result.segments.length} segments${audio}${hasAudio ? '' : ' (no sound track)'}`);
     return 'done';
   } catch (e) {
-    // While stopping, whatever ffmpeg or the transcriber exited with gives the attempt back. On Windows Ctrl+C reaches
+    // While stopping, whatever ffmpeg or the transcriber exited with gives the attempt back. A terminal Ctrl+C reaches
     // them as well and one may exit first: a stop that follows the exit within STOP_GRACE_MS still counts.
     if (e.exited && !stop.aborted) await sleep(STOP_GRACE_MS, stop);
     if (lost) {
@@ -1265,7 +1304,7 @@ export async function runJob(cfg, job, { log, stop }) {
     clearInterval(beat);
     stop.removeEventListener('abort', onStop);
     try {
-      rmSync(dir, { recursive: true, force: true });
+      if (dir) rmSync(dir, { recursive: true, force: true });
     } catch {
       // a file still held by a killed process; the system cleans its temp folder
     }
@@ -1274,11 +1313,25 @@ export async function runJob(cfg, job, { log, stop }) {
 
 /** tabula worker [--once] [--log] */
 async function workerRun(flags) {
+  const toFile = flags.has('--log');
+  const log = makeLog(toFile);
+  try {
+    return await workerLoop(flags.has('--once'), log);
+  } catch (e) {
+    // With --log nobody sees the console (Task Scheduler): why the worker stopped belongs in worker.log too.
+    if (toFile) log(e instanceof CliError ? e.message : `unexpected error: ${shortError(e?.message ?? e)}`);
+    throw e;
+  }
+}
+
+async function workerLoop(once, log) {
   const cfg = readWorkerConfig();
   if (!cfg.url) throw new CliError('no server URL: run tabula worker setup <url> (or tabula login <url> first)');
   if (!cfg.token) throw new CliError('no worker token: run tabula worker setup');
-  const once = flags.has('--once');
-  const log = makeLog(flags.has('--log'));
+  // A broken program setting stops the worker before it takes a job, instead of failing every job in the queue.
+  commandLine(cfg.ffmpeg, 'ffmpeg');
+  if (!cfg.python) throw new CliError('no Python environment for transcription: run tabula worker setup');
+  commandLine(cfg.python, 'python');
   const stop = new AbortController();
   const onSignal = () => {
     if (stop.signal.aborted) process.exit(130); // a second Ctrl+C: leave at once

@@ -170,6 +170,36 @@ describe('tabula worker', () => {
     expect(r.stderr).toMatch(/tabula worker setup/);
   });
 
+  it('writes why it stopped to worker.log with --log', async () => {
+    const home = workerHome({ token: TEST_TOKEN });
+    const r = await runWorker(home, ['--once', '--log']);
+    expect(r.code).toBe(1);
+    expect(readFileSync(join(home, 'data', 'worker.log'), 'utf8')).toMatch(/rejected the worker token/);
+  });
+
+  it('refuses a broken program setting before it takes a job', async () => {
+    const { audio } = await recording();
+    const r = await runWorker(workerHome({ ffmpeg: '' }));
+    expect(r.code).toBe(1);
+    expect(r.stderr).toMatch(/worker\.ffmpeg .* must be a program path/);
+    expect(await jobOf(audio.id)).toMatchObject({ status: 'queued', attempts: 0 });
+  });
+
+  it('gives the job back and stops when ffmpeg cannot be started', async () => {
+    const { audio } = await recording();
+    const home = workerHome();
+    // Windows refuses to start a .cmd file without a shell (EINVAL); elsewhere a file without the execute bit (EACCES).
+    const shim = join(oddFolder(home), 'ffmpeg.cmd');
+    writeFileSync(shim, '@echo off\r\n');
+    const config = JSON.parse(readFileSync(join(home, 'config.json'), 'utf8'));
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ ...config, worker: { ...config.worker, ffmpeg: shim } }));
+    const r = await runWorker(home);
+    expect(r.code).toBe(1);
+    expect(r.stdout).toMatch(/could not be started/);
+    expect(r.stdout).toMatch(/tabula worker doctor/);
+    expect(await jobOf(audio.id)).toMatchObject({ status: 'queued', attempts: 0 });
+  });
+
   it('ends --once with an error when the server cannot be reached', async () => {
     const r = await runWorker(workerHome({ url: 'http://127.0.0.1:9' }));
     expect(r.code).toBe(1);
@@ -184,44 +214,99 @@ describe('tabula worker', () => {
 });
 
 describe('a job while the worker stops (Ctrl+C)', () => {
-  /**
-   * A program that notes it ran, then exits with `code`: on Windows Ctrl+C reaches the transcriber and ffmpeg too, so
-   * they may exit (with an error) before the worker sees the signal.
-   */
-  function interruptedProgram(dir: string, code: number) {
+  /** A node script standing in for ffmpeg or the transcriber: reads its input, writes `marker`, then runs `body`. */
+  function program(body: string) {
+    const dir = tempDir('tabula stop é ');
     const marker = join(dir, 'ran');
-    const script = join(dir, 'interrupted.mjs');
+    const script = join(dir, 'program.mjs');
     writeFileSync(
       script,
-      `import { writeFileSync } from 'node:fs';\nfor await (const _ of process.stdin);\nwriteFileSync(${JSON.stringify(marker)}, '');\nprocess.stderr.write('KeyboardInterrupt\\n');\nprocess.exit(${code});\n`,
+      `import { spawn } from 'node:child_process';\nimport { writeFileSync } from 'node:fs';\nconst marker = ${JSON.stringify(marker)};\nfor await (const _ of process.stdin);\n${body}\n`,
     );
     return { script, marker };
   }
 
-  it.each([
-    ['transcriber', 1],
-    ['ffmpeg', 255],
-  ])('gives the job back when the %s exits with an error just before the stop', async (which, code) => {
+  /** Claim the next job and run it in this process with `script` as the transcriber or as ffmpeg. */
+  async function start(which: 'transcriber' | 'ffmpeg', script: string, { stopped = false } = {}) {
     const { audio } = await recording();
     const claim = await fetch(`${server.url}/api/worker/jobs/claim`, {
       method: 'POST', headers: { authorization: `Bearer ${TEST_WORKER_TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify({ wait: 0 }),
     });
     expect(claim.status).toBe(200);
     const job = (await claim.json()) as Job;
-    const { script, marker } = interruptedProgram(tempDir('tabula stop é '), code);
     const cfg = {
       ...cli.WORKER_DEFAULTS, url: server.url, token: TEST_WORKER_TOKEN, python: process.execPath,
       script: which === 'transcriber' ? script : FAKE_TRANSCRIBE,
       ffmpeg: [process.execPath, which === 'ffmpeg' ? script : FAKE_FFMPEG],
     };
     const stop = new AbortController();
+    if (stopped) stop.abort();
     const lines: string[] = [];
     const outcome = cli.runJob(cfg, job, { log: (line) => lines.push(line), stop: stop.signal });
+    return { audio, stop, lines, outcome };
+  }
+
+  async function expectReleased(run: Awaited<ReturnType<typeof start>>) {
+    expect(await run.outcome).toBe('released');
+    expect(run.lines.join('\n')).toMatch(/stopped; the job went back to the queue/);
+    expect(await jobOf(run.audio.id)).toMatchObject({ status: 'queued', attempts: 0, leaseId: null });
+  }
+
+  it.each([
+    ['transcriber', 1],
+    ['ffmpeg', 255],
+  ] as const)('gives the job back when the %s exits with an error just before the stop', async (which, code) => {
+    // A terminal Ctrl+C reaches ffmpeg and the transcriber too: one may exit (with an error) before the worker sees it.
+    const { script, marker } = program(`writeFileSync(marker, '');\nprocess.stderr.write('KeyboardInterrupt\\n');\nprocess.exit(${code});`);
+    const run = await start(which, script);
     await until(async () => existsSync(marker));
     await new Promise((r) => setTimeout(r, 300)); // the program has exited by now
-    stop.abort();
-    expect(await outcome).toBe('released');
-    expect(lines.join('\n')).toMatch(/stopped; the job went back to the queue/);
-    expect(await jobOf(audio.id)).toMatchObject({ status: 'queued', attempts: 0, leaseId: null });
+    run.stop.abort();
+    await expectReleased(run);
+  });
+
+  it('kills the transcriber and gives the job back when the stop comes first', async () => {
+    const { script, marker } = program(`writeFileSync(marker, '');\nsetInterval(() => {}, 1000);`);
+    const run = await start('transcriber', script);
+    await until(async () => existsSync(marker));
+    const stopped = Date.now();
+    run.stop.abort();
+    await expectReleased(run);
+    expect(Date.now() - stopped).toBeLessThan(5000);
+  });
+
+  it('gives a job back that arrived after the stop (Ctrl+C while the claim was answered)', async () => {
+    const { script, marker } = program(`writeFileSync(marker, '');`);
+    const run = await start('transcriber', script, { stopped: true });
+    await expectReleased(run);
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  // A venv's python.exe on Windows starts the real interpreter as its child; that one must end too. detached: node
+  // would otherwise put the child in a job object that ends it together with its parent, which hides the problem.
+  it.runIf(process.platform === 'win32')('kills what the transcriber started, too', async () => {
+    const { script, marker } = program(
+      `const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'inherit', detached: true, windowsHide: true });\nwriteFileSync(marker, String(child.pid));\nsetInterval(() => {}, 1000);`,
+    );
+    const alive = (pid: number) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    let pid = 0;
+    try {
+      const run = await start('transcriber', script);
+      await until(async () => existsSync(marker) && readFileSync(marker, 'utf8') !== '');
+      pid = Number(readFileSync(marker, 'utf8'));
+      expect(alive(pid)).toBe(true);
+      run.stop.abort();
+      await expectReleased(run);
+      await until(async () => !alive(pid), 5000);
+    } finally {
+      if (pid && alive(pid)) process.kill(pid);
+    }
   });
 });

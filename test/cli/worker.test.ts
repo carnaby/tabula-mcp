@@ -310,3 +310,51 @@ describe('a job while the worker stops (Ctrl+C)', () => {
     }
   });
 });
+
+describe('tabula worker doctor and setup', () => {
+  const run = (home: string, args: string[], env: Record<string, string> = {}, input?: string) =>
+    runCli(['worker', ...args], {
+      cwd: home,
+      env: { TABULA_HOME: home, TABULA_DATA_DIR: join(home, 'data'), TABULA_URL: undefined, TABULA_TOKEN: undefined, TABULA_WORKER_TOKEN: undefined, ...env },
+      input,
+    });
+
+  it('doctor passes with a working setup and runs a test transcription', async () => {
+    const r = await run(workerHome(), ['doctor']);
+    expect(r.stdout).toMatch(/^ok\s+.*accepts the worker token; 0 job\(s\) waiting/m);
+    expect(r.stdout).toMatch(/^ok\s+ffmpeg: ffmpeg version 0\.0-fake/m);
+    expect(r.stdout).toMatch(/^ok\s+Python 3\.14\.0, faster-whisper 1\.2\.1, CTranslate2 4\.8\.4/m);
+    expect(r.stdout).toMatch(/^ok\s+CUDA: 1 device\(s\), float16 supported/m);
+    expect(r.stdout).toMatch(/^ok\s+test transcription with large-v3 on cuda: [\d.]+ s/m);
+    expect(r.code).toBe(0);
+  });
+
+  it('doctor names a missing CUDA device and skips the test transcription', async () => {
+    const r = await run(workerHome(), ['doctor'], { FAKE_TRANSCRIBE_CUDA: '0' });
+    expect(r.code).toBe(1);
+    expect(r.stdout).toMatch(/^FAIL\s+CTranslate2 sees no CUDA device/m);
+    expect(r.stdout).toMatch(/^skip\s+test transcription/m);
+  });
+
+  it('doctor says what to do without a Python environment or a token', async () => {
+    const r = await run(workerHome({ python: '', token: '' }), ['doctor']);
+    expect(r.code).toBe(1);
+    expect(r.stdout).toMatch(/^FAIL\s+no server URL or worker token\n\s+run tabula worker setup/m);
+    expect(r.stdout).toMatch(/^FAIL\s+no Python environment for transcription\n\s+run tabula worker setup/m);
+  });
+
+  it('setup checks the worker token before it installs anything', async () => {
+    const home = tempDir('tabula home ');
+    const r = await run(home, ['setup', server.url, '--token-stdin'], {}, TEST_TOKEN);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toMatch(/rejected the worker token/);
+    expect(existsSync(join(home, 'data', 'whisper'))).toBe(false);
+    expect(existsSync(join(home, 'config.json'))).toBe(false);
+  });
+
+  it('setup without a URL explains how to give one', async () => {
+    const r = await run(tempDir('tabula home '), ['setup', '--token-stdin'], {}, TEST_WORKER_TOKEN);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toMatch(/usage: tabula worker setup <url>/);
+  });
+});

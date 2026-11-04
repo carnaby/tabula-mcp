@@ -968,7 +968,25 @@ async function update(conn) {
   writeFileSync(`${self}.tmp`, source);
   renameSync(`${self}.tmp`, self);
   out(m[1] === VERSION ? `tabula ${VERSION} is current; reinstalled it` : `updated tabula ${VERSION} → ${m[1]}`);
+  await refreshTranscriber(conn.url);
   return 0;
+}
+
+/** After an update: a transcribe.py that tabula worker setup put in the data folder is replaced with the server's. */
+async function refreshTranscriber(url) {
+  let script;
+  try {
+    script = resolve(readWorkerConfig().script);
+  } catch {
+    return; // no usable configuration: nothing to refresh
+  }
+  if (!existsSync(script) || !isWithin(script, resolve(dataHome()))) return;
+  try {
+    await fetchTranscriber(url, script, { preferLocal: false });
+    out(`updated ${script}`);
+  } catch (e) {
+    err(`warning: ${script} was not updated: ${e.message}`);
+  }
 }
 
 /** The server's CLI version when it differs from this one; null when equal or unknown. Never throws. */
@@ -1377,8 +1395,186 @@ async function workerLoop(once, log) {
   return 0;
 }
 
+/**
+ * The worker's Python packages, within the versions verified together: faster-whisper, CTranslate2, and CUDA 12's
+ * cuBLAS and cuDNN as wheels (no CUDA toolkit needed).
+ */
+export const WHISPER_PACKAGES = ['faster-whisper>=1.2.1,<2', 'ctranslate2>=4.8.4,<5', 'nvidia-cublas-cu12>=12.9,<13', 'nvidia-cudnn-cu12>=9,<10'];
+
+/** Python 3.9+ to create the environment with: the py launcher first on Windows, python3 elsewhere. */
+function findPython() {
+  const candidates = process.platform === 'win32' ? [['py', '-3'], ['python']] : [['python3'], ['python']];
+  for (const c of candidates) {
+    const r = spawnSync(c[0], [...c.slice(1), '-c', 'import sys; print(sys.version.split()[0])'], {
+      encoding: 'utf8', windowsHide: true, timeout: 30000, env: childEnv(),
+    });
+    const version = r.status === 0 ? r.stdout.trim() : '';
+    const [major, minor] = version.split('.').map(Number);
+    if (major === 3 && minor >= 9) return { command: c, version };
+  }
+  const tried = candidates.map((c) => c.join(' ')).join(', ');
+  throw new CliError(`Python 3.9 or newer was not found (tried ${tried}); install it from python.org (on Windows with the "py" launcher) and run tabula worker setup again`);
+}
+
+/** Run a step of the setup with its output on this console (pip shows its progress). */
+function runVisible(command, args, what) {
+  const r = spawnSync(command[0], [...command.slice(1), ...args], { stdio: 'inherit', windowsHide: true, env: childEnv() });
+  if (r.error) throw new CliError(`${what}: ${r.error.message}`);
+  if (r.status !== 0) throw new CliError(`${what} failed (exit ${r.status}); see the output above`);
+}
+
+/**
+ * cli/transcribe.py into `dest`: copied from next to this file when it is there (a repository checkout) and
+ * `preferLocal`, otherwise downloaded from the server.
+ */
+async function fetchTranscriber(url, dest, { preferLocal = true } = {}) {
+  const sibling = join(dirname(realpathSync(fileURLToPath(import.meta.url))), 'transcribe.py');
+  let source;
+  if (preferLocal && existsSync(sibling)) source = readFileSync(sibling);
+  else {
+    let res;
+    try {
+      res = await fetch(`${url}/cli/transcribe.py`, { signal: AbortSignal.timeout(30000) });
+    } catch (e) {
+      throw new CliError(`cannot reach ${url}: ${e.cause?.code ?? e.message}`);
+    }
+    if (!res.ok) throw new CliError(`downloading transcribe.py failed: HTTP ${res.status}`);
+    source = Buffer.from(await res.arrayBuffer());
+  }
+  mkdirSync(dirname(dest), { recursive: true });
+  writeFileSync(`${dest}.tmp`, source);
+  renameSync(`${dest}.tmp`, dest);
+}
+
+/** tabula worker setup [<url>] [--token-stdin]: token first (nothing is installed with a wrong one), then Python. */
+async function workerSetup(urlArg, flags) {
+  const current = readWorkerConfig();
+  const url = String(urlArg ?? current.url).replace(/\/+$/, '');
+  if (!/^https?:\/\/[^/]+/.test(url)) {
+    throw new CliError('usage: tabula worker setup <url>, e.g. tabula worker setup https://tabula.example.com (or tabula login <url> first)');
+  }
+  let token = current.token;
+  if (!token || flags.has('--token-stdin')) {
+    const fromStdin = flags.has('--token-stdin') || !process.stdin.isTTY;
+    token = (fromStdin ? await readStdin() : await promptHidden('Worker token (TABULA_WORKER_TOKEN of the server): ')).trim();
+  }
+  if (!token) throw new CliError('no worker token given');
+  const check = await workerFetch({ url, token }, 'GET', '/api/worker/ping', undefined, { timeoutMs: 30000 });
+  if (check.status !== 200) throw new CliError(`checking the worker token: HTTP ${check.status}${check.data?.message ? ` — ${check.data.message}` : ''}`);
+  out(`The worker token works on ${url} (${check.data.queued} job(s) waiting).`);
+
+  const whisper = join(dataHome(), 'whisper');
+  const venv = join(whisper, 'venv');
+  const python = venvPython(venv);
+  if (!existsSync(python)) {
+    const found = findPython();
+    out(`Creating the Python environment in ${venv} with Python ${found.version}…`);
+    mkdirSync(whisper, { recursive: true });
+    runVisible(found.command, ['-m', 'venv', venv], 'creating the Python environment');
+  }
+  out(`Installing ${WHISPER_PACKAGES.join(', ')} (several hundred MB the first time)…`);
+  runVisible([python], ['-m', 'pip', 'install', '--upgrade', '--disable-pip-version-check', ...WHISPER_PACKAGES], 'pip install');
+  const script = join(whisper, 'transcribe.py');
+  await fetchTranscriber(url, script);
+
+  const saved = readConfigFile();
+  const previous = saved.worker && typeof saved.worker === 'object' && !Array.isArray(saved.worker) ? saved.worker : {};
+  const worker = { ...WORKER_DEFAULTS, ...previous, url, token, python, script };
+  const file = writeConfigFile({ ...saved, worker });
+  out(`Saved the worker settings in the "worker" section of ${file}:`);
+  out(`  model ${worker.model}, language ${worker.language} ("auto" detects it), device ${worker.device}, compute_type ${worker.compute_type}`);
+  out('  Put the names of your projects and technical words into initial_prompt, so Whisper spells them right.');
+  out('Next: tabula worker doctor (checks ffmpeg, CUDA and the GPU, then transcribes a 5 s sample)');
+  return 0;
+}
+
+/** tabula worker doctor: every link of the chain, with what to do about a broken one. Exit 1 when something fails. */
+async function workerDoctor() {
+  const cfg = readWorkerConfig();
+  let problems = 0;
+  const line = (state, text, hint) => {
+    out(`${state.padEnd(4)}  ${text}`);
+    if (hint && state !== 'ok') out(`      ${hint}`);
+    if (state === 'FAIL') problems++;
+  };
+
+  if (!cfg.url || !cfg.token) line('FAIL', 'no server URL or worker token', 'run tabula worker setup <url>');
+  else {
+    try {
+      const r = await workerFetch(cfg, 'GET', '/api/worker/ping', undefined, { timeoutMs: 15000 });
+      if (r.status === 200) line('ok', `${cfg.url} accepts the worker token; ${r.data.queued} job(s) waiting`);
+      else line('FAIL', `${cfg.url} answered HTTP ${r.status}`, r.data?.message);
+    } catch (e) {
+      line('FAIL', shortError(e.message), e.rejected ? 'run tabula worker setup again with the server\'s TABULA_WORKER_TOKEN' : 'check the URL and the network');
+    }
+  }
+
+  const ffmpeg = commandLine(cfg.ffmpeg, 'ffmpeg');
+  const ff = await runProcess(ffmpeg, ['-version'], { timeoutMs: 15000 }).catch(() => null);
+  if (ff?.code === 0) line('ok', `ffmpeg: ${shortError(ff.stdout.split(/\r?\n/)[0], 80)}`);
+  else {
+    const hint = process.platform === 'win32' ? 'install it (winget install Gyan.FFmpeg) and open a new terminal, or set worker.ffmpeg in config.json' : 'install ffmpeg, or set worker.ffmpeg in config.json';
+    line('FAIL', `ffmpeg (${ffmpeg.join(' ')}) does not run`, hint);
+  }
+
+  let gpuReady = false;
+  if (!cfg.python) line('FAIL', 'no Python environment for transcription', 'run tabula worker setup');
+  else if (!existsSync(cfg.script)) line('FAIL', `transcribe.py is missing at ${cfg.script}`, 'run tabula worker setup');
+  else {
+    const r = await runProcess(commandLine(cfg.python, 'python'), [cfg.script, '--check'], { timeoutMs: 120000 })
+      .catch((e) => ({ code: -1, stdout: '', stderr: e.message }));
+    let info = null;
+    try {
+      info = r.code === 0 ? JSON.parse(r.stdout) : null;
+    } catch {
+      // reported below
+    }
+    if (!info) line('FAIL', `the Python environment does not work: ${shortError(r.stderr)}`, 'run tabula worker setup again');
+    else {
+      line('ok', `Python ${info.python}, faster-whisper ${info.faster_whisper}, CTranslate2 ${info.ctranslate2}`);
+      if (cfg.device !== 'cuda') line('warn', `device is "${cfg.device}", not cuda`, 'the worker is meant for an NVIDIA GPU; large-v3 on a CPU takes hours');
+      if (!info.cuda_devices) {
+        line('FAIL', `CTranslate2 sees no CUDA device${info.cuda_error ? `: ${shortError(info.cuda_error, 160)}` : ''}`, 'install or update the NVIDIA driver (RTX 50xx cards need one with CUDA 12.8 or newer)');
+      } else if (!info.compute_types.includes(cfg.compute_type)) {
+        line('FAIL', `the GPU does not support compute_type ${cfg.compute_type} (it supports ${info.compute_types.join(', ')})`, 'set worker.compute_type in config.json to one of them');
+      } else {
+        line('ok', `CUDA: ${info.cuda_devices} device(s), ${cfg.compute_type} supported`);
+        gpuReady = true;
+      }
+    }
+  }
+
+  const smi = await runProcess(['nvidia-smi'], ['--query-gpu=name,memory.total,driver_version', '--format=csv,noheader'], { timeoutMs: 15000 }).catch(() => null);
+  if (smi?.code === 0) line('ok', `GPU: ${shortError(smi.stdout, 160)}`);
+  else line('warn', 'nvidia-smi does not run', 'it comes with the NVIDIA driver; without the driver CUDA cannot work');
+
+  if (gpuReady && ff?.code === 0) {
+    const dir = mkdtempSync(join(tmpdir(), 'tabula-doctor-'));
+    try {
+      const wav = join(dir, 'sample.wav');
+      const made = await runProcess(
+        ffmpeg,
+        ['-nostdin', '-v', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=5', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', '-y', wav],
+        { timeoutMs: 60000 },
+      );
+      if (made.code !== 0) throw new Error(`ffmpeg could not make the sample: ${shortError(made.stderr)}`);
+      out(`      transcribing a 5 s sample with ${cfg.model} (the first run downloads the model, about 3 GB)…`);
+      const started = Date.now();
+      await transcribe(cfg, wav, new AbortController().signal);
+      line('ok', `test transcription with ${cfg.model} on ${cfg.device}: ${((Date.now() - started) / 1000).toFixed(1)} s`);
+    } catch (e) {
+      line('FAIL', `test transcription: ${shortError(e.message)}`, e.environment ? 'tabula worker setup reinstalls the packages' : undefined);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  } else line('skip', 'test transcription (fix the problems above first)');
+
+  out(problems ? `${problems} problem(s) found.` : 'Everything works: start the worker with tabula worker (or tabula worker --once).');
+  return problems ? 1 : 0;
+}
+
 /** Options of each worker subcommand ("run" is plain tabula worker). */
-const WORKER_FLAGS = { run: ['--once', '--log'] };
+const WORKER_FLAGS = { run: ['--once', '--log'], setup: ['--token-stdin'], doctor: [] };
 
 async function workerCommand(args, flags) {
   const sub = args.length ? args[0] : 'run';
@@ -1387,6 +1583,8 @@ async function workerCommand(args, flags) {
   }
   const unknown = [...flags].find((f) => !WORKER_FLAGS[sub].includes(f));
   if (unknown) throw new CliError(`tabula worker${sub === 'run' ? '' : ` ${sub}`} does not take ${unknown}`);
+  if (sub === 'setup') return workerSetup(args[1], flags);
+  if (sub === 'doctor') return workerDoctor();
   return workerRun(flags);
 }
 
@@ -1415,6 +1613,9 @@ Usage:
   tabula update                        replace this file with the version the server offers
   tabula worker [--once] [--log]       transcribe bug-report recordings until Ctrl+C (--once: what is queued, then exit;
                                        --log: write to worker.log in the data folder instead of the console)
+  tabula worker setup [<url>] [--token-stdin]
+                                       create the Python environment for transcription and save the worker token
+  tabula worker doctor                 check ffmpeg, Python, CUDA and the GPU, then transcribe a 5 s sample
 
 .tabula.json in the repository root: { "project"?: slug, "sync": [globs], "state"?: [globs] }
 Environment: TABULA_URL and TABULA_TOKEN override the saved login; TABULA_HOME (default ~/.tabula).
@@ -1432,7 +1633,7 @@ function fail(e) {
 /** Options each command accepts (pull --hook is handled before this check). */
 const FLAGS = {
   help: [], version: [], login: ['--token-stdin'], status: [], push: ['--force'], pull: ['--force'], rm: [], install: [], update: [],
-  worker: ['--once', '--log'],
+  worker: ['--once', '--log', '--token-stdin'],
 };
 
 export async function main(argv) {

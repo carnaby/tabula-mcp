@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { type AddressInfo, createServer, type Socket } from 'node:net';
 import { dirname, join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -8,7 +8,8 @@ import { CLI, git, makeRepo, readText, runCli, startProxy, tempDir, useServer } 
 const db = useTestDb();
 const server = useServer(db);
 let home: string;
-const env = () => ({ TABULA_HOME: home, TABULA_URL: server.url, TABULA_TOKEN: TEST_TOKEN });
+// TABULA_DATA_DIR keeps `tabula update` away from the real data folder (it refreshes transcribe.py there).
+const env = () => ({ TABULA_HOME: home, TABULA_DATA_DIR: join(home, 'data'), TABULA_URL: server.url, TABULA_TOKEN: TEST_TOKEN });
 const cfg = { project: 'demo', sync: ['docs/**'] };
 
 beforeEach(async () => {
@@ -145,5 +146,21 @@ describe('tabula install, update and the version check', { timeout: 60_000 }, ()
     expect(up.code, up.stderr).toBe(0);
     expect(readFileSync(copy, 'utf8')).toBe(readFileSync(CLI, 'utf8'));
     expect((await runCli(['status'], { cwd: a, env: env(), cli: copy })).stderr).toBe('');
+  });
+
+  it('update also refreshes transcribe.py in the data folder, and leaves a data folder without one alone', async () => {
+    mkdirSync(home, { recursive: true });
+    const copy = join(home, 'tabula.mjs');
+    writeFileSync(copy, readFileSync(CLI, 'utf8'));
+    const a = makeRepo(tempDir('tabula-u2-'), cfg);
+    const script = join(home, 'data', 'whisper', 'transcribe.py');
+    const none = await runCli(['update'], { cwd: a, env: env(), cli: copy });
+    expect(none.code, none.stderr).toBe(0);
+    expect(existsSync(script)).toBe(false);
+    mkdirSync(dirname(script), { recursive: true });
+    writeFileSync(script, '# old\n');
+    const up = await runCli(['update'], { cwd: a, env: env(), cli: copy });
+    expect(up.code, up.stderr).toBe(0);
+    expect(readFileSync(script, 'utf8')).toBe(readFileSync(new URL('../../cli/transcribe.py', import.meta.url), 'utf8'));
   });
 });

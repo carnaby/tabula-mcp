@@ -5,6 +5,9 @@ import type { FastifyInstance } from 'fastify';
 /** From both src/http/ and dist/http/, ../../cli is the repository's cli folder (in Docker: /app/cli). */
 export const CLI_FILE = fileURLToPath(new URL('../../cli/tabula.mjs', import.meta.url));
 
+/** The transcriber that tabula worker setup installs next to its Python environment. */
+export const TRANSCRIBE_FILE = fileURLToPath(new URL('../../cli/transcribe.py', import.meta.url));
+
 /** The single source of the CLI version is its VERSION line, so the served file and /cli/version cannot drift. */
 export function readCliVersion(source: string): string {
   const m = /^export const VERSION = '([^']+)';\r?$/m.exec(source);
@@ -13,7 +16,7 @@ export function readCliVersion(source: string): string {
 }
 
 /** The CLI is public code from the repository, so it is served without the token. */
-export function registerCliRoutes(app: FastifyInstance, file = CLI_FILE): void {
+export function registerCliRoutes(app: FastifyInstance, file = CLI_FILE, transcriber = TRANSCRIBE_FILE): void {
   if (!existsSync(file)) {
     app.log.warn({ file }, 'CLI file not found; /cli is not served');
     return;
@@ -24,4 +27,10 @@ export function registerCliRoutes(app: FastifyInstance, file = CLI_FILE): void {
     reply.type('text/javascript; charset=utf-8').header('cache-control', 'no-cache').send(source),
   );
   app.get('/cli/version', () => ({ version }));
+  if (existsSync(transcriber)) {
+    const script = readFileSync(transcriber, 'utf8');
+    app.get('/cli/transcribe.py', (_req, reply) =>
+      reply.type('text/x-python; charset=utf-8').header('cache-control', 'no-cache').send(script),
+    );
+  }
 }

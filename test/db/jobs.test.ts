@@ -215,6 +215,14 @@ describe('transcription jobs', () => {
     expect(Date.now() - started).toBeLessThan(2000);
   });
 
+  it('does not wait for a claim whose client already hung up', async () => {
+    const gone = new AbortController();
+    gone.abort();
+    const started = Date.now();
+    await jobSignal.wait(5000, gone.signal);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
   it('knows when the worker was last seen and how many recordings of open reports wait', async () => {
     expect(await transcriptionStatus(db)).toEqual({ lastSeenAt: null, workers: [], queued: 0, running: 0, failed: 0 });
     await queued();

@@ -33,6 +33,8 @@ class JobSignal {
 
   /** Resolves on wake(), after `ms`, or when `signal` aborts, whichever comes first. */
   wait(ms: number, signal?: AbortSignal): Promise<void> {
+    // An already aborted signal never fires 'abort' again.
+    if (signal?.aborted) return Promise.resolve();
     return new Promise((resolve) => {
       const done = () => {
         clearTimeout(timer);

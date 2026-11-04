@@ -16,7 +16,7 @@ function seek(media: HTMLMediaElement | null, ms: number) {
 }
 
 function VideoCard({
-  a, frames, worker, onFrame, onTranscript, onDelete,
+  a, frames, worker, onFrame, onTranscript, onDelete, onDeleteFrame,
 }: {
   a: Attachment;
   frames: Attachment[];
@@ -24,22 +24,26 @@ function VideoCard({
   onFrame: (f: Attachment) => void;
   onTranscript: (t: TranscriptState) => void;
   onDelete: () => void;
+  onDeleteFrame: (f: Attachment) => void;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
   const [busy, setBusy] = useState(false);
   const [t, setT] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Derived, so a deleted frame is no longer selected.
+  const selected = frames.find((f) => f.id === selectedId) ?? null;
   const notify = useToast();
   return (
     <figure className="att att--wide">
       {a.url ? (
-        <video ref={ref} className="att__media" src={a.url} controls playsInline preload="metadata" onTimeUpdate={(e) => setT(e.currentTarget.currentTime)} />
+        <video ref={ref} className="att__media" src={a.url} controls playsInline preload="metadata" onTimeUpdate={(e) => setT(e.currentTarget.currentTime)} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} />
       ) : (
         <div className="att__gone"><Icon name="film" /> Video deleted after the report was closed</div>
       )}
       <figcaption className="att__cap">
         <span className="t-truncate">{a.fileName}</span>
         <span className="t-subtle t-nowrap">{a.durationMs !== null ? clock(a.durationMs) : ''} · {formatSize(a.size)}</span>
-        <span className="t-spacer" />
         {a.url && (
           <Button
             size="sm"
@@ -61,30 +65,36 @@ function VideoCard({
             Save frame {clock(t * 1000)}
           </Button>
         )}
+        <span className="t-spacer" />
         <IconButton size="sm" icon="trash" label="Delete video" onClick={onDelete} />
       </figcaption>
       {frames.length > 0 && (
         <div className="att__frames">
           {frames.map((f) => (
-            <button
-              key={f.id}
-              type="button"
-              className="att__frame"
-              title={`Go to ${clock(f.atMs ?? 0)}`}
-              onClick={() => {
-                if (ref.current) {
-                  ref.current.currentTime = (f.atMs ?? 0) / 1000;
-                  ref.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-                } else if (f.url) window.open(f.url, '_blank', 'noopener');
-              }}
-            >
-              {f.url && <img src={f.url} alt={`Frame at ${clock(f.atMs ?? 0)}`} loading="lazy" />}
-              <span>{clock(f.atMs ?? 0)}</span>
-            </button>
+            <div key={f.id} className="att__frame-wrap">
+              <button
+                type="button"
+                className="att__frame"
+                data-selected={f.id === selected?.id || undefined}
+                aria-pressed={f.id === selected?.id}
+                title={`Play from ${clock(f.atMs ?? 0)}`}
+                onClick={() => {
+                  setSelectedId(f.id);
+                  if (ref.current) seek(ref.current, f.atMs ?? 0);
+                  else if (f.url) window.open(f.url, '_blank', 'noopener');
+                }}
+              >
+                {f.url && <img src={f.url} alt={`Frame at ${clock(f.atMs ?? 0)}`} loading="lazy" />}
+                <span>{clock(f.atMs ?? 0)}</span>
+              </button>
+              {f.id === selected?.id && (
+                <IconButton size="sm" variant="danger-solid" className="att__frame-del" icon="trash" label="Delete frame" onClick={() => onDeleteFrame(f)} />
+              )}
+            </div>
           ))}
         </div>
       )}
-      <Transcript a={a} worker={worker} onSeek={a.url ? (ms) => seek(ref.current, ms) : undefined} onChange={onTranscript} />
+      <Transcript a={a} worker={worker} onSeek={a.url ? (ms) => seek(ref.current, ms) : undefined} onChange={onTranscript} currentMs={t * 1000} playing={playing} />
     </figure>
   );
 }
@@ -93,10 +103,12 @@ function AudioCard({
   a, worker, onTranscript, onDelete,
 }: { a: Attachment; worker: WorkerStatus | undefined; onTranscript: (t: TranscriptState) => void; onDelete: () => void }) {
   const ref = useRef<HTMLAudioElement>(null);
+  const [t, setT] = useState(0);
+  const [playing, setPlaying] = useState(false);
   return (
     <figure className="att att--wide">
       {a.url ? (
-        <audio ref={ref} className="att__audio" src={a.url} controls preload="metadata" />
+        <audio ref={ref} className="att__audio" src={a.url} controls preload="metadata" onTimeUpdate={(e) => setT(e.currentTarget.currentTime)} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} />
       ) : (
         <div className="att__gone"><Icon name="mic" /> Voice note deleted after the report was closed</div>
       )}
@@ -107,7 +119,7 @@ function AudioCard({
         <span className="t-spacer" />
         <IconButton size="sm" icon="trash" label="Delete voice note" onClick={onDelete} />
       </figcaption>
-      <Transcript a={a} worker={worker} onSeek={a.url ? (ms) => seek(ref.current, ms) : undefined} onChange={onTranscript} />
+      <Transcript a={a} worker={worker} onSeek={a.url ? (ms) => seek(ref.current, ms) : undefined} onChange={onTranscript} currentMs={t * 1000} playing={playing} />
     </figure>
   );
 }
@@ -165,6 +177,7 @@ export function Attachments({
           onFrame={(f) => onChanged((list) => (list.some((x) => x.id === f.id) ? list : [...list, f]))}
           onTranscript={(t) => setTranscript(v.id, t)}
           onDelete={() => void remove(v)}
+          onDeleteFrame={(f) => void remove(f)}
         />
       ))}
       {audios.map((x) => (

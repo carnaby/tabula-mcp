@@ -514,6 +514,9 @@
 }
 .att__frame img { width: 120px; height: 72px; object-fit: cover; border-radius: var(--radius-sm); border: 1px solid var(--border); }
 .att__frame:hover img { border-color: var(--accent-strong); }
+.att__frame[data-selected] img { border-color: var(--accent-strong); outline: 2px solid var(--accent-strong); outline-offset: -1px; }
+.att__frame-wrap { position: relative; flex: none; }
+.att__frame-del.t-icon-btn { position: absolute; top: 4px; right: 4px; width: 32px; height: 32px; }
 
 .transcript {
   list-style: none;
@@ -525,7 +528,8 @@
   overflow-y: auto;
   font-size: var(--text-sm);
 }
-.transcript__line { display: flex; gap: 10px; align-items: baseline; min-width: 0; }
+.transcript__line { display: flex; gap: 10px; align-items: baseline; min-width: 0; border-radius: var(--radius-sm); }
+.transcript__line[data-active] { background: var(--accent-soft); color: var(--accent-soft-fg); }
 .transcript__text { min-width: 0; overflow-wrap: anywhere; }
 .transcript__time {
   flex: none;

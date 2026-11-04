@@ -36,11 +36,11 @@ type Content = Array<{ type: string; text: string }>;
 const textOf = (r: { content?: unknown }) => (r.content as Content)[0]!.text;
 
 describe('MCP endpoint', () => {
-  it('exposes exactly the twenty-one tools', async () => {
+  it('exposes exactly the twenty-two tools', async () => {
     const client = await connect('/mcp', bearer);
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
-      'create_report', 'delete_file', 'deprecate', 'find_notes', 'find_thoughts', 'get', 'get_frame', 'get_report', 'list_files',
+      'create_report', 'delete_file', 'deprecate', 'find_notes', 'find_thoughts', 'get', 'get_frame', 'get_report', 'get_transcript', 'list_files',
       'list_projects', 'list_reports', 'read_file', 'recall', 'remember', 'save_thought', 'search', 'setup_project',
       'update_report', 'update_thought', 'view_attachment', 'write_file',
     ]);
@@ -55,6 +55,7 @@ describe('MCP endpoint', () => {
     expect(ins).toContain('call setup_project');
     expect(ins).toContain('run `tabula status` before the first `tabula push`');
     expect(ins).toContain('find_notes');
+    expect(ins).toContain('get_transcript');
     expect(ins).toMatch(/`tabula` command is not available.*write_file/s);
     await client.close();
   });

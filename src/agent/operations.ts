@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { AGENT_READ_ONLY, badRequest, forbidden, notFound } from '../domain/errors.js';
 import { getFile, listFiles } from '../domain/files.js';
+import { isRecording, lastWorkerSeen, type TranscriptState, transcriptStates } from '../domain/jobs.js';
 import { createMemory, deprecateMemory, type Memory } from '../domain/memories.js';
 import { findNotes, type Note, type NoteHit } from '../domain/notes.js';
 import { listProjects, type ProjectSummary } from '../domain/projects.js';
@@ -14,8 +15,9 @@ import { signMediaPath } from '../media/sign.js';
 import type { MediaStore } from '../media/store.js';
 import {
   type Attachment, attachmentImage, createReport, frameAt, getReport, listAttachments, pageReports, parseTimestamp,
-  type Report, type ReportStatus, type ReportStatusFilter, updateReport,
+  type Report, requireAttachment, type ReportStatus, type ReportStatusFilter, updateReport,
 } from '../domain/reports.js';
+import { clock, sliceLines, transcriptLines } from '../domain/transcripts.js';
 import { createThought, findThoughts, type Thought, type ThoughtHit, updateThought } from '../domain/thoughts.js';
 import type { MemoryKind } from '../domain/validation.js';
 
@@ -245,6 +247,48 @@ const attachmentForAgent = (a: Attachment, m: AgentMedia) => ({
     : { url: `${m.baseUrl ?? ''}${signMediaPath(m.token, a.id, AGENT_LINK_TTL)}` }),
 });
 
+/** Characters of each transcript shown inside get_report; get_transcript pages through the rest. */
+const REPORT_TRANSCRIPT_CHARS = 6_000;
+/** One part of get_transcript. */
+export const TRANSCRIPT_CHUNK = 50_000;
+
+function ago(d: Date, now = Date.now()): string {
+  const min = Math.max(0, Math.round((now - d.getTime()) / 60_000));
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min} min ago`;
+  const h = Math.round(min / 60);
+  return h < 48 ? `${h} h ago` : `${Math.round(h / 24)} days ago`;
+}
+
+/** Why a recording has no transcript (yet), in words an agent can pass on. */
+function pendingText(s: TranscriptState | undefined, lastSeen: Date | null): string {
+  if (!s || s.status === 'none') {
+    return 'it was not queued for transcription (a video without sound, or uploaded before the worker existed); the user can start it with "Transcribe" in the Tabula app';
+  }
+  if (s.status === 'running') return 'it is being transcribed right now; ask again in a minute';
+  if (s.status === 'failed') return `the transcription failed (${s.error ?? 'unknown error'}); the user can retry it in the Tabula app`;
+  const seen = lastSeen ? `last seen ${ago(lastSeen)}` : 'it has never connected';
+  return `waiting for the transcription worker (${seen}); the user starts it on their PC with \`tabula worker --once\``;
+}
+
+function transcriptForAgent(a: Attachment, s: TranscriptState | undefined, lastSeen: Date | null) {
+  if (!isRecording(a)) return {};
+  if (s?.status !== 'done') return { transcript: { status: s?.status ?? 'none', note: pendingText(s, lastSeen) } };
+  const lines = transcriptLines(s.segments);
+  if (!lines) return { transcript: { status: 'done', language: s.language, text: '', note: 'no speech in the recording' } };
+  const part = sliceLines(lines, 0, REPORT_TRANSCRIPT_CHARS);
+  return {
+    transcript: {
+      status: 'done',
+      language: s.language,
+      text: part.text,
+      ...(part.next !== null
+        ? { more: `the transcript continues (${lines.length} characters): call get_transcript with attachment_id "${a.id}" and offset ${part.next}` }
+        : {}),
+    },
+  };
+}
+
 const reportForAgent = (r: Report) => ({
   id: r.id,
   project: r.projectId,
@@ -285,7 +329,13 @@ export async function agentGetReport(ctx: AgentContext, id: string) {
   const m = requireMedia(ctx);
   const r = await requireReportRef(ctx, id);
   const files = await listAttachments(ctx.db, r.id);
-  return { ...reportForAgent(r), attachments: files.map((a) => attachmentForAgent(a, m)) };
+  const states = await transcriptStates(ctx.db, files.filter(isRecording).map((a) => a.id));
+  const waiting = files.some((a) => isRecording(a) && states.get(a.id)?.status !== 'done');
+  const lastSeen = waiting ? await lastWorkerSeen(ctx.db) : null;
+  return {
+    ...reportForAgent(r),
+    attachments: files.map((a) => ({ ...attachmentForAgent(a, m), ...transcriptForAgent(a, states.get(a.id), lastSeen) })),
+  };
 }
 
 export async function agentCreateReport(ctx: AgentContext, input: { project: string; title: string; description?: string }) {
@@ -338,4 +388,25 @@ async function resolveAttachmentId(ctx: AgentContext, raw: string): Promise<stri
   if (list.length === 0) throw notFound(`no attachment matches "${raw}"`);
   if (list.length > 1) throw badRequest(`attachment id "${raw}" is ambiguous; pass more characters`);
   return list[0]!.id;
+}
+
+/** The whole transcript of a recording, in parts of TRANSCRIPT_CHUNK characters cut at line breaks. */
+export async function agentGetTranscript(ctx: AgentContext, input: { attachment_id: string; offset?: number }): Promise<string> {
+  const id = await resolveAttachmentId(ctx, input.attachment_id);
+  const a = await requireAttachment(ctx.db, id);
+  if (!isRecording(a)) throw badRequest(`attachment ${id} is ${a.kind === 'image' ? 'a photo' : 'a frame'}; only video and audio are transcribed`);
+  const s = (await transcriptStates(ctx.db, [id])).get(id);
+  if (s?.status !== 'done') throw notFound(`attachment ${id} has no transcript yet: ${pendingText(s, await lastWorkerSeen(ctx.db))}`);
+  const lines = transcriptLines(s.segments);
+  const offset = Math.max(0, Math.trunc(input.offset ?? 0));
+  if (offset > 0 && offset >= lines.length) return `[offset ${offset} is past the end of the transcript (${lines.length} characters)]`;
+  const part = sliceLines(lines, offset, TRANSCRIPT_CHUNK);
+  const head = [
+    `transcript of ${a.fileName}`,
+    ...(a.durationMs !== null ? [clock(a.durationMs)] : []),
+    s.language ?? 'language unknown',
+    `${lines.length} characters${offset ? ` · from character ${offset}` : ''}`,
+  ].join(' · ');
+  const footer = part.next !== null ? [`[… part ends at character ${part.next} of ${lines.length} — call get_transcript again with offset: ${part.next}]`] : [];
+  return [`[${head}]`, part.text || '(no speech in the recording)', ...footer].join('\n');
 }

@@ -14,7 +14,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const VERSION = '1.1.0';
+export const VERSION = '1.2.0';
 /** 1 MiB, the server's limit for one file. */
 export const MAX_BYTES = 1048576;
 export const DEFAULT_STATE = ['docs/handoff/*.md', '**/docs/handoff/*.md'];
@@ -145,25 +145,113 @@ export function parseArgs(argv) {
   return { cmd: args.shift(), args, flags };
 }
 
+/** transcribe.py exits with this when the GPU setup is unusable: the job goes back to the queue and the worker stops. */
+export const TRANSCRIBER_ENVIRONMENT_EXIT = 3;
+
+/** "0:05", "2:41", "1:02:03" (the server and the UI write times the same way). */
+export function formatClock(ms) {
+  const s = Math.floor(Math.max(0, ms) / 1000);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = String(s % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
+}
+
+/** Wait before reconnecting after the n-th failure in a row: 2 s, 4 s, 8 s … at most a minute. */
+export const workerBackoffMs = (failures) => Math.min(60000, 2000 * 2 ** Math.max(0, failures - 1));
+
+/** One line of at most `max` characters, for the log and the job's error. */
+export function shortError(text, max = 300) {
+  const line = String(text ?? '').replace(/\s+/g, ' ').trim();
+  if (!line) return 'no details';
+  return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+}
+
+/** ffmpeg's complaint about a recording without a sound track (a screen recording without the microphone). */
+export const isNoAudioError = (stderr) => /does not contain any stream|matches no streams/i.test(String(stderr));
+
+/** What transcribe.py printed, as the server expects it: whole milliseconds, one-line texts, no empty ones, in time order. */
+export function normalizeTranscript(raw) {
+  if (!raw || typeof raw !== 'object' || !Array.isArray(raw.segments)) throw new CliError('the transcriber printed no segments');
+  const segments = [];
+  for (const s of raw.segments) {
+    const start = Math.max(0, Math.round(Number(s?.start_ms)));
+    const end = Math.max(start, Math.round(Number(s?.end_ms)));
+    const text = String(s?.text ?? '').replace(/\s+/g, ' ').trim();
+    if (Number.isFinite(start) && Number.isFinite(end) && text) segments.push({ start_ms: start, end_ms: end, text });
+  }
+  segments.sort((a, b) => a.start_ms - b.start_ms);
+  const duration = Math.round(Number(raw.duration_ms));
+  return {
+    language: typeof raw.language === 'string' && raw.language ? raw.language : null,
+    duration_ms: Number.isFinite(duration) && duration > 0 ? duration : null,
+    segments,
+  };
+}
+
 // ------------------------------------------------------------------ configuration and repository
 
 export const tabulaHome = () => process.env.TABULA_HOME || join(homedir(), '.tabula');
 
+const configFile = () => join(tabulaHome(), 'config.json');
+
+/** ~/.tabula/config.json as an object; {} when it does not exist. */
+function readConfigFile() {
+  const file = configFile();
+  if (!existsSync(file)) return {};
+  let data;
+  try {
+    data = JSON.parse(readFileSync(file, 'utf8'));
+  } catch {
+    throw new CliError(`${file} is not valid JSON; run tabula login <url> again`);
+  }
+  return data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+}
+
+/**
+ * Replace config.json. It holds tokens: a fresh file created with 0600 and renamed over the old one is never readable
+ * by others, not even for a moment when an older config.json had wider permissions (writeFileSync's mode applies only
+ * to new files). Windows ignores the mode; the user profile folder is private already.
+ */
+function writeConfigFile(data) {
+  mkdirSync(tabulaHome(), { recursive: true, mode: 0o700 });
+  const file = configFile();
+  const tmp = `${file}.${process.pid}.tmp`;
+  rmSync(tmp, { force: true });
+  writeFileSync(tmp, `${JSON.stringify(data, null, 2)}
+`, { mode: 0o600, flag: 'wx' });
+  renameSync(tmp, file);
+  return file;
+}
+
 /** Server URL and token; the environment wins over ~/.tabula/config.json. Missing values are ''. */
 function readConnection() {
-  const file = join(tabulaHome(), 'config.json');
-  let saved = {};
-  if (existsSync(file)) {
-    try {
-      saved = JSON.parse(readFileSync(file, 'utf8'));
-    } catch {
-      throw new CliError(`${file} is not valid JSON; run tabula login <url> again`);
-    }
-  }
+  const saved = readConfigFile();
   return {
     url: String(process.env.TABULA_URL || saved.url || '').replace(/\/+$/, ''),
     token: String(process.env.TABULA_TOKEN || saved.token || ''),
   };
+}
+
+/**
+ * Where the worker keeps its Python environment and log: %LOCALAPPDATA%\tabula on Windows, $XDG_DATA_HOME/tabula
+ * (~/.local/share/tabula) elsewhere. TABULA_DATA_DIR overrides it.
+ */
+export function dataHome(env = process.env, platform = process.platform, home = homedir()) {
+  if (env.TABULA_DATA_DIR) return env.TABULA_DATA_DIR;
+  if (platform === 'win32') return join(env.LOCALAPPDATA || join(home, 'AppData', 'Local'), 'tabula');
+  return join(env.XDG_DATA_HOME || join(home, '.local', 'share'), 'tabula');
+}
+
+/** The Python inside a virtual environment. */
+export const venvPython = (venv, platform = process.platform) =>
+  platform === 'win32' ? join(venv, 'Scripts', 'python.exe') : join(venv, 'bin', 'python');
+
+/** A program from the worker settings: a path, or a list ["program", "first argument", …] (e.g. a script run by node). */
+export function commandLine(value, what) {
+  if (typeof value === 'string' && value) return [value];
+  if (Array.isArray(value) && value.length && value.every((v) => typeof v === 'string' && v)) return [...value];
+  throw new CliError(`worker.${what} in ${configFile()} must be a program path or a list of strings`);
 }
 
 function requireConnection(conn) {
@@ -769,16 +857,14 @@ async function login(args, flags) {
   const token = (fromStdin ? await readStdin() : await promptHidden('Tabula token: ')).trim();
   if (!token) throw new CliError('no token given');
   ok(await makeApi({ url, token })('GET', '/api/projects'), 'checking the token');
-  const home = tabulaHome();
-  mkdirSync(home, { recursive: true, mode: 0o700 });
-  const file = join(home, 'config.json');
-  // A fresh file created with 0600 and renamed over the old one: the token is never readable by others, not even
-  // for a moment when an older config.json had wider permissions (writeFileSync's mode applies only to new files).
-  const tmp = `${file}.${process.pid}.tmp`;
-  rmSync(tmp, { force: true });
-  // Windows ignores the mode; the user profile folder is private already.
-  writeFileSync(tmp, `${JSON.stringify({ url, token }, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
-  renameSync(tmp, file);
+  let saved = {};
+  try {
+    saved = readConfigFile();
+  } catch {
+    // a config.json that is not valid JSON is replaced
+  }
+  // Other sections (the transcription worker's settings) stay as they are.
+  const file = writeConfigFile({ ...saved, url, token });
   out(`Logged in to ${url}. Saved ${file}`);
   return 0;
 }

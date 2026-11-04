@@ -520,7 +520,9 @@
 .att__frame-note .t-icon { width: 11px; height: 11px; }
 .att__note { position: relative; padding: 0 10px 10px; }
 .att__note .t-textarea { width: 100%; min-height: 0; font-size: var(--text-sm); resize: vertical; }
-.att__note-state { position: absolute; right: 18px; bottom: 16px; font-size: 12px; pointer-events: none; }
+/* A non-breaking space keeps the line's height so the textarea does not jump. */
+.att__note-state { display: block; min-height: 1.2em; margin-bottom: 2px; font-size: 12px; }
+.att__note-text { flex-basis: 100%; white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--text-sm); color: var(--text-muted); }
 .att__frame-del.t-icon-btn { position: absolute; top: 4px; right: 4px; width: 32px; height: 32px; }
 
 .transcript {

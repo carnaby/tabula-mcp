@@ -21,32 +21,50 @@ const NOTE_MAX = 2000;
 /** The user's note on a saved frame: saved on blur and on Ctrl/Cmd+Enter, when it changed. */
 function FrameNote({ frame, onSaved }: { frame: Attachment; onSaved: (f: Attachment) => void }) {
   const notify = useToast();
-  const saved = frame.note ?? '';
-  const [draft, setDraft] = useState(saved);
+  const [draft, setDraft] = useState(frame.note ?? '');
   const [state, setState] = useState<'idle' | 'saving' | 'saved'>('idle');
   const latest = useRef(draft);
   latest.current = draft;
+  // The last value known to be on the server, and whether a save is under way (with a change waiting behind it).
+  const savedRef = useRef(frame.note ?? '');
+  const inFlight = useRef(false);
+  const pending = useRef(false);
   useEffect(() => {
     if (state !== 'saved') return;
     const h = window.setTimeout(() => setState('idle'), 2000);
     return () => window.clearTimeout(h);
   }, [state]);
-  const save = async () => {
-    const text = latest.current.trim();
-    if (text === saved || state === 'saving') return;
+  const save = async (): Promise<void> => {
+    if (inFlight.current) {
+      pending.current = true;
+      return;
+    }
+    const sent = latest.current.trim();
+    if (sent === savedRef.current) return;
+    inFlight.current = true;
     setState('saving');
     try {
-      const f = await api.setFrameNote(frame.id, text || null);
+      const f = await api.setFrameNote(frame.id, sent || null);
+      savedRef.current = f.note ?? '';
       onSaved({ ...frame, note: f.note });
-      setDraft(f.note ?? '');
+      // Text typed while the request was under way stays.
+      if (latest.current.trim() === sent) setDraft(f.note ?? '');
       setState('saved');
     } catch (e) {
       setState('idle');
+      pending.current = false;
       notify((e as Error).message, { tone: 'danger' });
+    } finally {
+      inFlight.current = false;
+    }
+    if (pending.current) {
+      pending.current = false;
+      await save();
     }
   };
   return (
     <div className="att__note">
+      <span className="att__note-state t-subtle" role="status">{state === 'saving' ? 'Saving…' : state === 'saved' ? 'Saved' : ' '}</span>
       <Textarea
         rows={2}
         maxLength={NOTE_MAX}
@@ -62,8 +80,7 @@ function FrameNote({ frame, onSaved }: { frame: Attachment; onSaved: (f: Attachm
           }
         }}
       />
-      <span className="att__note-state t-subtle" role="status">{state === 'saving' ? 'Saving…' : state === 'saved' ? 'Saved' : ''}</span>
-    </div>
+          </div>
   );
 }
 
@@ -256,6 +273,7 @@ export function Attachments({
                 {a.kind === 'frame' && <Badge tone="accent" icon="aperture">{clock(a.atMs ?? 0)}</Badge>}
                 {a.createdBy !== 'human' && <Badge icon="bot">{a.createdBy}</Badge>}
                 <span className="t-truncate t-subtle">{a.fileName}</span>
+                {a.kind === 'frame' && a.note && <span className="att__note-text">{a.note}</span>}
                 <span className="t-spacer" />
                 <IconButton size="sm" icon="trash" label="Delete" onClick={() => void remove(a)} />
               </figcaption>

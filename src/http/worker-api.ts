@@ -68,23 +68,39 @@ export const workerRoutes: FastifyPluginAsync<{ db: Db; config: Config }> = asyn
   app.get('/ping', async () => ({ ok: true, queued: await queuedCount(db) }));
 
   app.post('/jobs/claim', async (req, reply) => {
-    const { wait } = parse(z.object({ wait: z.number().int().min(0).max(MAX_CLAIM_WAIT_S).default(MAX_CLAIM_WAIT_S) }), req.body);
+    const { wait } = parse(z.object({ wait: z.number().int().min(0).max(MAX_CLAIM_WAIT_S).default(MAX_CLAIM_WAIT_S) }), req.body ?? {});
     const name = workerName(req.headers['x-tabula-worker']);
     const deadline = Date.now() + wait * 1000;
-    // The worker hung up (stopped, or its network went away): stop waiting for it.
-    const gone = new AbortController();
-    reply.raw.on('close', () => gone.abort());
-    if (req.raw.socket?.destroyed) gone.abort();
-    const stop = AbortSignal.any([gone.signal, closing.signal]);
-    for (;;) {
-      // Checked before every claim: a job taken for a worker that is gone would cost an attempt and wait out the lease.
-      if (stop.aborted) return reply.code(204).send();
-      const claimed = await claimJob(db, name);
-      if (claimed) return jobView(claimed, config.token);
-      const left = deadline - Date.now();
-      if (left <= 0) return reply.code(204).send();
-      // Woken at once by a new job; every 5 s anyway, for jobs whose back-off or lease ran out meanwhile.
-      await jobSignal.wait(Math.min(left, 5000), stop);
+    // Waiting ends when the worker hangs up (stopped, or its network went away) or the server shuts down.
+    const stop = new AbortController();
+    let gone = req.raw.socket?.destroyed === true;
+    const hangUp = () => {
+      gone = true;
+      stop.abort();
+    };
+    const shutDown = () => stop.abort();
+    reply.raw.on('close', hangUp);
+    closing.signal.addEventListener('abort', shutDown, { once: true });
+    if (gone || closing.signal.aborted) stop.abort();
+    try {
+      for (;;) {
+        // Checked before every claim: a job taken for a worker that is gone would cost an attempt and wait out the lease.
+        if (stop.signal.aborted) return reply.code(204).send();
+        const claimed = await claimJob(db, name);
+        if (claimed) {
+          if (!gone) return jobView(claimed, config.token);
+          // The worker hung up while the claim ran: give the job and its attempt back instead of sending it to nobody.
+          await releaseJob(db, claimed.job.id, claimed.job.leaseId!);
+          return reply.code(204).send();
+        }
+        const left = deadline - Date.now();
+        if (left <= 0) return reply.code(204).send();
+        // Woken at once by a new job; every 5 s anyway, for jobs whose back-off or lease ran out meanwhile.
+        await jobSignal.wait(Math.min(left, 5000), stop.signal);
+      }
+    } finally {
+      closing.signal.removeEventListener('abort', shutDown);
+      reply.raw.off('close', hangUp);
     }
   });
 

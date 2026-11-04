@@ -1,7 +1,7 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { reportJobs } from '../../src/db/schema.js';
@@ -144,6 +144,70 @@ describe('worker API', () => {
     } finally {
       await live.close();
     }
+  });
+
+  it('gives the attempt back when the worker hangs up while its job is being claimed', async () => {
+    const { live, longPoll } = await listening();
+    let unlock!: () => void;
+    let locking: Promise<void> | undefined;
+    try {
+      const { audio } = await recordedReport();
+      // Holds the claim inside claimJob (its lease sweep waits for this lock) while the worker hangs up.
+      let locked!: () => void;
+      const isLocked = new Promise<void>((r) => (locked = r));
+      locking = db.transaction(async (tx) => {
+        await tx.execute(sql`LOCK TABLE report_jobs IN SHARE MODE`);
+        locked();
+        await new Promise<void>((r) => (unlock = r));
+      });
+      await isLocked;
+      const hangUp = new AbortController();
+      const pending = longPoll(0, hangUp.signal).catch(() => null);
+      await sleep(300);
+      hangUp.abort();
+      await pending;
+      await sleep(300);
+      unlock();
+      await locking;
+      await sleep(300);
+      const [job] = await db.select().from(reportJobs).where(eq(reportJobs.attachmentId, audio.id));
+      expect(job).toMatchObject({ status: 'queued', attempts: 0, leaseId: null });
+    } finally {
+      unlock?.();
+      await locking;
+      await live.close();
+    }
+  });
+
+  it('accepts a claim without a body', async () => {
+    const { audio } = await recordedReport();
+    const res = await app.inject({ method: 'POST', url: '/api/worker/jobs/claim', headers: worker });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().attachment.id).toBe(audio.id);
+  });
+
+  it('keeps transcript text out of the log when storing it fails', async () => {
+    const lines: string[] = [];
+    const logged = await buildApp({ config, db, logStream: { write: (msg) => void lines.push(msg) } });
+    await recordedReport();
+    const job = await claim();
+    // A real query error from the transcript insert: Postgres refuses every new row.
+    await db.execute(sql`ALTER TABLE report_transcripts ADD CONSTRAINT refuse_all CHECK (false) NOT VALID`);
+    try {
+      const res = await logged.inject({
+        method: 'POST', url: `/api/worker/jobs/${job.id}/complete`, headers: worker,
+        payload: { lease: job.lease, language: 'sk', model: 'large-v3', duration_ms: null, segments: [{ start_ms: 0, end_ms: 900, text: 'Tajné slovo v prepise' }] },
+      });
+      expect(res.statusCode).toBe(500);
+      expect(res.body).not.toContain('Tajné');
+    } finally {
+      await db.execute(sql`ALTER TABLE report_transcripts DROP CONSTRAINT refuse_all`);
+      await logged.close();
+    }
+    const log = lines.join('');
+    expect(log).toContain('Failed query');
+    expect(log).toContain('refuse_all');
+    expect(log).not.toContain('Tajn');
   });
 
   it('answers waiting claims with "no job" at once when the server shuts down', async () => {

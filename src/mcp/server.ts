@@ -7,7 +7,7 @@ import {
   type AgentFileRead,
 } from '../agent/operations.js';
 import { REPORT_STATUSES } from '../domain/reports.js';
-import { badRequest, DomainError } from '../domain/errors.js';
+import { badRequest, DomainError, loggableError } from '../domain/errors.js';
 import { createProject } from '../domain/projects.js';
 import { MEMORY_KINDS, validateProjectSlug } from '../domain/validation.js';
 import { TOOL_DESCRIPTIONS as D } from './descriptions.js';
@@ -66,10 +66,10 @@ async function runTool(log: McpLogger | undefined, fn: () => Promise<unknown>) {
     return { content: [{ type: 'text' as const, text }] };
   } catch (e) {
     if (e instanceof DomainError) {
-      if (e.cause) log?.error({ err: e.cause, msg: e.message });
+      if (e.cause) log?.error({ err: loggableError(e.cause), msg: e.message });
       return { content: [{ type: 'text' as const, text: `${e.status}: ${e.message}` }], isError: true };
     }
-    log?.error(e);
+    log?.error(loggableError(e));
     return { content: [{ type: 'text' as const, text: '500: internal error in Tabula; retry later' }], isError: true };
   }
 }

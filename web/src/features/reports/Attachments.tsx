@@ -1,8 +1,8 @@
-import { type Dispatch, type SetStateAction, useRef, useState } from 'react';
+import { type Dispatch, type SetStateAction, useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../api';
 import { formatSize } from '../../format';
 import type { Attachment, TranscriptState, WorkerStatus } from '../../types';
-import { Badge, Button, Icon, IconButton, useConfirm, useToast } from '../../ui';
+import { Badge, Button, Icon, IconButton, Textarea, useConfirm, useToast } from '../../ui';
 import { clock } from './Recorder';
 import { Transcript } from './Transcript';
 import type { Upload } from './uploads';
@@ -12,11 +12,63 @@ function seek(media: HTMLMediaElement | null, ms: number) {
   if (!media) return;
   media.currentTime = ms / 1000;
   void media.play().catch(() => {});
-  media.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  media.scrollIntoView({ block: 'nearest', behavior: reduce ? 'auto' : 'smooth' });
+}
+
+const NOTE_MAX = 2000;
+
+/** The user's note on a saved frame: saved on blur and on Ctrl/Cmd+Enter, when it changed. */
+function FrameNote({ frame, onSaved }: { frame: Attachment; onSaved: (f: Attachment) => void }) {
+  const notify = useToast();
+  const saved = frame.note ?? '';
+  const [draft, setDraft] = useState(saved);
+  const [state, setState] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const latest = useRef(draft);
+  latest.current = draft;
+  useEffect(() => {
+    if (state !== 'saved') return;
+    const h = window.setTimeout(() => setState('idle'), 2000);
+    return () => window.clearTimeout(h);
+  }, [state]);
+  const save = async () => {
+    const text = latest.current.trim();
+    if (text === saved || state === 'saving') return;
+    setState('saving');
+    try {
+      const f = await api.setFrameNote(frame.id, text || null);
+      onSaved({ ...frame, note: f.note });
+      setDraft(f.note ?? '');
+      setState('saved');
+    } catch (e) {
+      setState('idle');
+      notify((e as Error).message, { tone: 'danger' });
+    }
+  };
+  return (
+    <div className="att__note">
+      <Textarea
+        rows={2}
+        maxLength={NOTE_MAX}
+        value={draft}
+        placeholder={`Note — what the video doesn't say (frame at ${clock(frame.atMs ?? 0)})`}
+        aria-label={`Note on the frame at ${clock(frame.atMs ?? 0)}`}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => void save()}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            void save();
+          }
+        }}
+      />
+      <span className="att__note-state t-subtle" role="status">{state === 'saving' ? 'Saving…' : state === 'saved' ? 'Saved' : ''}</span>
+    </div>
+  );
 }
 
 function VideoCard({
-  a, frames, worker, onFrame, onTranscript, onDelete, onDeleteFrame,
+  a, frames, worker, onFrame, onTranscript, onDelete, onDeleteFrame, onNote,
 }: {
   a: Attachment;
   frames: Attachment[];
@@ -25,6 +77,7 @@ function VideoCard({
   onTranscript: (t: TranscriptState) => void;
   onDelete: () => void;
   onDeleteFrame: (f: Attachment) => void;
+  onNote: (f: Attachment) => void;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
   const [busy, setBusy] = useState(false);
@@ -34,6 +87,7 @@ function VideoCard({
   // Derived, so a deleted frame is no longer selected.
   const selected = frames.find((f) => f.id === selectedId) ?? null;
   const notify = useToast();
+  const onSeek = useCallback((ms: number) => seek(ref.current, ms), []);
   return (
     <figure className="att att--wide">
       {a.url ? (
@@ -87,6 +141,7 @@ function VideoCard({
                 {f.url && <img src={f.url} alt={`Frame at ${clock(f.atMs ?? 0)}`} loading="lazy" />}
                 <span>{clock(f.atMs ?? 0)}</span>
               </button>
+              {f.note && <span className="att__frame-note" title="Has a note" role="img" aria-label="Has a note"><Icon name="pencil" /></span>}
               {f.id === selected?.id && (
                 <IconButton size="sm" variant="danger-solid" className="att__frame-del" icon="trash" label="Delete frame" onClick={() => onDeleteFrame(f)} />
               )}
@@ -94,7 +149,8 @@ function VideoCard({
           ))}
         </div>
       )}
-      <Transcript a={a} worker={worker} onSeek={a.url ? (ms) => seek(ref.current, ms) : undefined} onChange={onTranscript} currentMs={t * 1000} playing={playing} />
+      {selected && <FrameNote key={selected.id} frame={selected} onSaved={onNote} />}
+      <Transcript a={a} worker={worker} onSeek={a.url ? onSeek : undefined} onChange={onTranscript} currentMs={t * 1000} playing={playing} />
     </figure>
   );
 }
@@ -105,6 +161,7 @@ function AudioCard({
   const ref = useRef<HTMLAudioElement>(null);
   const [t, setT] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const onSeek = useCallback((ms: number) => seek(ref.current, ms), []);
   return (
     <figure className="att att--wide">
       {a.url ? (
@@ -119,7 +176,7 @@ function AudioCard({
         <span className="t-spacer" />
         <IconButton size="sm" icon="trash" label="Delete voice note" onClick={onDelete} />
       </figcaption>
-      <Transcript a={a} worker={worker} onSeek={a.url ? (ms) => seek(ref.current, ms) : undefined} onChange={onTranscript} currentMs={t * 1000} playing={playing} />
+      <Transcript a={a} worker={worker} onSeek={a.url ? onSeek : undefined} onChange={onTranscript} currentMs={t * 1000} playing={playing} />
     </figure>
   );
 }
@@ -178,6 +235,7 @@ export function Attachments({
           onTranscript={(t) => setTranscript(v.id, t)}
           onDelete={() => void remove(v)}
           onDeleteFrame={(f) => void remove(f)}
+          onNote={(f) => onChanged((list) => list.map((x) => (x.id === f.id ? { ...x, note: f.note } : x)))}
         />
       ))}
       {audios.map((x) => (

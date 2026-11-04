@@ -516,6 +516,11 @@
 .att__frame:hover img { border-color: var(--accent-strong); }
 .att__frame[data-selected] img { border-color: var(--accent-strong); outline: 2px solid var(--accent-strong); outline-offset: -1px; }
 .att__frame-wrap { position: relative; flex: none; }
+.att__frame-note { position: absolute; top: 4px; left: 4px; display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--accent-strong); color: #fff; pointer-events: none; }
+.att__frame-note .t-icon { width: 11px; height: 11px; }
+.att__note { position: relative; padding: 0 10px 10px; }
+.att__note .t-textarea { width: 100%; min-height: 0; font-size: var(--text-sm); resize: vertical; }
+.att__note-state { position: absolute; right: 18px; bottom: 16px; font-size: 12px; pointer-events: none; }
 .att__frame-del.t-icon-btn { position: absolute; top: 4px; right: 4px; width: 32px; height: 32px; }
 
 .transcript {
@@ -541,6 +546,7 @@
   font: 600 12px/1.6 var(--font-mono);
 }
 button.transcript__time { cursor: pointer; }
+.transcript__line[data-active] button.transcript__time { color: var(--accent-soft-fg); }
 button.transcript__time:hover { background: var(--accent-soft); }
 span.transcript__time { color: var(--text-subtle); }
 .transcript__note {

@@ -114,6 +114,7 @@ export const api = {
   deleteReport: (id: string) => request<void>('DELETE', `/reports/${id}`),
   deleteAttachment: (id: string) => request<void>('DELETE', `/attachments/${id}`),
   saveFrame: (videoId: string, atSeconds: number) => request<Attachment>('POST', `/attachments/${videoId}/frame`, { at: atSeconds }),
+  setFrameNote: (id: string, note: string | null) => request<Attachment>('PATCH', `/attachments/${id}`, { note }),
   retryTranscript: (attachmentId: string) => request<TranscriptState>('POST', `/attachments/${attachmentId}/transcript/retry`),
   transcriptionStatus: (signal?: S) => request<WorkerStatus>('GET', '/transcription/status', undefined, signal),
 

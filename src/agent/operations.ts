@@ -241,7 +241,7 @@ const attachmentForAgent = (a: Attachment, m: AgentMedia) => ({
   size: a.size,
   file_name: a.fileName,
   duration_s: seconds(a.durationMs),
-  ...(a.kind === 'frame' ? { from_video: a.sourceId, at_s: seconds(a.atMs) } : {}),
+  ...(a.kind === 'frame' ? { from_video: a.sourceId, at_s: seconds(a.atMs), ...(a.note ? { note: a.note } : {}) } : {}),
   added_by: a.createdBy,
   ...(a.purgedAt
     ? { deleted: 'deleted after the report was closed' }

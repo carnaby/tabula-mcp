@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../api';
 import { timeAgo } from '../../format';
-import type { Attachment, TranscriptState, WorkerStatus } from '../../types';
+import type { Attachment, TranscriptSegment, TranscriptState, WorkerStatus } from '../../types';
 import { Alert, Button, Icon, Spinner, useToast } from '../../ui';
 import { clock } from './Recorder';
 
@@ -27,6 +27,22 @@ export function activeLine(segments: { start_ms: number }[], ms: number): number
   }
   return found;
 }
+
+/** One line; memoized so that only the lines whose active state changes re-render while the player ticks. */
+const Line = memo(function Line({ s, active, onSeek }: { s: TranscriptSegment; active: boolean; onSeek?: (ms: number) => void }) {
+  return (
+    <li className="transcript__line" data-active={active || undefined}>
+      {onSeek ? (
+        <button type="button" className="transcript__time" title={`Play from ${clock(s.start_ms)}`} aria-label={`Play from ${clock(s.start_ms)}`} onClick={() => onSeek(s.start_ms)}>
+          {clock(s.start_ms)}
+        </button>
+      ) : (
+        <span className="transcript__time">{clock(s.start_ms)}</span>
+      )}
+      <span className="transcript__text">{s.text}</span>
+    </li>
+  );
+});
 
 /** The transcript under a video or voice note: lines with clickable times, or what it is waiting for. */
 export function Transcript({
@@ -91,16 +107,7 @@ export function Transcript({
         onPointerDown={() => { lastUserAction.current = Date.now(); }}
       >
         {t.segments.map((s, i) => (
-          <li key={i} className="transcript__line" data-active={i === active || undefined}>
-            {onSeek ? (
-              <button type="button" className="transcript__time" title={`Play from ${clock(s.start_ms)}`} aria-label={`Play from ${clock(s.start_ms)}`} onClick={() => onSeek(s.start_ms)}>
-                {clock(s.start_ms)}
-              </button>
-            ) : (
-              <span className="transcript__time">{clock(s.start_ms)}</span>
-            )}
-            <span className="transcript__text">{s.text}</span>
-          </li>
+          <Line key={i} s={s} active={i === active} onSeek={onSeek} />
         ))}
       </ol>
     );

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { eq, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { reportJobs } from '../../src/db/schema.js';
+import { reportAttachments, reportJobs } from '../../src/db/schema.js';
 import { MEDIA_GONE } from '../../src/domain/jobs.js';
 import { purgeClosedMedia } from '../../src/domain/reports.js';
 import { buildApp } from '../../src/http/app.js';
@@ -52,6 +52,43 @@ const uploadTo = (app2: FastifyInstance, reportId: string, body: Buffer, type: s
   });
 const frameOf = (app2: FastifyInstance, videoId: string, at: string | number) =>
   app2.inject({ method: 'POST', url: `/api/attachments/${videoId}/frame`, headers: auth, payload: { at } });
+
+/** A saved frame without needing ffmpeg: a photo whose row is turned into a frame. */
+async function frameRow(reportId: string) {
+  const photo = (await upload(reportId, PNG, 'image/png', 'f.png')).json();
+  await db.update(reportAttachments).set({ kind: 'frame', atMs: 1000 }).where(eq(reportAttachments.id, photo.id));
+  return photo.id as string;
+}
+
+describe('note on a frame', () => {
+  it('sets, trims, clears and keeps the note on a closed report', async () => {
+    const r = await newReport();
+    const id = await frameRow(r.id);
+    const set = await call('PATCH', `/api/attachments/${id}`, { note: '  The spinner never stops.  ' });
+    expect(set.statusCode).toBe(200);
+    expect(set.json()).toMatchObject({ id, kind: 'frame', note: 'The spinner never stops.' });
+    expect((await call('GET', `/api/reports/${r.id}`)).json().attachments[0].note).toBe('The spinner never stops.');
+
+    await call('PATCH', `/api/reports/${r.id}`, { status: 'done' });
+    expect((await call('PATCH', `/api/attachments/${id}`, { note: 'still editable' })).json().note).toBe('still editable');
+
+    expect((await call('PATCH', `/api/attachments/${id}`, { note: '   ' })).json().note).toBeNull();
+    await call('PATCH', `/api/attachments/${id}`, { note: 'x' });
+    expect((await call('PATCH', `/api/attachments/${id}`, { note: null })).json().note).toBeNull();
+  });
+
+  it('refuses a note over 2 000 characters, with NUL, on a non-frame, and a missing attachment', async () => {
+    const r = await newReport();
+    const id = await frameRow(r.id);
+    expect((await call('PATCH', `/api/attachments/${id}`, { note: 'a'.repeat(2000) })).statusCode).toBe(200);
+    expect((await call('PATCH', `/api/attachments/${id}`, { note: 'a'.repeat(2001) })).statusCode).toBe(400);
+    expect((await call('PATCH', `/api/attachments/${id}`, { note: `a${String.fromCharCode(0)}b` })).statusCode).toBe(400);
+    expect((await call('PATCH', `/api/attachments/${id}`, {})).statusCode).toBe(400);
+    const photo = (await upload(r.id, PNG, 'image/png', 'p.png')).json();
+    expect((await call('PATCH', `/api/attachments/${photo.id}`, { note: 'hi' })).statusCode).toBe(400);
+    expect((await call('PATCH', '/api/attachments/00000000-0000-4000-8000-000000000000', { note: 'hi' })).statusCode).toBe(404);
+  });
+});
 
 describe('bug reports', () => {
   it('creates a report with a title from the first line, edits it and keeps versions', async () => {

@@ -1,0 +1,1 @@
+ALTER TABLE "report_attachments" ADD COLUMN "note" text;

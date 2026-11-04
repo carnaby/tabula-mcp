@@ -4,7 +4,7 @@ import type { Config } from '../config.js';
 import type { Db } from '../db/client.js';
 import {
   addAttachment, type Attachment, CLOSED_REPORT, createReport, deleteAttachment, deleteReport, frameAt, listAttachments, openReportCounts,
-  pageReports, parseTimestamp, REPORT_SORTS, REPORT_STATUSES, requireAttachment, requireReport, updateReport,
+  pageReports, parseTimestamp, REPORT_SORTS, REPORT_STATUSES, requireAttachment, requireReport, setFrameNote, updateReport,
 } from '../domain/reports.js';
 import { isRecording, retryTranscription, transcriptionStatus, transcriptStates } from '../domain/jobs.js';
 import { MAX_PAGE_SIZE } from '../domain/paging.js';
@@ -29,6 +29,7 @@ export const attachmentView = (a: Attachment, token: string, ttl = UI_LINK_TTL) 
   durationMs: a.durationMs,
   sourceId: a.sourceId,
   atMs: a.atMs,
+  note: a.note,
   createdBy: a.createdBy,
   createdAt: a.createdAt,
   purgedAt: a.purgedAt,
@@ -104,6 +105,13 @@ export const reportRoutes: FastifyPluginAsync<MediaDeps> = async (app, { db, con
   app.delete('/attachments/:id', async (req, reply) => {
     await deleteAttachment(db, store, parse(idParams, req.params).id);
     return reply.code(204).send();
+  });
+
+  /** The user's note on a saved frame; null or blank clears it. */
+  app.patch('/attachments/:id', async (req) => {
+    const { id } = parse(idParams, req.params);
+    const { note } = parse(z.object({ note: z.string().nullable() }), req.body);
+    return attachmentView(await setFrameNote(db, id, note), token);
   });
 
   /** A still from a video at a moment (the UI's "save frame" while the video is paused). */

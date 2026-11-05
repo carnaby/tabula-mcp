@@ -59,6 +59,7 @@ export function validateFileContent(content: string): { sha256: string; size: nu
 }
 
 export type FileMeta = {
+  id: string;
   path: string;
   sha256: string;
   size: number;
@@ -68,7 +69,7 @@ export type FileMeta = {
   updatedAt: Date;
   deletedAt: Date | null;
 };
-export type ProjectFile = FileMeta & { id: string; projectId: string; content: string; createdAt: Date };
+export type ProjectFile = FileMeta & { projectId: string; content: string; createdAt: Date };
 export type FileRevisionMeta = { version: number; sha256: string; size: number; updatedBy: string; createdAt: Date };
 export type FileRevision = FileRevisionMeta & { content: string };
 /** isState, when given, sets the file's state flag with the write (agents writing over MCP); otherwise it is kept. */
@@ -78,6 +79,7 @@ export type PutFileResult =
   | { ok: false; sha256: string };
 
 const meta = {
+  id: projectFiles.id,
   path: projectFiles.path,
   sha256: projectFiles.sha256,
   size: projectFiles.size,
@@ -87,7 +89,7 @@ const meta = {
   updatedAt: projectFiles.updatedAt,
   deletedAt: projectFiles.deletedAt,
 };
-const full = { ...meta, id: projectFiles.id, projectId: projectFiles.projectId, content: projectFiles.content, createdAt: projectFiles.createdAt };
+const full = { ...meta, projectId: projectFiles.projectId, content: projectFiles.content, createdAt: projectFiles.createdAt };
 const revisionMeta = {
   version: projectFileRevisions.version,
   sha256: projectFileRevisions.sha256,
@@ -162,6 +164,12 @@ export async function getFile(db: Db, projectId: string, rawPath: string): Promi
   const path = validateFilePath(rawPath);
   const [row] = await db.select(full).from(projectFiles).where(at(projectId, path));
   if (!row) throw notFound(`file "${path}" does not exist in project "${projectId}"; call list_files for the paths`);
+  return row;
+}
+
+/** A file by its id, soft-deleted ones too (references point at a file whatever happened to it). */
+export async function getFileById(db: Db, id: string): Promise<ProjectFile | undefined> {
+  const [row] = await db.select(full).from(projectFiles).where(eq(projectFiles.id, id));
   return row;
 }
 

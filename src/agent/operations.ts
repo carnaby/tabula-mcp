@@ -7,7 +7,7 @@ import { createMemory, deprecateMemory, type Memory } from '../domain/memories.j
 import { findNotes, type Note, type NoteHit } from '../domain/notes.js';
 import { listProjects, type ProjectSummary } from '../domain/projects.js';
 import { recall } from '../domain/recall.js';
-import { resolveRecord } from '../domain/records.js';
+import { refTarget, resolveRecord } from '../domain/records.js';
 import { search, type SearchHit, type SearchParams } from '../domain/search.js';
 import { deleteSyncedFile, type SyncedWrite, writeSyncedFile } from '../domain/sync-config.js';
 import type { FfmpegPaths } from '../media/ffmpeg.js';
@@ -96,6 +96,9 @@ async function requireAgentWritable(db: Db, id: string): Promise<Memory> {
   const r = await resolveRecord(db, id);
   if (r.type === 'thought') throw badRequest(`${r.record.id} is a thought, not a memory; use update_thought`);
   if (r.type === 'report') throw badRequest(`${r.record.id} is a bug report, not a memory; use update_report`);
+  if (r.type === 'file' || r.type === 'attachment') {
+    throw badRequest(`${r.record.id} is a ${r.type === 'file' ? 'project file' : 'bug report attachment'}, not a memory`);
+  }
   if (r.type === 'note' || r.record.source === 'human') throw forbidden(AGENT_READ_ONLY);
   if (r.record.projectId !== 'global') throw badRequest(GLOBAL_ONLY);
   return r.record;
@@ -113,6 +116,8 @@ export async function agentGet(ctx: AgentContext, id: string): Promise<MemoryVie
   const r = await resolveRecord(ctx.db, id);
   if (r.type === 'memory') return memoryView(r.record);
   if (r.type === 'report') return { type: 'report' as const, ...reportForAgent(r.record), next: 'call get_report for its attachments' };
+  // Replaced by the full views of files and attachments in the next task.
+  if (r.type === 'file' || r.type === 'attachment') return refTarget(r);
   return r.type === 'note' ? noteView(r.record) : thoughtView(r.record);
 }
 

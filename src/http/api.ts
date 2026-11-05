@@ -14,6 +14,7 @@ import {
   createThought, deleteThought, getThought, HUMAN, listRevisions, pageThoughts, restoreRevision, THOUGHT_SORTS,
   thoughtTags, updateThought,
 } from '../domain/thoughts.js';
+import { AmbiguousRefError, refTarget, resolveRecord } from '../domain/records.js';
 import { claudeMdSection, TABULA_JSON } from '../mcp/snippet.js';
 import { recall } from '../domain/recall.js';
 import { DIGEST_BUDGET, estimateTokens, wordCount } from '../domain/tokens.js';
@@ -191,6 +192,17 @@ export const apiRoutes: FastifyPluginAsync<{ db: Db; config: Config; store: Medi
   app.get('/search', (req) => {
     const q = parse(z.object({ q: z.string(), limit: z.coerce.number().int().min(1).max(50).optional() }), req.query);
     return quickSearch(db, q);
+  });
+
+  // A reference pasted into the UI's search box: what it points at, so the UI can open the record.
+  app.get('/resolve/:ref', async (req, reply) => {
+    const { ref } = parse(z.object({ ref: z.string() }), req.params);
+    try {
+      return refTarget(await resolveRecord(db, ref));
+    } catch (e) {
+      if (e instanceof AmbiguousRefError) return reply.code(400).send({ error: e.code, message: e.message, candidates: e.candidates });
+      throw e;
+    }
   });
 
   // Recall preview

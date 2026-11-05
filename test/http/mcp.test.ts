@@ -75,7 +75,7 @@ describe('MCP endpoint', () => {
     const desc = (name: string) => tools.find((t) => t.name === name)!.description!;
     expect(desc('search')).not.toContain('Words match exactly');
     expect(desc('search')).toContain('Words match by their beginning and diacritics are ignored');
-    expect(desc('search')).toContain('"quoted phrases", OR and -exclusion');
+    expect(desc('search')).toContain('"quoted phrases", OR or -exclusion matches whole words only');
     expect(desc('save_thought')).toContain('several unrelated topics');
     expect(desc('save_thought')).toContain('one thought per topic');
     expect(desc('save_thought')).toContain('shared tag');

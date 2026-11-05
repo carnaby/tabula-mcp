@@ -276,8 +276,8 @@ export function buildMcpServer(ctx: McpContext): McpServer {
     (a) => run(() => agentFindThoughts(ctx, a)),
   );
 
-  const reportId = z.string().describe('Report id: full uuid or the short #xxxx id from list_reports.');
-  const attachmentId = z.string().describe('Attachment id from get_report (full uuid or its first 8+ characters).');
+  const reportId = z.string().describe('Report: its reference (tabula:xxxxxxxx), a full uuid or the short #xxxx id.');
+  const attachmentId = z.string().describe('Attachment: its reference (tabula:xxxxxxxx) from get_report, a full uuid or its first 8+ characters.');
 
   server.registerTool(
     'list_reports',

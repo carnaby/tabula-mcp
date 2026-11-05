@@ -211,6 +211,8 @@ At the start of a session the agent calls `recall` once and gets plain text:
 
 The tool descriptions are part of the design: they are what an agent reads before deciding whether to call a tool, and they say when *not* to.
 
+Every tool that returns records gives each one a `ref` (`tabula:xxxxxxxx`), so the agent can tell you which record it saved or found; `get`, `get_report`, `update_report`, `update_thought` and the attachment tools take references back.
+
 ### When agents use it
 
 Tabula is registered once per client, so it is visible in every project. The server's MCP *instructions* tell every client to use it for a project only when that project's `CLAUDE.md` (or claude.ai project instructions) contains a **"Memory (Tabula)"** section naming the project, never to guess a slug, and never to write project memories. Thoughts and Notes work anywhere, on request.

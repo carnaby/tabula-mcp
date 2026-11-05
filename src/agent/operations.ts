@@ -7,6 +7,7 @@ import { createMemory, deprecateMemory, type Memory } from '../domain/memories.j
 import { findNotes, type Note, type NoteHit } from '../domain/notes.js';
 import { listProjects, type ProjectSummary } from '../domain/projects.js';
 import { recall } from '../domain/recall.js';
+import { parseIdRef } from '../domain/ids.js';
 import { refTarget, type ResolvedRecord, resolveRecord } from '../domain/records.js';
 import { search, type SearchHit, type SearchParams } from '../domain/search.js';
 import { deleteSyncedFile, type SyncedWrite, writeSyncedFile } from '../domain/sync-config.js';
@@ -90,7 +91,7 @@ export type MemoryView = ReturnType<typeof memoryView>;
 export type NoteView = ReturnType<typeof noteView>;
 export type ThoughtView = ReturnType<typeof thoughtView>;
 export type AgentFile = {
-  path: string; size: number; version: number; sha256: string; state: boolean; updated_at: string; updated_by: string;
+  path: string; ref: string; size: number; version: number; sha256: string; state: boolean; updated_at: string; updated_by: string;
 };
 /** read_file's reply: a header line with the version and hash, the text exactly as stored, and a pointer to the next part. */
 export type AgentFileRead = { header: string; text?: string; footer?: string };
@@ -175,10 +176,11 @@ function fileBlocks(f: ProjectFile): AgentBlock[] {
 async function attachmentBlocks(ctx: AgentContext, a: Attachment, report: Report): Promise<AgentBlock[]> {
   const isImage = a.kind === 'frame' || a.kind === 'image';
   // Only an image needs the media store; a purged recording has no link, so it needs nothing.
-  const m = isImage || !a.purgedAt ? requireMedia(ctx) : { store: ctx.media?.store as MediaStore, token: '', paths: ctx.media?.paths as FfmpegPaths };
+  const m = isImage || !a.purgedAt ? requireMedia(ctx) : ctx.media;
   const view = { ...attachmentForAgent(a, m), report: refOf(report.id), report_title: report.title };
   if (isImage) {
-    const { image, mime } = await attachmentImage(ctx.db, m.store, m.paths, a.id);
+    const media = requireMedia(ctx);
+    const { image, mime } = await attachmentImage(ctx.db, media.store, media.paths, a.id);
     return [{ type: 'image', image, mime }, jsonBlock(view)];
   }
   const s = (await transcriptStates(ctx.db, [a.id])).get(a.id);
@@ -209,7 +211,8 @@ export async function agentRecall(ctx: AgentContext, project: string, includeSta
   return (await recall(ctx.db, project, { includeState })).text;
 }
 
-export const agentSearch = (ctx: AgentContext, p: SearchParams): Promise<SearchHit[]> => search(ctx.db, p);
+export const agentSearch = async (ctx: AgentContext, p: SearchParams): Promise<Array<SearchHit & { ref: string }>> =>
+  (await search(ctx.db, p)).map((h) => ({ ref: refOf(h.id), ...h }));
 
 /** Any record by reference, uuid or short id; the first block always says what it is. */
 export async function agentGet(ctx: AgentContext, id: string): Promise<AgentBlock[]> {
@@ -237,7 +240,7 @@ export async function agentGet(ctx: AgentContext, id: string): Promise<AgentBloc
 export async function agentRemember(
   ctx: AgentContext,
   input: { project: string; kind: MemoryKind; title: string; body: string; tags?: string[]; supersedes_id?: string },
-): Promise<{ id: string }> {
+): Promise<{ id: string; ref: string }> {
   if (input.project !== 'global') throw badRequest(GLOBAL_ONLY);
   const supersedesId = input.supersedes_id ? (await requireAgentWritable(ctx.db, input.supersedes_id)).id : null;
   const m = await createMemory(ctx.db, {
@@ -250,7 +253,7 @@ export async function agentRemember(
     source: 'agent',
     agentLabel: ctx.agentLabel,
   });
-  return { id: m.id };
+  return { id: m.id, ref: refOf(m.id) };
 }
 
 export async function agentDeprecate(ctx: AgentContext, input: { id: string; reason: string }): Promise<{ ok: true }> {
@@ -261,7 +264,7 @@ export async function agentDeprecate(ctx: AgentContext, input: { id: string; rea
 
 export async function agentListFiles(ctx: AgentContext, project: string): Promise<AgentFile[]> {
   return (await listFiles(ctx.db, project)).map((f) => ({
-    path: f.path, size: f.size, version: f.version, sha256: f.sha256, state: f.isState,
+    path: f.path, ref: refOf(f.id), size: f.size, version: f.version, sha256: f.sha256, state: f.isState,
     updated_at: f.updatedAt.toISOString(), updated_by: f.updatedBy,
   }));
 }
@@ -283,35 +286,37 @@ export async function agentReadFile(
 }
 
 /** Agents without the tabula command (Claude Code on the web, claude.ai) save synced files with this. */
-export const agentWriteFile = (
+export async function agentWriteFile(
   ctx: AgentContext, input: { project: string; path: string; content: string; base_sha256?: string },
-): Promise<SyncedWrite> =>
-  writeSyncedFile(ctx.db, input.project, { path: input.path, content: input.content, baseSha256: input.base_sha256 ?? null }, ctx.agentLabel);
+): Promise<SyncedWrite & { ref: string }> {
+  const w = await writeSyncedFile(ctx.db, input.project, { path: input.path, content: input.content, baseSha256: input.base_sha256 ?? null }, ctx.agentLabel);
+  return { ...w, ref: refOf((await getFile(ctx.db, input.project, w.path)).id) };
+}
 
 export const agentDeleteFile = (
   ctx: AgentContext, input: { project: string; path: string; base_sha256: string },
 ): Promise<{ path: string; deleted: true }> => deleteSyncedFile(ctx.db, input.project, { path: input.path, baseSha256: input.base_sha256 });
 
-export const agentFindNotes = (
+export const agentFindNotes = async (
   ctx: AgentContext,
   p: { query?: string; tag?: string; limit?: number },
-): Promise<NoteHit[]> => findNotes(ctx.db, p);
+): Promise<Array<NoteHit & { ref: string }>> => (await findNotes(ctx.db, p)).map((h) => ({ ref: refOf(h.id), ...h }));
 
 const agentEditor = (ctx: AgentContext) => ({ source: 'agent' as const, label: ctx.agentLabel });
 
 export async function agentSaveThought(
   ctx: AgentContext,
   input: { title: string; body: string; tags?: string[] },
-): Promise<{ id: string; version: number }> {
+): Promise<{ id: string; ref: string; version: number }> {
   const t = await createThought(ctx.db, input, agentEditor(ctx));
-  return { id: t.id, version: t.version };
+  return { id: t.id, ref: refOf(t.id), version: t.version };
 }
 
 /** Agents may edit any thought, including the human's; every content change keeps the old version as a revision. */
 export async function agentUpdateThought(
   ctx: AgentContext,
   input: { id: string; title?: string; body?: string; append?: string; tags?: string[]; expected_version?: number },
-): Promise<{ id: string; version: number }> {
+): Promise<{ id: string; ref: string; version: number }> {
   const r = await resolveRecord(ctx.db, input.id);
   if (r.type !== 'thought') throw badRequest(`${r.record.id} is a ${r.type}, not a thought`);
   if ((input.body !== undefined || input.title !== undefined) && input.expected_version === undefined) {
@@ -326,13 +331,13 @@ export async function agentUpdateThought(
     { title: input.title, body: input.body, append: input.append, tags: input.tags, expectedVersion: input.expected_version },
     agentEditor(ctx),
   );
-  return { id: t.id, version: t.version };
+  return { id: t.id, ref: refOf(t.id), version: t.version };
 }
 
-export const agentFindThoughts = (
+export const agentFindThoughts = async (
   ctx: AgentContext,
   p: { query?: string; tag?: string; limit?: number },
-): Promise<ThoughtHit[]> => findThoughts(ctx.db, p);
+): Promise<Array<ThoughtHit & { ref: string }>> => (await findThoughts(ctx.db, p)).map((h) => ({ ref: refOf(h.id), ...h }));
 
 // ---- Bug reports -------------------------------------------------------------------------------------------------
 
@@ -346,7 +351,12 @@ function requireMedia(ctx: AgentContext): AgentMedia {
 
 const seconds = (ms: number | null) => (ms === null ? null : Math.round(ms / 100) / 10);
 
-const attachmentForAgent = (a: Attachment, m: AgentMedia) => ({
+function attachmentUrl(a: Attachment, m: AgentMedia | undefined): string {
+  if (!m) throw new Error('media storage is not configured for this MCP context');
+  return `${m.baseUrl ?? ''}${signMediaPath(m.token, a.id, AGENT_LINK_TTL)}`;
+}
+
+const attachmentForAgent = (a: Attachment, m: AgentMedia | undefined) => ({
   id: a.id,
   ref: refOf(a.id),
   kind: a.kind,
@@ -358,7 +368,7 @@ const attachmentForAgent = (a: Attachment, m: AgentMedia) => ({
   added_by: a.createdBy,
   ...(a.purgedAt
     ? { deleted: 'deleted after the report was closed' }
-    : { url: `${m.baseUrl ?? ''}${signMediaPath(m.token, a.id, AGENT_LINK_TTL)}` }),
+    : { url: attachmentUrl(a, m) }),
 });
 
 /** Characters of each transcript shown inside get_report; get_transcript pages through the rest. */
@@ -398,7 +408,7 @@ function transcriptForAgent(a: Attachment, s: TranscriptState | undefined, lastS
       language: s.language,
       text: part.text,
       ...(part.next !== null
-        ? { more: `the transcript continues (${lines.length} characters): call get_transcript with attachment_id "${a.id}" and offset ${part.next}` }
+        ? { more: `the transcript continues (${lines.length} characters): call get_transcript with attachment_id "${refOf(a.id)}" and offset ${part.next}` }
         : {}),
     },
   };
@@ -429,7 +439,7 @@ export async function agentListReports(
   return {
     total: page.total,
     reports: page.items.map((r) => ({
-      id: r.id, project: r.projectId, title: r.title, status: r.status, created_at: r.createdAt.toISOString(),
+      id: r.id, ref: refOf(r.id), project: r.projectId, title: r.title, status: r.status, created_at: r.createdAt.toISOString(),
       attachments: r.counts, has_triage: r.triage.length > 0,
     })),
   };
@@ -456,7 +466,7 @@ export async function agentGetReport(ctx: AgentContext, id: string) {
 
 export async function agentCreateReport(ctx: AgentContext, input: { project: string; title: string; description?: string }) {
   const r = await createReport(ctx.db, { projectId: input.project, title: input.title, body: input.description }, agentEditorOf(ctx));
-  return { id: r.id, version: r.version };
+  return { id: r.id, ref: refOf(r.id), version: r.version };
 }
 
 export async function agentUpdateReport(
@@ -476,7 +486,7 @@ export async function agentUpdateReport(
     { triage: input.triage, appendTriage: input.append_triage, status: input.status, title: input.title, expectedVersion: input.expected_version },
     agentEditorOf(ctx),
   );
-  return { id: out.id, version: out.version, status: out.status };
+  return { id: out.id, ref: refOf(out.id), version: out.version, status: out.status };
 }
 
 export type AgentImage = { image: Buffer; mime: string; text: string };
@@ -494,12 +504,11 @@ export async function agentGetFrame(ctx: AgentContext, input: { video_id: string
   return { image, mime: 'image/jpeg', text: JSON.stringify({ ...attachmentForAgent(frame, m), saved: created ? 'new frame saved to the report' : 'this frame was already saved' }) };
 }
 
-/** Attachments are referenced by full uuid or by a prefix of 8+ hex characters (they never appear in the digest). */
+/** Attachments are named by their reference (tabula:xxxxxxxx), a full uuid or a prefix of its hex characters. */
 async function resolveAttachmentId(ctx: AgentContext, raw: string): Promise<string> {
-  const v = raw.trim().replace(/^#/, '').toLowerCase();
-  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(v)) return v;
-  if (!/^[0-9a-f][0-9a-f-]{7,35}$/.test(v)) throw badRequest(`attachment id "${raw}" must be a uuid or its first 8+ characters`);
-  const rows = await ctx.db.execute<{ id: string }>(sql`SELECT id FROM report_attachments WHERE id::text LIKE ${`${v}%`} LIMIT 2`);
+  const ref = parseIdRef(raw);
+  if (ref.kind === 'full') return ref.id;
+  const rows = await ctx.db.execute<{ id: string }>(sql`SELECT id FROM report_attachments WHERE replace(id::text, '-', '') LIKE ${`${ref.prefix}%`} LIMIT 2`);
   const list = [...rows];
   if (list.length === 0) throw notFound(`no attachment matches "${raw}"`);
   if (list.length > 1) throw badRequest(`attachment id "${raw}" is ambiguous; pass more characters`);

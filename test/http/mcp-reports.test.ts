@@ -227,4 +227,19 @@ describe('bug reports over MCP', () => {
     const photo = await uploadFile(created.id, PNG, 'image/png', 'p.png');
     expect(text((await tool('get_transcript', { attachment_id: photo.id })).content)).toMatch(/^400: .*only video and audio/);
   });
+
+  it('gives refs for reports and their attachments, and takes them back in every report tool', async () => {
+    const created = json((await tool('create_report', { project: 'demo', title: 'Ref bug' })).content);
+    expect(created.ref).toBe(`tabula:${created.id.slice(0, 8)}`);
+    const photo = await uploadFile(created.id, PNG, 'image/png', 'p.png');
+    expect(json((await tool('list_reports', { project: 'demo' })).content).reports[0].ref).toBe(created.ref);
+    const report = json((await tool('get_report', { id: created.ref })).content);
+    expect(report.ref).toBe(created.ref);
+    expect(report.attachments[0].ref).toBe(`tabula:${photo.id.slice(0, 8)}`);
+    const viewed = await tool('view_attachment', { id: report.attachments[0].ref });
+    expect(viewed.isError).toBe(false);
+    expect(JSON.parse(text(viewed.content)).ref).toBe(report.attachments[0].ref);
+    expect(text((await tool('get_transcript', { attachment_id: report.attachments[0].ref })).content)).toMatch(/^400: .*only video and audio/);
+    expect(json((await tool('update_report', { id: created.ref, append_triage: '- [ ] fix' })).content).ref).toBe(created.ref);
+  });
 });

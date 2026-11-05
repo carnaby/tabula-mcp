@@ -126,7 +126,7 @@ describe('MCP endpoint', () => {
 
     await setSyncConfig(db, 'demo', { sync: ['docs/**'], state: ['docs/handoff/*.md'] });
     const created = JSON.parse(textOf(await call('write_file', { project: 'demo', path, content: '# Spec' })));
-    expect(created).toEqual({ path, sha256: expect.stringMatching(/^[0-9a-f]{64}$/), version: 1, changed: true, state: false });
+    expect(created).toEqual({ path, ref: expect.stringMatching(/^tabula:[0-9a-f]{8}$/), sha256: expect.stringMatching(/^[0-9a-f]{64}$/), version: 1, changed: true, state: false });
     expect(await getFile(db, 'demo', path)).toMatchObject({ content: '# Spec', updatedBy: 'claude-ai' });
     const listed = JSON.parse(textOf(await call('list_files', { project: 'demo' })));
     expect(listed).toMatchObject([{ path, sha256: created.sha256, version: 1 }]);
@@ -151,6 +151,35 @@ describe('MCP endpoint', () => {
     expect(noDeleteBase instanceof Error || (noDeleteBase as { isError?: boolean }).isError === true).toBe(true);
     expect(JSON.parse(textOf(await call('delete_file', { project: 'demo', path, base_sha256: updated.sha256 })))).toEqual({ path, deleted: true });
     expect(JSON.parse(textOf(await call('list_files', { project: 'demo' })))).toEqual([]);
+    await client.close();
+  });
+
+  it('gives a ref with every record the tools return, and says so in their descriptions', async () => {
+    const REF = /^tabula:[0-9a-f]{8}$/;
+    await setSyncConfig(db, 'demo', { sync: ['docs/**'], state: [] });
+    await createNote(db, { title: 'Arch notes', body: 'layers' });
+    const client = await connect('/mcp', bearer);
+    const call = async (name: string, args: Record<string, unknown>) => JSON.parse(textOf(await client.callTool({ name, arguments: args })));
+
+    const rule = await call('remember', { project: 'global', kind: 'rule', title: 'Refs everywhere', body: 'Because.' });
+    expect(rule.ref).toBe(`tabula:${rule.id.slice(0, 8)}`);
+    expect((await call('search', { query: 'refs' }))[0].ref).toBe(rule.ref);
+    const saved = await call('save_thought', { title: 'Ref idea', body: 'refs' });
+    expect(saved.ref).toMatch(REF);
+    expect((await call('update_thought', { id: saved.ref, append: 'more' })).ref).toBe(saved.ref);
+    expect((await call('find_thoughts', { query: 'ref' }))[0].ref).toBe(saved.ref);
+    expect((await call('find_notes', { query: 'arch' }))[0].ref).toMatch(REF);
+    const written = await call('write_file', { project: 'demo', path: 'docs/a.md', content: '# A' });
+    expect(written.ref).toMatch(REF);
+    expect((await call('list_files', { project: 'demo' }))[0].ref).toBe(written.ref);
+
+    const { tools } = await client.listTools();
+    for (const name of [
+      'remember', 'save_thought', 'update_thought', 'find_thoughts', 'find_notes', 'search', 'create_report', 'update_report',
+      'list_reports', 'get_report', 'get_frame', 'view_attachment', 'list_files', 'read_file', 'write_file',
+    ]) {
+      expect(tools.find((t) => t.name === name)!.description, name).toContain('"tabula:xxxxxxxx"');
+    }
     await client.close();
   });
 

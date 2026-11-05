@@ -59,8 +59,8 @@ describe('agent operations', () => {
       code: 'bad_request', message: expect.stringMatching(/expected_version is required.*get or find_thoughts/),
     });
     await expect(agentUpdateThought(ctx, { id: t.id, title: 'x' })).rejects.toMatchObject({ code: 'bad_request' });
-    expect(await agentUpdateThought(ctx, { id: t.id, append: 'more' })).toEqual({ id: t.id, version: 2 });
-    expect(await agentUpdateThought(ctx, { id: t.id, body: 'new', expected_version: 2 })).toEqual({ id: t.id, version: 3 });
+    expect(await agentUpdateThought(ctx, { id: t.id, append: 'more' })).toEqual({ id: t.id, ref: refOf(t.id), version: 2 });
+    expect(await agentUpdateThought(ctx, { id: t.id, body: 'new', expected_version: 2 })).toEqual({ id: t.id, ref: refOf(t.id), version: 3 });
     await expect(agentUpdateThought(ctx, { id: t.id, body: 'stale', expected_version: 2 })).rejects.toMatchObject({ code: 'conflict' });
   });
 
@@ -184,7 +184,7 @@ describe('agent operations', () => {
     });
     await setSyncConfig(db, 'demo', { sync: ['docs/**'], state: ['docs/handoff/*.md'] });
     const w = await agentWriteFile(ctx, { project: 'demo', path: 'docs/handoff/state.md', content: 'Next: cloud' });
-    expect(w).toEqual({ path: 'docs/handoff/state.md', sha256: expect.stringMatching(/^[0-9a-f]{64}$/), version: 1, changed: true, state: true });
+    expect(w).toEqual({ path: 'docs/handoff/state.md', ref: expect.stringMatching(/^tabula:[0-9a-f]{8}$/), sha256: expect.stringMatching(/^[0-9a-f]{64}$/), version: 1, changed: true, state: true });
     expect(await agentListFiles(ctx, 'demo')).toMatchObject([{ path: 'docs/handoff/state.md', state: true, updated_by: 'claude-code' }]);
     await expect(agentWriteFile(ctx, { project: 'demo', path: 'docs/handoff/state.md', content: 'v2' })).rejects.toMatchObject({ code: 'conflict' });
     const w2 = await agentWriteFile(ctx, { project: 'demo', path: 'docs/handoff/state.md', content: 'v2', base_sha256: w.sha256 });

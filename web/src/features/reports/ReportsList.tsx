@@ -4,6 +4,7 @@ import { href } from '../../router';
 import { type Project, REPORT_STATUS_INFO, type ReportSort, type ReportStatus, type ReportSummary } from '../../types';
 import { Alert, Badge, type BadgeTone, Button, ButtonLink, EmptyState, Icon, Pagination, SearchInput, Segmented, Skeleton } from '../../ui';
 import { ProjectSelect, TimeAgo } from '../common';
+import { ListToolbar } from '../ListToolbar';
 
 type Filters = { q: string; status: 'open' | 'done' | 'all'; project: string };
 export const STATUS_TONE: Record<ReportStatus, BadgeTone> = { new: 'accent', triaged: 'info', done: 'success' };
@@ -41,20 +42,24 @@ export function ReportsList({ project, projects }: { project?: string; projects:
 
   return (
     <div className="t-stack">
-      <div className="toolbar">
-        <SearchInput value={t.filters.q} onChange={(v) => t.setFilter('q', v)} placeholder="Search reports" />
-        {multiProject && (
-          <ProjectSelect projects={projects?.filter((p) => p.id !== 'global')} value={t.filters.project} onChange={(v) => t.setFilter('project', v)} allowAll />
-        )}
-        <Segmented
-          label="Status"
-          value={t.filters.status}
-          onChange={(v) => t.setFilter('status', v)}
-          options={[{ value: 'open', label: 'Open' }, { value: 'done', label: 'Done' }, { value: 'all', label: 'All' }]}
-        />
-        <span className="t-spacer" />
-        <ButtonLink href={href.report('new', scope || undefined, from)} variant="primary" icon="plus">New report</ButtonLink>
-      </div>
+      <ListToolbar
+        search={<SearchInput value={t.filters.q} onChange={(v) => t.setFilter('q', v)} placeholder="Search reports" />}
+        quick={
+          <Segmented
+            label="Status"
+            value={t.filters.status}
+            onChange={(v) => t.setFilter('status', v)}
+            options={[{ value: 'open', label: 'Open' }, { value: 'done', label: 'Done' }, { value: 'all', label: 'All' }]}
+          />
+        }
+        filters={
+          multiProject && (
+            <ProjectSelect projects={projects?.filter((p) => p.id !== 'global')} value={t.filters.project} onChange={(v) => t.setFilter('project', v)} allowAll />
+          )
+        }
+        active={t.filters.project ? 1 : 0}
+        action={<ButtonLink href={href.report('new', scope || undefined, from)} variant="primary" icon="plus">New report</ButtonLink>}
+      />
 
       {list.error && <Alert tone="danger">{list.error.message}</Alert>}
       {!list.data && <div className="t-stack">{[0, 1, 2].map((i) => <Skeleton key={i} height={76} style={{ borderRadius: 12 }} />)}</div>}

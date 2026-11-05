@@ -1,0 +1,66 @@
+import { useId, useLayoutEffect, useRef, useState } from 'react';
+import { Button, Chip } from '../ui';
+
+const MAX_ROWS = 4;
+
+/**
+ * Tag filter chips, collapsed to 4 rows with a "Show all (N)" toggle. The selected tag sits right after "All", so it
+ * stays visible while collapsed (also when it no longer has any items).
+ */
+export function TagChips({
+  tags, value, onChange,
+}: { tags: readonly { tag: string; count: number }[]; value: string; onChange: (tag: string) => void }) {
+  const row = useRef<HTMLDivElement>(null);
+  const id = useId();
+  const [expanded, setExpanded] = useState(false);
+  // Index of the first chip below the 4th row (-1: everything fits).
+  const [cut, setCut] = useState(-1);
+
+  const selected = value ? (tags.find((t) => t.tag === value) ?? { tag: value, count: undefined }) : undefined;
+  const ordered = [...(selected ? [selected] : []), ...tags.filter((t) => t.tag !== value)];
+  const signature = ordered.map((t) => t.tag).join('\n');
+
+  useLayoutEffect(() => {
+    const el = row.current;
+    if (!el) return;
+    const measure = () => {
+      const chips = Array.from(el.children) as HTMLElement[];
+      const tops = [...new Set(chips.map((c) => c.offsetTop))].sort((a, b) => a - b);
+      const limit = tops[MAX_ROWS];
+      setCut(limit === undefined ? -1 : chips.findIndex((c) => c.offsetTop >= limit));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [signature]);
+
+  const collapsible = cut >= 0;
+  const collapsed = collapsible && !expanded;
+  // Chip 0 is "All"; tag i is chip i + 1.
+  const isCut = (chip: number) => collapsed && chip >= cut;
+
+  return (
+    <div className="tag-chips">
+      <div ref={row} id={id} className="t-chip-row" role="group" aria-label="Filter by tag" data-collapsed={collapsed}>
+        <Chip pressed={!value} onClick={() => onChange('')} className={isCut(0) ? 't-chip--cut' : undefined}>All</Chip>
+        {ordered.map((t, i) => (
+          <Chip
+            key={t.tag}
+            pressed={value === t.tag}
+            count={t.count}
+            onClick={() => onChange(value === t.tag ? '' : t.tag)}
+            className={isCut(i + 1) ? 't-chip--cut' : undefined}
+          >
+            {t.tag}
+          </Chip>
+        ))}
+      </div>
+      {collapsible && (
+        <Button variant="ghost" size="sm" className="tag-chips__toggle" aria-expanded={expanded} aria-controls={id} onClick={() => setExpanded(!expanded)}>
+          {expanded ? 'Show less' : `Show all (${tags.length})`}
+        </Button>
+      )}
+    </div>
+  );
+}

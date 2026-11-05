@@ -409,7 +409,7 @@ a.t-btn { text-decoration: none; }
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 28px;
+  height: var(--chip-h, 28px);
   padding: 0 11px;
   border-radius: var(--radius-full);
   border: 1px solid var(--border);
@@ -423,7 +423,20 @@ a.t-btn { text-decoration: none; }
 .t-chip:hover { border-color: var(--border-strong); color: var(--text); }
 .t-chip[aria-pressed='true'] { background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }
 .t-chip__count { opacity: 0.65; font-variant-numeric: tabular-nums; }
-.t-chip-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.t-chip-row { --chip-h: 28px; position: relative; display: flex; gap: 6px; flex-wrap: wrap; }
+/* Touch screens: chips get a 32px tap target. */
+@media (pointer: coarse), (max-width: 640px) {
+  .t-chip-row { --chip-h: 32px; }
+}
+/* Collapsed to `--chip-rows` rows; the padding keeps the focus ring of the edge chips inside the clip. */
+.t-chip-row[data-collapsed='true'] {
+  max-height: calc(var(--chip-rows, 4) * var(--chip-h) + (var(--chip-rows, 4) - 1) * 6px + 8px);
+  margin: -4px;
+  padding: 4px;
+  overflow: hidden;
+}
+/* Chips below the cut are clipped; hidden too, so Tab does not land on them. */
+.t-chip-row[data-collapsed='true'] > .t-chip--cut { visibility: hidden; }
 
 .t-kbd {
   display: inline-flex;
@@ -626,6 +639,8 @@ a.t-btn { text-decoration: none; }
 .t-pagination__info { font-variant-numeric: tabular-nums; padding: 0 6px; white-space: nowrap; }
 .t-pagination__size { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
 .t-pagination__size .t-select { width: auto; }
+.t-table-sort { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+.t-table-sort .t-select { flex: 1; width: auto; }
 
 .t-table-wrap .t-mobile-sort { display: none; }
 

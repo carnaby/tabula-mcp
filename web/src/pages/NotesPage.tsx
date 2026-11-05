@@ -1,12 +1,13 @@
-import { useState } from 'react';
 import { api } from '../api';
 import { TimeAgo } from '../features/common';
-import { FilterToggle } from '../features/FilterToggle';
+import { ListToolbar } from '../features/ListToolbar';
+import { PageHeader } from '../features/PageHeader';
+import { TagChips } from '../features/TagChips';
 import { useClampPage, useDebounced, useQuery, useTableState } from '../hooks/data';
 import { excerpt } from '../format';
 import { href } from '../router';
 import type { NoteSort } from '../types';
-import { Alert, Badge, Button, ButtonLink, Chip, EmptyState, Icon, Pagination, SearchInput, Select, Skeleton } from '../ui';
+import { Alert, Badge, Button, ButtonLink, EmptyState, Icon, Pagination, SearchInput, Select, Skeleton } from '../ui';
 
 type Filters = { q: string; tag: string };
 const SORTS: { value: `${NoteSort}:${'asc' | 'desc'}`; label: string }[] = [
@@ -21,7 +22,6 @@ export function NotesPage() {
     sort: 'updatedAt', dir: 'desc', pageSize: 24, filters: { q: '', tag: '' },
   });
   const q = useDebounced(t.filters.q);
-  const [filtersOpen, setFiltersOpen] = useState(false);
   // "Recently edited" keeps pinned notes on top (the server default when no sort is given).
   const defaultSort = t.sort === 'updatedAt' && t.dir === 'desc';
   const list = useQuery(
@@ -35,20 +35,15 @@ export function NotesPage() {
 
   return (
     <main className="content content--wide">
-      <div className="page-head">
-        <div className="page-head__text">
-          <h1>Notes</h1>
-          <p>Your own notes, outside projects. Agents read them only when you mention your notes, and they never go into recall. Pinned notes stay on top.</p>
-        </div>
-        <div className="page-head__actions">
-          <ButtonLink href={href.note('new')} variant="primary" icon="plus">New note</ButtonLink>
-        </div>
-      </div>
+      <PageHeader
+        title="Notes"
+        description="Your own notes, outside projects."
+        more="Agents read them only when you mention your notes, and they never go into recall. Pinned notes stay on top."
+      />
 
-      <div className="toolbar">
-        <SearchInput value={t.filters.q} onChange={(v) => t.setFilter('q', v)} placeholder="Search notes" />
-        <FilterToggle open={filtersOpen} onToggle={() => setFiltersOpen(!filtersOpen)} active={defaultSort ? 0 : 1} />
-        <div className="toolbar__filters" data-open={filtersOpen}>
+      <ListToolbar
+        search={<SearchInput value={t.filters.q} onChange={(v) => t.setFilter('q', v)} placeholder="Search notes" />}
+        sort={
           <Select
             aria-label="Sort"
             value={`${t.sort}:${t.dir}` as (typeof SORTS)[number]['value']}
@@ -58,18 +53,13 @@ export function NotesPage() {
             }}
             options={SORTS}
           />
-        </div>
-      </div>
+        }
+        active={defaultSort ? 0 : 1}
+        action={<ButtonLink href={href.note('new')} variant="primary" icon="plus">New note</ButtonLink>}
+      />
 
-      {(tags.data?.length ?? 0) > 0 && (
-        <div className="t-chip-row" role="group" aria-label="Filter by tag">
-          <Chip pressed={!t.filters.tag} onClick={() => t.setFilter('tag', '')}>All</Chip>
-          {tags.data!.slice(0, 24).map((x) => (
-            <Chip key={x.tag} pressed={t.filters.tag === x.tag} count={x.count} onClick={() => t.setFilter('tag', t.filters.tag === x.tag ? '' : x.tag)}>
-              {x.tag}
-            </Chip>
-          ))}
-        </div>
+      {(!!tags.data?.length || !!t.filters.tag) && (
+        <TagChips tags={tags.data ?? []} value={t.filters.tag} onChange={(v) => t.setFilter('tag', v)} />
       )}
 
       {list.error && <Alert tone="danger">{list.error.message}</Alert>}

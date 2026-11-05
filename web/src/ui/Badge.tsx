@@ -14,10 +14,10 @@ export function Badge({ tone = 'neutral', icon, children, title }: { tone?: Badg
 }
 
 export function Chip({
-  pressed, onClick, children, count,
-}: { pressed?: boolean; onClick: () => void; children: ReactNode; count?: number }) {
+  pressed, onClick, children, count, className,
+}: { pressed?: boolean; onClick: () => void; children: ReactNode; count?: number; className?: string }) {
   return (
-    <button type="button" className="t-chip" aria-pressed={pressed} onClick={onClick}>
+    <button type="button" className={cx('t-chip', className)} aria-pressed={pressed} onClick={onClick}>
       {children}
       {count !== undefined && <span className="t-chip__count">{count}</span>}
     </button>

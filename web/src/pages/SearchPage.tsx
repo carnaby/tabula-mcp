@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { Highlighted, KindBadge, TimeAgo } from '../features/common';
 import { MemoryDialog, type MemoryDialogState } from '../features/MemoryDialog';
+import { PageHeader } from '../features/PageHeader';
 import { useDebounced, useQuery } from '../hooks/data';
 import { href, navigate } from '../router';
 import type { Project, SearchHit } from '../types';
@@ -45,12 +46,11 @@ export function SearchPage({ q: initialQ, projects }: { q: string; projects: Pro
 
   return (
     <main className="content">
-      <div className="page-head">
-        <div className="page-head__text">
-          <h1>Search</h1>
-          <p>Global rules, project files, notes and thoughts at once. Words match as prefixes: “drizz pri” finds “Drizzle over Prisma”.</p>
-        </div>
-      </div>
+      <PageHeader
+        title="Search"
+        description="Rules, files, reports, notes and thoughts."
+        more="Global rules, project files, bug reports, notes and thoughts at once. Words match as prefixes: “drizz pri” finds “Drizzle over Prisma”."
+      />
       <div className="search-hero">
         <SearchInput ref={input} value={q} onChange={setQ} placeholder="Search everything" />
       </div>

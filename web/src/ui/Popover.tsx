@@ -14,7 +14,8 @@ export function Popover({
   triggerLabel: string;
   triggerClassName?: string;
   className?: string;
-  children: ReactNode | ((close: () => void) => ReactNode);
+  /** A function gets `close` and `labelId`: give the panel's heading that id to name the panel. */
+  children: ReactNode | ((close: () => void, labelId: string) => ReactNode);
 }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLSpanElement>(null);
@@ -36,11 +37,21 @@ export function Popover({
       setOpen(false);
       button.current?.focus();
     };
+    // Browsers that close a <dialog> on Escape without honouring the keydown's preventDefault fire `cancel` on it.
+    const dialog = root.current?.closest('dialog');
+    const onCancel = (e: Event) => {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      setOpen(false);
+      button.current?.focus();
+    };
     document.addEventListener('pointerdown', onDown, true);
     document.addEventListener('keydown', onKey, true);
+    dialog?.addEventListener('cancel', onCancel, true);
     return () => {
       document.removeEventListener('pointerdown', onDown, true);
       document.removeEventListener('keydown', onKey, true);
+      dialog?.removeEventListener('cancel', onCancel, true);
     };
   }, [open]);
 
@@ -56,7 +67,15 @@ export function Popover({
   }, [open]);
 
   return (
-    <span ref={root} className={cx('t-popover', className)}>
+    <span
+      ref={root}
+      className={cx('t-popover', className)}
+      onBlur={(e) => {
+        // Keyboard focus moved elsewhere (Tab). A null relatedTarget (e.g. a tap that focuses nothing) is left to the
+        // pointerdown handler, so a tap on an item inside the panel still lands.
+        if (open && e.relatedTarget && !root.current?.contains(e.relatedTarget as Node)) setOpen(false);
+      }}
+    >
       <button
         ref={button}
         type="button"
@@ -69,8 +88,8 @@ export function Popover({
         {trigger}
       </button>
       {open && (
-        <div ref={panel} id={id} className="t-popover__panel" role="group" aria-label={triggerLabel}>
-          {typeof children === 'function' ? children(close) : children}
+        <div ref={panel} id={id} className="t-popover__panel" role="group" aria-labelledby={typeof children === 'function' ? `${id}-label` : undefined}>
+          {typeof children === 'function' ? children(close, `${id}-label`) : children}
         </div>
       )}
     </span>

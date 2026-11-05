@@ -175,6 +175,7 @@ function Editor({ initial, from, back }: { initial: Thought | null; from?: strin
         <SaveButton loading={saving} disabled={invalid || (!dirty && !!base)} onClick={() => void save()} />
       </EditorBar>
 
+      {base?.archived && <Alert icon="archive">Archived. Restore it to bring it back to the lists.</Alert>}
       {error && <Alert tone="danger">{error}</Alert>}
       {remote && (
         <Alert tone="warn">

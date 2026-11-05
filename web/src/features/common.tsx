@@ -63,10 +63,10 @@ export function AuthorMeta({
         </>
       }
     >
-      {(close) => (
+      {(close, labelId) => (
         <>
           <div className="author-meta__info">
-            <span className="t-subtle">{heading}{a ? ' by' : ''}</span>
+            <span className="t-subtle" id={labelId}>{heading}{a ? ' by' : ''}</span>
             {author && <Author source={author.source} label={author.label} />}
             <time dateTime={iso}>{fullDate(iso)}</time>
             {details}

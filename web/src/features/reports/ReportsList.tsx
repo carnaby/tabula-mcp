@@ -36,6 +36,8 @@ export function ReportsList({ project, projects }: { project?: string; projects:
   );
   useClampPage(list.data?.total, t.page, t.pageSize, t.setPage);
   const multiProject = !project && (projects?.filter((p) => p.id !== 'global').length ?? 0) > 1;
+  // On a project's tab, reports remember it so their back button returns here (the global list is the default).
+  const from = project ? href.project(project, 'reports') : undefined;
 
   return (
     <div className="t-stack">
@@ -51,7 +53,7 @@ export function ReportsList({ project, projects }: { project?: string; projects:
           options={[{ value: 'open', label: 'Open' }, { value: 'done', label: 'Done' }, { value: 'all', label: 'All' }]}
         />
         <span className="t-spacer" />
-        <ButtonLink href={href.report('new', scope || undefined)} variant="primary" icon="plus">New report</ButtonLink>
+        <ButtonLink href={href.report('new', scope || undefined, from)} variant="primary" icon="plus">New report</ButtonLink>
       </div>
 
       {list.error && <Alert tone="danger">{list.error.message}</Alert>}
@@ -60,14 +62,14 @@ export function ReportsList({ project, projects }: { project?: string; projects:
         (t.filters.q || t.filters.status !== 'open' || t.filters.project ? (
           <EmptyState icon="search" title="No reports match" action={<Button onClick={t.resetFilters}>Clear filters</Button>} />
         ) : (
-          <EmptyState icon="bug" title="No open bug reports" action={<ButtonLink href={href.report('new', scope || undefined)} variant="primary" icon="plus">Report a bug</ButtonLink>}>
+          <EmptyState icon="bug" title="No open bug reports" action={<ButtonLink href={href.report('new', scope || undefined, from)} variant="primary" icon="plus">Report a bug</ButtonLink>}>
             Testing on the phone? Record the screen, say what's wrong, add it here. An agent turns it into tasks.
           </EmptyState>
         ))}
       {list.data && list.data.items.length > 0 && (
         <div className="report-list" style={{ opacity: list.loading ? 0.6 : 1 }}>
           {list.data.items.map((r) => (
-            <a key={r.id} href={href.report(r.id)} className="t-card t-card--interactive report-card">
+            <a key={r.id} href={href.report(r.id, undefined, from)} className="t-card t-card--interactive report-card">
               <div className="report-card__top">
                 <span className="report-card__title">{r.title}</span>
                 <Badge tone={STATUS_TONE[r.status]}>{REPORT_STATUS_INFO[r.status].label}</Badge>

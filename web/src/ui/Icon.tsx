@@ -76,6 +76,10 @@ const ICONS = {
       <path d="M2 14h2M20 14h2M15 13v2M9 13v2" />
     </>
   ),
+  /** Claude as an author: an original spark (long straight rays, short diagonals, open centre), not a brand mark. */
+  claude: (
+    <path d="M12 2.5V9M12 15v6.5M2.5 12H9M15 12h6.5M14.1 9.9l2.85-2.85M9.9 9.9 7.05 7.05M14.1 14.1l2.85 2.85M9.9 14.1l-2.85 2.85" />
+  ),
   user: (
     <>
       <circle cx="12" cy="8" r="4" />

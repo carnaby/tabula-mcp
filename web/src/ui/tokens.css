@@ -72,6 +72,12 @@
   --kind-fact: #0f766e;
   --kind-fact-soft: #ccfbf1;
 
+  /* Authors: Claude Code red, claude.ai orange (icon on its soft disc ≥ 5:1). */
+  --author-code: #b91c1c;
+  --author-code-soft: #fee2e2;
+  --author-ai: #b33c0a;
+  --author-ai-soft: #ffedd5;
+
   --overlay: rgba(12, 10, 9, 0.42);
   --shadow-sm: 0 1px 2px rgba(28, 25, 23, 0.06);
   --shadow: 0 1px 3px rgba(28, 25, 23, 0.08), 0 4px 12px rgba(28, 25, 23, 0.05);
@@ -124,6 +130,11 @@
     --kind-fact: #5eead4;
     --kind-fact-soft: rgba(45, 212, 191, 0.14);
 
+    --author-code: #fca5a5;
+    --author-code-soft: rgba(248, 113, 113, 0.16);
+    --author-ai: #fdba74;
+    --author-ai-soft: rgba(251, 146, 60, 0.16);
+
     --overlay: rgba(0, 0, 0, 0.6);
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
     --shadow: 0 1px 3px rgba(0, 0, 0, 0.45), 0 4px 12px rgba(0, 0, 0, 0.3);
@@ -175,6 +186,11 @@
   --kind-decision-soft: rgba(167, 139, 250, 0.16);
   --kind-fact: #5eead4;
   --kind-fact-soft: rgba(45, 212, 191, 0.14);
+
+  --author-code: #fca5a5;
+  --author-code-soft: rgba(248, 113, 113, 0.16);
+  --author-ai: #fdba74;
+  --author-ai-soft: rgba(251, 146, 60, 0.16);
 
   --overlay: rgba(0, 0, 0, 0.6);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);

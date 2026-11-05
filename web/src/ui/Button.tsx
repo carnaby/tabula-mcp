@@ -65,6 +65,17 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
   );
 });
 
+/** An IconButton that is a link (e.g. "back"): opens in a new tab on long press / middle click like any link. */
+export function IconLink({
+  href, icon, label, variant = 'ghost', size = 'md', className,
+}: { href: string; icon: IconName; label: string; variant?: ButtonVariant; size?: 'md' | 'sm'; className?: string }) {
+  return (
+    <a href={href} className={classes(variant, size, cx('t-icon-btn', className))} aria-label={label} title={label}>
+      <Icon name={icon} />
+    </a>
+  );
+}
+
 export function ButtonLink({
   href, variant = 'default', size = 'md', icon, children, className,
 }: { href: string; variant?: ButtonVariant; size?: 'md' | 'sm'; icon?: IconName; children: ReactNode; className?: string }) {

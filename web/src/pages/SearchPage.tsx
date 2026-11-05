@@ -30,10 +30,12 @@ export function SearchPage({ q: initialQ, projects }: { q: string; projects: Pro
   }, [dq]);
 
   const open = async (h: SearchHit) => {
-    if (h.type === 'file') return navigate(href.file(h.project!, h.title));
-    if (h.type === 'thought') return navigate(href.thought(h.id));
-    if (h.type === 'report') return navigate(href.report(h.id));
-    if (h.type === 'note') return navigate(href.note(h.id));
+    // The editor's back button returns to this search with its query.
+    const from = href.search(dq);
+    if (h.type === 'file') return navigate(href.file(h.project!, h.title, from));
+    if (h.type === 'thought') return navigate(href.thought(h.id, from));
+    if (h.type === 'report') return navigate(href.report(h.id, undefined, from));
+    if (h.type === 'note') return navigate(href.note(h.id, from));
     try {
       setDialog({ mode: 'edit', memory: await api.memory(h.id) });
     } catch (e) {

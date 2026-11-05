@@ -2,21 +2,22 @@ import { useState } from 'react';
 import { api, ApiError } from '../api';
 import { invalidate, useQuery } from '../hooks/data';
 import { copyText, formatSize } from '../format';
-import { href, navigate } from '../router';
+import { backTarget, href, navigate } from '../router';
 import { Alert, Badge, Button, EmptyState, IconButton, Skeleton, useConfirm, useToast } from '../ui';
-import { FileAuthor, FileContent, TimeAgo } from './common';
+import { AuthorMeta, FileContent, TimeAgo } from './common';
+import { EditorBar } from './EditorBar';
 import { FileHistoryDialog } from './FileHistoryDialog';
 
-export function FileView({ project, path }: { project: string; path: string }) {
+export function FileView({ project, path, from }: { project: string; path: string; from?: string }) {
   const file = useQuery((s) => api.file(project, path, s), [project, path], { topics: ['files'] });
   const [history, setHistory] = useState(false);
   const { confirm } = useConfirm();
   const notify = useToast();
-  const back = href.project(project, 'files');
+  const back = backTarget(from, href.project(project, 'files'));
 
   if (file.error) {
     return (
-      <EmptyState icon="fileText" title="File not found" action={<Button onClick={() => navigate(back)}>Back to files</Button>}>
+      <EmptyState icon="fileText" title="File not found" action={<Button onClick={() => navigate(back.href)}>{back.label}</Button>}>
         {file.error instanceof ApiError && file.error.status === 404 ? 'It is not in this project.' : file.error.message}
       </EmptyState>
     );
@@ -43,29 +44,31 @@ export function FileView({ project, path }: { project: string; path: string }) {
 
   return (
     <div className="t-stack">
-      <a className="back-link" href={back}>← Files</a>
-      <div className="editor__bar">
-        <div className="editor__meta">
-          <strong className="t-mono">{path}</strong>
-          {f && (
-            <>
-              <span>·</span><span>v{f.version}</span>
-              <span>·</span><span>{formatSize(f.size)}</span>
-              <span>·</span><FileAuthor by={f.updatedBy} compact />
-              <TimeAgo iso={f.updatedAt} />
-              {f.isState && <Badge tone="accent">state</Badge>}
-              {f.deletedAt && <Badge>deleted</Badge>}
-            </>
-          )}
-        </div>
-        <span className="t-spacer" />
+      <EditorBar
+        back={back}
+        meta={
+          f ? (
+            <AuthorMeta
+              author={{ source: f.updatedBy === 'human' ? 'human' : 'agent', label: f.updatedBy }}
+              iso={f.updatedAt}
+              heading="Last changed"
+              details={<span className="t-subtle">Version {f.version} · {formatSize(f.size)}</span>}
+              onHistory={() => setHistory(true)}
+            />
+          ) : null
+        }
+      >
         {f && (
           <>
             <IconButton icon="copy" label="Copy content" onClick={async () => notify((await copyText(f.content)) ? 'Content copied' : 'Copy failed')} />
-            <IconButton icon="history" label="Version history" onClick={() => setHistory(true)} />
             <IconButton icon={f.deletedAt ? 'undo' : 'trash'} label={f.deletedAt ? 'Restore' : 'Delete'} onClick={() => void toggleDeleted()} />
           </>
         )}
+      </EditorBar>
+      <div className="file-view__head">
+        <h2 className="file-view__path t-mono">{path}</h2>
+        {f?.isState && <Badge tone="accent">state</Badge>}
+        {f?.deletedAt && <Badge>deleted</Badge>}
       </div>
       {f?.deletedAt && <Alert tone="warn">Deleted <TimeAgo iso={f.deletedAt} />. Clones no longer receive it; restore it to sync it again.</Alert>}
       {!f ? <Skeleton height={320} /> : (

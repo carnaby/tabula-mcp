@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../api';
-import { Author, TimeAgo } from '../features/common';
+import { AuthorMeta } from '../features/common';
+import { EditorBar, SaveButton } from '../features/EditorBar';
 import { HistoryDialog } from '../features/HistoryDialog';
 import { invalidate, useQuery, useSaveShortcut, useUnsavedGuard } from '../hooks/data';
-import { href, navigate } from '../router';
+import { backTarget, href, navigate } from '../router';
 import type { Thought } from '../types';
 import {
-  Alert, Badge, Button, charCount, Counter, EmptyState, Field, IconButton, MarkdownEditor, Skeleton, TagInput, useConfirm, useToast,
+  Alert, Button, charCount, Counter, EmptyState, Field, IconButton, MarkdownEditor, Skeleton, TagInput, useConfirm, useToast,
 } from '../ui';
 
 type Draft = { title: string; body: string; tags: string[] };
@@ -14,13 +15,14 @@ const toDraft = (t: Thought | null): Draft => ({ title: t?.title ?? '', body: t?
 const same = (a: Draft, b: Draft) => a.title === b.title && a.body === b.body && a.tags.join('\u0001') === b.tags.join('\u0001');
 const isAgent = (t: Thought) => t.editedBy !== 'human';
 
-export function ThoughtEditorPage({ id }: { id: string }) {
+export function ThoughtEditorPage({ id, from }: { id: string; from?: string }) {
   const isNew = id === 'new';
+  const back = backTarget(from, href.thoughts());
   const loaded = useQuery((s) => api.thought(id, s), [id], { enabled: !isNew, refetchOnFocus: false });
   if (!isNew && loaded.error) {
     return (
       <main className="content">
-        <EmptyState icon="lightbulb" title="Thought not found" action={<Button onClick={() => navigate(href.thoughts())}>Back to Thoughts</Button>}>
+        <EmptyState icon="lightbulb" title="Thought not found" action={<Button onClick={() => navigate(back.href)}>{back.label}</Button>}>
           {loaded.error instanceof ApiError && loaded.error.status === 404 ? 'It may have been deleted.' : loaded.error.message}
         </EmptyState>
       </main>
@@ -35,10 +37,10 @@ export function ThoughtEditorPage({ id }: { id: string }) {
       </main>
     );
   }
-  return <Editor initial={isNew ? null : loaded.data!} />;
+  return <Editor initial={isNew ? null : loaded.data!} from={from} back={back} />;
 }
 
-function Editor({ initial }: { initial: Thought | null }) {
+function Editor({ initial, from, back }: { initial: Thought | null; from?: string; back: { href: string; label: string } }) {
   const [base, setBase] = useState<Thought | null>(initial);
   const [draft, setDraft] = useState<Draft>(toDraft(initial));
   const [saving, setSaving] = useState(false);
@@ -98,7 +100,7 @@ function Editor({ initial }: { initial: Thought | null }) {
         notify('Thought saved');
         setBase(t);
         dirtyRef.current = false;
-        window.location.replace(href.thought(t.id));
+        window.location.replace(href.thought(t.id, from));
         return;
       }
       const t = await api.updateThought(base.id, { ...draft, ...(force ? {} : { expectedVersion: base.version }) });
@@ -139,7 +141,7 @@ function Editor({ initial }: { initial: Thought | null }) {
       setDraft(toDraft(base));
       invalidate('thoughts');
       notify('Thought deleted');
-      window.location.replace(href.thoughts());
+      window.location.replace(back.href);
     } catch (e) {
       notify((e as Error).message, { tone: 'danger' });
     }
@@ -147,37 +149,31 @@ function Editor({ initial }: { initial: Thought | null }) {
 
   return (
     <main className="content">
-      <a className="back-link" href={href.thoughts()}>← Thoughts</a>
-
-      <div className="editor__bar">
-        <div className="editor__meta">
-          {base ? (
-            <>
-              <Author source={isAgent(base) ? 'agent' : 'human'} label={base.editedBy} />
-              <span>·</span>
-              <TimeAgo iso={base.updatedAt} />
-              <span>·</span>
-              <span>v{base.version}</span>
-              {base.archived && <Badge icon="archive">archived</Badge>}
-            </>
+      <EditorBar
+        back={back}
+        dirty={dirty}
+        meta={
+          base ? (
+            <AuthorMeta
+              author={{ source: isAgent(base) ? 'agent' : 'human', label: base.editedBy }}
+              iso={base.updatedAt}
+              details={<span className="t-subtle">Version {base.version}{base.archived ? ' · archived' : ''}</span>}
+              onHistory={() => setHistory(true)}
+            />
           ) : (
-            <span>New thought</span>
-          )}
-          {dirty && <span className="dirty-dot" title="Unsaved changes" />}
-        </div>
-        <span className="t-spacer" />
+            <span className="t-truncate">New thought</span>
+          )
+        }
+      >
         {base && (
           <>
             <IconButton icon="pin" label={base.pinned ? 'Unpin' : 'Pin to top'} pressed={base.pinned} onClick={() => toggle({ pinned: !base.pinned }, base.pinned ? 'Unpinned' : 'Pinned')} />
-            <IconButton icon="history" label="Version history" onClick={() => setHistory(true)} />
             <IconButton icon="archive" label={base.archived ? 'Restore from archive' : 'Archive'} pressed={base.archived} onClick={() => toggle({ archived: !base.archived }, base.archived ? 'Restored from archive' : 'Archived')} />
             <IconButton icon="trash" label="Delete" onClick={remove} />
           </>
         )}
-        <Button variant="primary" icon="check" loading={saving} disabled={invalid || (!dirty && !!base)} onClick={() => void save()} title="Save (Ctrl/⌘ S)">
-          Save
-        </Button>
-      </div>
+        <SaveButton loading={saving} disabled={invalid || (!dirty && !!base)} onClick={() => void save()} />
+      </EditorBar>
 
       {error && <Alert tone="danger">{error}</Alert>}
       {remote && (

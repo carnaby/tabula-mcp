@@ -11,8 +11,8 @@ import type { Project } from '../types';
 import { Badge, ButtonLink, EmptyState, Skeleton, Tabs } from '../ui';
 
 export function ProjectPage({
-  project, tab, path, projects,
-}: { project: string; tab: ProjectTab; path?: string; projects: Project[] | undefined }) {
+  project, tab, path, from, projects,
+}: { project: string; tab: ProjectTab; path?: string; from?: string; projects: Project[] | undefined }) {
   const p = projects?.find((x) => x.id === project);
   const reportCounts = useQuery((s) => api.reportCounts(s), [], { topics: ['reports'] });
   if (projects && !p) {
@@ -48,7 +48,7 @@ export function ProjectPage({
         ]}
       />
       {tab === 'state' && <StatePanel project={project} />}
-      {tab === 'files' && (path ? <FileView project={project} path={path} /> : <FilesPanel project={project} />)}
+      {tab === 'files' && (path ? <FileView project={project} path={path} from={from} /> : <FilesPanel project={project} />)}
       {tab === 'reports' && <ReportsList project={project} projects={projects} />}
       {tab === 'recall' && <RecallPanel project={project} />}
       {tab === 'setup' && <SetupPanel project={p} />}

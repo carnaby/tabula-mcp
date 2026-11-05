@@ -83,14 +83,14 @@ export function App() {
 function Page({ route, projects }: { route: Route; projects: Project[] | undefined }) {
   switch (route.name) {
     case 'thoughts': return <ThoughtsPage />;
-    case 'thought': return <ThoughtEditorPage id={route.id} />;
+    case 'thought': return <ThoughtEditorPage id={route.id} from={route.from} />;
     case 'notes': return <NotesPage />;
-    case 'note': return <NoteEditorPage id={route.id} />;
+    case 'note': return <NoteEditorPage id={route.id} from={route.from} />;
     case 'global': return <GlobalPage tab={route.tab} projects={projects} />;
     case 'search': return <SearchPage q={route.q} projects={projects} />;
     case 'reports': return <ReportsPage projects={projects} />;
-    case 'report': return <ReportPage id={route.id} project={route.project} projects={projects} />;
-    case 'project': return <ProjectPage project={route.project} tab={route.tab} path={route.path} projects={projects} />;
+    case 'report': return <ReportPage id={route.id} project={route.project} from={route.from} projects={projects} />;
+    case 'project': return <ProjectPage project={route.project} tab={route.tab} path={route.path} from={route.from} projects={projects} />;
     default:
       return (
         <main className="content">

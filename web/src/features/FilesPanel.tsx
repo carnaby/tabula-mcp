@@ -6,7 +6,7 @@ import { href, navigate } from '../router';
 import type { ProjectFile } from '../types';
 import { Alert, Badge, type Column, DataTable, EmptyState, Icon, SearchInput, Switch } from '../ui';
 import { Author, authorOf, TimeAgo } from './common';
-import { type FileGroup, groupFiles, ROOT_GROUP } from './file-groups';
+import { type FileGroup, groupFiles, ROOT_GROUP } from '../../../src/shared/file-groups';
 import { ListToolbar } from './ListToolbar';
 
 type Row = FileGroup<ProjectFile>['files'][number];

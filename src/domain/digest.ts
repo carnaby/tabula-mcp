@@ -1,3 +1,4 @@
+import { groupFiles, ROOT_GROUP } from '../shared/file-groups.js';
 import { shortIds } from './ids.js';
 import { DIGEST_BUDGET, estimateTokens } from './tokens.js';
 import type { MemoryKind } from './validation.js';
@@ -25,6 +26,9 @@ export type Digest = { text: string; tokens: number; trimmed: TrimStep[]; overBu
 const REST_TRIM_ORDER: TrimStep[] = ['files-collapsed', 'facts-omitted', 'gotchas-first-sentence', 'rules-first-sentence'];
 /** A state file keeps at least this many characters, or it is replaced by a pointer to read_file. */
 const MIN_STATE_CHARS = 200;
+
+/** The file list names this many files, the newest; the rest are counted and left to list_files. */
+export const DIGEST_FILES = 10;
 const EMPTY = 'No global rules and no synced files yet. Files appear here after `tabula push` in a repository with a `.tabula.json`.';
 
 export function firstSentence(text: string): string {
@@ -42,8 +46,6 @@ export function formatSize(bytes: number): string {
 const day = (d: Date) => d.toISOString().slice(0, 10);
 const newestFirst = <T extends { updatedAt: Date }>(items: T[]) =>
   [...items].sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
-const byPath = <T extends { path: string }>(items: T[]) =>
-  [...items].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 
 function globalSections(memories: DigestMemory[], ids: Map<string, string>, has: (s: TrimStep) => boolean): string[] {
   const line = (m: DigestMemory) => `- ${m.title} (#${ids.get(m.id)})`;
@@ -62,11 +64,25 @@ function globalSections(memories: DigestMemory[], ids: Map<string, string>, has:
   return out;
 }
 
+const monthDay = (d: Date) => d.toISOString().slice(5, 10);
+
+/** The newest files, grouped by folder like the Files tab of the UI (one line per folder); the rest are counted. */
 function filesSection(files: DigestFile[], has: (s: TrimStep) => boolean): string[] {
   if (files.length === 0) return [];
   if (has('files-collapsed')) return [`## Files\n- ${files.length} synced files — call \`list_files\` for the list`];
-  const lines = byPath(files).map((f) => `- ${f.path} — ${day(f.updatedAt)}, ${formatSize(f.size)}${f.isState ? ' (state)' : ''}`);
-  return [`## Files (${files.length}) — \`read_file\` for the content\n${lines.join('\n')}`];
+  const newest = [...files]
+    .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime() || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+    .slice(0, DIGEST_FILES);
+  const groups = groupFiles(newest.map((f) => ({ path: f.path, updatedAt: f.updatedAt.toISOString(), f })));
+  const lines = groups.map((g) => {
+    const items = g.files.map(({ file: { f }, name }) => `${name} (${monthDay(f.updatedAt)}, ${formatSize(f.size)}${f.isState ? ', state' : ''})`);
+    return `${g.key === ROOT_GROUP ? '/' : `${g.key}/`} — ${items.join(', ')}`;
+  });
+  const more = files.length - newest.length;
+  const head = more > 0
+    ? `## Files (${files.length}) — ${newest.length} newest; \`read_file\` for the content`
+    : `## Files (${files.length}) — \`read_file\` for the content`;
+  return [[head, ...lines, ...(more > 0 ? [`- ${more} more — \`list_files\``] : [])].join('\n')];
 }
 
 /** The state section in at most maxChars characters; files that do not fit are cut at a line break or replaced by a pointer. */

@@ -179,13 +179,15 @@ At the start of a session the agent calls `recall` once and gets plain text:
 # Where we are
 …
 
-## Files (14) — `read_file` for the content
-- docs/handoff/2026-10-26-state.md — 2026-10-26, 3.1 KB (state)
-- docs/superpowers/specs/2026-10-20-mixer-design.md — 2026-10-20, 18.4 KB
+## Files (14) — 10 newest; `read_file` for the content
+docs/handoff/ — 2026-10-26-state.md (10-26, 3.1 KB, state)
+docs/superpowers/ — specs/2026-10-20-mixer-design.md (10-20, 18.4 KB), plans/2026-10-20-mixer.md (10-20, 31.0 KB)
 …
+- 4 more — `list_files`
 ```
 
 - **Fixed order:** global rules → global gotchas → global facts and decisions (titles only) → project state → the file list.
+- **The file list** names the 10 newest files, one line per folder, grouped like the Files tab of the UI (the first two levels of the path; root files under `/`; `.superpowers/` last), and counts the rest for `list_files`. No references: an agent needs the paths.
 - **Budget of 3 000 tokens** (estimated as characters / 4). The global rules and the file list come first; the state gets the room they leave and is cut at a line break with a pointer to `read_file`. If the rules and the list alone are too long, the list collapses into a count, then facts collapse, then gotcha and rule bodies shrink to their first sentence.
 - **`include_state`:** Claude Code on a computer passes `false` — the hook already restored the files on disk. Claude Code on the web and claude.ai get the state in the digest.
 - **Plain text, not JSON.** The agent reads the digest rather than parsing it, and JSON would cost 30–40 % more tokens.
@@ -381,6 +383,7 @@ src/
   domain/       records, validation, search, digest builder, token estimate
   agent/        what agents may do (source tagging, read-only human records)
   mcp/          MCP server, tool descriptions, server instructions, CLAUDE.md section
+  shared/       pure helpers the UI builds too (references, grouping files by folder)
   http/         Fastify app, REST API, bearer auth, static UI
   db/           Drizzle schema, client, migrations runner
   maintenance/  one-off data migrations run inside the container

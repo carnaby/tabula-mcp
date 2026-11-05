@@ -14,7 +14,7 @@ export const TOOL_DESCRIPTIONS = {
   list_projects: `List Tabula projects: slug, one-line description, number of synced files and of active memories (global rules live in "global").
 Call it when you are unsure which project slug to use. Never invent a slug; projects are created by the human or, on the user's explicit request, by setup_project.`,
 
-  recall: `Call at the start of a session when the project's CLAUDE.md (or project instructions) names a Tabula project. Returns the global rules (follow them), the project state (the content of its handoff state files) and the list of the project's synced files. Pass include_state: false only where the \`tabula\` command restored the files to disk (Claude Code on a computer with the repository); in Claude Code on the web and in claude.ai keep the default (true). Without such a section do not call it, and never guess a slug.`,
+  recall: `Call at the start of a session when the project's CLAUDE.md (or project instructions) names a Tabula project. Returns the global rules (follow them), the project state (the content of its handoff state files) and the 10 newest of the project's synced files, grouped by folder (list_files has them all). Pass include_state: false only where the \`tabula\` command restored the files to disk (Claude Code on a computer with the repository); in Claude Code on the web and in claude.ai keep the default (true). Without such a section do not call it, and never guess a slug.`,
 
   search: `Full-text search over the global rules and the project's synced files (path and content). Use it when you need something specific that recall did not show; open a file hit with read_file. Words match exactly; use "quoted phrases", OR and -exclusion. ${REF}`,
 

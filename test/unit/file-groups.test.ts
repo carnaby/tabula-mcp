@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fileGroupKey, groupFiles } from '../../web/src/features/file-groups.js';
+import { fileGroupKey, groupFiles } from '../../src/shared/file-groups.js';
 
 const f = (path: string, updatedAt: string) => ({ path, updatedAt });
 

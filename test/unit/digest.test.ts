@@ -47,8 +47,8 @@ const FULL = [
   'Next: write the CLI.',
   '',
   '## Files (2) — `read_file` for the content',
-  '- docs/handoff/state.md — 2026-10-25, 300 B (state)',
-  '- docs/specs/design.md — 2026-10-20, 12.5 KB',
+  'docs/handoff/ — state.md (10-25, 300 B, state)',
+  'docs/specs/ — design.md (10-20, 12.5 KB)',
   '',
 ].join('\n');
 
@@ -62,7 +62,7 @@ describe('buildDigest', () => {
   it('leaves the state out when it is not asked for, but still marks state files', () => {
     const d = buildDigest({ ...fixture, state: undefined });
     expect(d.text).not.toContain('## Project state');
-    expect(d.text).toContain('- docs/handoff/state.md — 2026-10-25, 300 B (state)');
+    expect(d.text).toContain('docs/handoff/ — state.md (10-25, 300 B, state)');
   });
 
   it('explains an empty digest', () => {
@@ -110,14 +110,15 @@ describe('buildDigest', () => {
   });
 
   it('collapses the file list instead of overflowing when the list leaves no room for the state', () => {
-    // 257 files fill the budget almost exactly; the state section on top would overflow it.
-    const files = Array.from({ length: 257 }, (_, i) => file(`docs/specs/file-${String(i).padStart(3, '0')}.md`, 1000, 20));
+    const files = Array.from({ length: 12 }, (_, i) => file(`docs/specs/${'long-name-'.repeat(8)}${i}.md`, 1000, 20));
     files.push(file('docs/handoff/state.md', 300, 25, true));
     const input: DigestInput = { project: 'acme', date: '2026-10-26', memories: [], files, state: fixture.state };
-    expect(buildDigest({ ...input, state: undefined }).trimmed).toEqual([]);
-    const d = buildDigest(input);
+    // A budget the list alone fits in, but not together with the state.
+    const budget = estimateTokens(buildDigest({ ...input, state: undefined }).text) + 5;
+    expect(buildDigest({ ...input, state: undefined, budget }).trimmed).toEqual([]);
+    const d = buildDigest({ ...input, budget });
     expect(d.overBudget).toBe(false);
-    expect(d.tokens).toBeLessThanOrEqual(DIGEST_BUDGET);
+    expect(d.tokens).toBeLessThanOrEqual(budget);
     expect(d.trimmed).toContain('files-collapsed');
     expect(d.text).toContain('## Project state\n### docs/handoff/state.md (2026-10-25)\n# State\nNext: write the CLI.');
     expect(d.text).not.toContain('[omitted to fit the budget');
@@ -144,6 +145,56 @@ describe('buildDigest', () => {
     const d = buildDigest({ project: 'acme', date: '2026-10-26', memories: [a, b], files: [] });
     expect(d.text).toContain('(#abcd1)');
     expect(d.text).toContain('(#abcd2)');
+  });
+});
+
+describe('the file list', () => {
+  const at = (d: number, h = 0) => new Date(Date.UTC(2026, 10, d, h));
+  const f = (path: string, d: number, h = 0, isState = false): DigestFile => ({ path, size: 2048, updatedAt: at(d, h), isState });
+  const section = (files: DigestFile[]) =>
+    buildDigest({ project: 'acme', date: '2026-11-05', memories: [], files }).text.split('\n\n')[1]!.trimEnd();
+
+  it('shows the 10 newest files grouped by folder, newest group first, the work folder last, and counts the rest', () => {
+    const files = [
+      f('.superpowers/sdd/x/progress.md', 5, 10),
+      f('docs/plans/2026-11-05-bell.md', 5, 9),
+      f('docs/handoff/state.md', 5, 8, true),
+      f('docs/demo/people.md', 5, 7),
+      f('docs/plans/2026-11-04-live.md', 4),
+      f('README.local.md', 3),
+      ...Array.from({ length: 12 }, (_, i) => f(`docs/plans/old-${i}.md`, 1, i)),
+      ...Array.from({ length: 6 }, (_, i) => f(`docs/specs/s-${i}.md`, 0)),
+    ];
+    expect(section(files)).toBe([
+      '## Files (24) — 10 newest; `read_file` for the content',
+      'docs/plans/ — 2026-11-05-bell.md (11-05, 2.0 KB), 2026-11-04-live.md (11-04, 2.0 KB), old-11.md (11-01, 2.0 KB), old-10.md (11-01, 2.0 KB), old-9.md (11-01, 2.0 KB), old-8.md (11-01, 2.0 KB)',
+      'docs/handoff/ — state.md (11-05, 2.0 KB, state)',
+      'docs/demo/ — people.md (11-05, 2.0 KB)',
+      '/ — README.local.md (11-03, 2.0 KB)',
+      '.superpowers/ — sdd/x/progress.md (11-05, 2.0 KB)',
+      '- 14 more — `list_files`',
+    ].join('\n'));
+  });
+
+  it('picks the newest files by path when their times are equal', () => {
+    const files = Array.from({ length: 12 }, (_, i) => f(`docs/x/${String.fromCharCode(108 - i)}.md`, 5)); // l.md ... a.md
+    expect(section(files)).toBe([
+      '## Files (12) — 10 newest; `read_file` for the content',
+      `docs/x/ — ${'abcdefghij'.split('').map((c) => `${c}.md (11-05, 2.0 KB)`).join(', ')}`,
+      '- 2 more — `list_files`',
+    ].join('\n'));
+  });
+
+  it('lists every file without a count when there are at most 10', () => {
+    const s = section(Array.from({ length: 10 }, (_, i) => f(`n${i}.md`, 5, i)));
+    expect(s.split('\n')).toEqual([
+      '## Files (10) — `read_file` for the content',
+      `/ — ${Array.from({ length: 10 }, (_, i) => `n${9 - i}.md (11-05, 2.0 KB)`).join(', ')}`,
+    ]);
+  });
+
+  it('never contains references', () => {
+    expect(section([f('docs/a.md', 5)])).not.toContain('tabula:');
   });
 });
 

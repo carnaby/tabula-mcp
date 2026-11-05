@@ -96,10 +96,19 @@ export function TimeAgo({ iso }: { iso: string }) {
 }
 
 export function ProjectSelect({
-  projects, value, onChange, allowAll, size, id,
-}: { projects: Project[] | undefined; value: string; onChange: (v: string) => void; allowAll?: boolean; size?: 'sm'; id?: string }) {
-  // The API lists projects by activity (the sidebar's order); a picker stays alphabetical, a placeholder (empty id) and Global first.
-  const rank = (id: string) => (id === '' ? 0 : id === 'global' ? 1 : 2);
+  projects, value, onChange, allowAll, placeholder, size, id,
+}: {
+  projects: Project[] | undefined;
+  value: string;
+  onChange: (v: string) => void;
+  allowAll?: boolean;
+  /** An empty first option ("Pick a project…") for a value that is not chosen yet. */
+  placeholder?: boolean;
+  size?: 'sm';
+  id?: string;
+}) {
+  // The API lists projects by activity (the sidebar's order); a picker stays alphabetical with Global first.
+  const rank = (id: string) => (id === 'global' ? 0 : 1);
   const sorted = [...(projects ?? [])].sort((a, b) => rank(a.id) - rank(b.id) || a.id.localeCompare(b.id));
   return (
     <Select
@@ -110,6 +119,7 @@ export function ProjectSelect({
       onChange={onChange}
       options={[
         ...(allowAll ? [{ value: '', label: 'All projects' }] : []),
+        ...(placeholder ? [{ value: '', label: 'Pick a project…' }] : []),
         ...sorted.map((p) => ({ value: p.id, label: p.id === 'global' ? 'Global' : p.id })),
       ]}
     />

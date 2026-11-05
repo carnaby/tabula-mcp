@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '../api';
 import { AuthorMeta, authorInfo, authorOf, ProjectSelect } from '../features/common';
+import { CopyRefButton } from '../features/CopyRefButton';
 import { EditorBar, SaveButton } from '../features/EditorBar';
 import { Attachments } from '../features/reports/Attachments';
 import { canRecordScreen, canRecordVoice, Recorder } from '../features/reports/Recorder';
@@ -251,7 +252,12 @@ function Editor({
           )
         }
       >
-        {base && <IconButton icon="trash" label="Delete report" onClick={() => void remove()} />}
+        {base && (
+          <>
+            <CopyRefButton id={base.id} />
+            <IconButton icon="trash" label="Delete report" onClick={() => void remove()} />
+          </>
+        )}
         <SaveButton loading={saving} disabled={!!base && !textDirty} onClick={() => void save()} />
       </EditorBar>
 
@@ -266,7 +272,8 @@ function Editor({
               ) : (
                 <ProjectSelect
                   id={fid}
-                  projects={[{ id: '', name: 'Pick a project…', description: '', memory_count: 0, file_count: 0, last_activity_at: '' }, ...(projects ?? [])]}
+                  projects={projects}
+                  placeholder
                   value={draft.projectId}
                   onChange={async (projectId) => {
                     setDraft({ ...draft, projectId });

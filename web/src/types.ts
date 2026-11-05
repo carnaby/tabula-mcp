@@ -82,6 +82,7 @@ export type SearchHit = {
 };
 
 export type ProjectFile = {
+  id: string;
   path: string;
   sha256: string;
   size: number;

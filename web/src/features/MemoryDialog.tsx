@@ -5,6 +5,7 @@ import { fullDate, shortId } from '../format';
 import { KIND_INFO, KINDS, type Memory, type MemoryKind, type Project } from '../types';
 import { Alert, Badge, Button, Counter, Dialog, Field, Input, TagInput, Textarea, useConfirm, useToast, charCount } from '../ui';
 import { Author, authorIcon, AuthorMeta, authorInfo, KindBadge, ProjectSelect } from './common';
+import { CopyRefButton } from './CopyRefButton';
 
 export type MemoryDialogState =
   | { mode: 'edit'; memory: Memory }
@@ -79,21 +80,24 @@ function MemoryDialogInner({ state, onClose, projects }: { state: MemoryDialogSt
         size="lg"
         headerExtra={
           memory && (
-            <AuthorMeta
-              author={{ source: memory.source, label: memory.agentLabel }}
-              iso={memory.createdAt}
-              heading="Written"
-              details={
-                <>
-                  {memory.updatedAt !== memory.createdAt && <span className="t-subtle">Updated {fullDate(memory.updatedAt)}</span>}
-                  <span className="t-subtle">Id <span className="t-mono">{shortId(memory.id)}</span></span>
-                </>
-              }
-              onHistory={hasChain ? () => {
-                setShowChain(true);
-                requestAnimationFrame(() => chainRef.current?.scrollIntoView({ block: 'nearest' }));
-              } : undefined}
-            />
+            <>
+              <AuthorMeta
+                author={{ source: memory.source, label: memory.agentLabel }}
+                iso={memory.createdAt}
+                heading="Written"
+                details={
+                  <>
+                    {memory.updatedAt !== memory.createdAt && <span className="t-subtle">Updated {fullDate(memory.updatedAt)}</span>}
+                    <span className="t-subtle">Id <span className="t-mono">{shortId(memory.id)}</span></span>
+                  </>
+                }
+                onHistory={hasChain ? () => {
+                  setShowChain(true);
+                  requestAnimationFrame(() => chainRef.current?.scrollIntoView({ block: 'nearest' }));
+                } : undefined}
+              />
+              <CopyRefButton id={memory.id} />
+            </>
           )
         }
         footer={

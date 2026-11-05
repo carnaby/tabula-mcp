@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api, ApiError } from '../api';
 import { AuthorMeta } from '../features/common';
+import { CopyRefButton } from '../features/CopyRefButton';
 import { EditorBar, SaveButton } from '../features/EditorBar';
 import { fullDate } from '../format';
 import { invalidate, useQuery, useSaveShortcut, useUnsavedGuard } from '../hooks/data';
@@ -121,6 +122,7 @@ function Editor({ initial, from, back }: { initial: Note | null; from?: string; 
       >
         {base && (
           <>
+            <CopyRefButton id={base.id} />
             <IconButton icon="pin" label={base.pinned ? 'Unpin' : 'Pin to top'} pressed={base.pinned} onClick={() => void togglePin()} />
             <IconButton icon="trash" label="Delete note" onClick={() => void remove()} />
           </>

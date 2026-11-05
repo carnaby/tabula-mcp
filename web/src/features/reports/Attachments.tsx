@@ -4,6 +4,7 @@ import { formatSize } from '../../format';
 import type { Attachment, TranscriptState, WorkerStatus } from '../../types';
 import { Badge, Button, Icon, IconButton, Textarea, useConfirm, useToast } from '../../ui';
 import { Author, authorOf } from '../common';
+import { CopyRefButton } from '../CopyRefButton';
 import { clock } from './Recorder';
 import { Transcript } from './Transcript';
 import type { Upload } from './uploads';
@@ -65,7 +66,10 @@ function FrameNote({ frame, onSaved }: { frame: Attachment; onSaved: (f: Attachm
   };
   return (
     <div className="att__note">
-      <span className="att__note-state t-subtle" role="status">{state === 'saving' ? 'Saving…' : state === 'saved' ? 'Saved' : ' '}</span>
+      <div className="att__note-head">
+        <span className="att__note-state t-subtle" role="status">{state === 'saving' ? 'Saving…' : state === 'saved' ? 'Saved' : ' '}</span>
+        <CopyRefButton id={frame.id} size="sm" />
+      </div>
       <Textarea
         rows={2}
         maxLength={NOTE_MAX}
@@ -138,6 +142,7 @@ function VideoCard({
           </Button>
         )}
         <span className="t-spacer" />
+        <CopyRefButton id={a.id} size="sm" />
         <IconButton size="sm" icon="trash" label="Delete video" onClick={onDelete} />
       </figcaption>
       {frames.length > 0 && (
@@ -192,6 +197,7 @@ function AudioCard({
         <span className="t-truncate">{a.fileName}</span>
         <span className="t-subtle t-nowrap">{a.durationMs !== null ? `${clock(a.durationMs)} · ` : ''}{formatSize(a.size)}</span>
         <span className="t-spacer" />
+        <CopyRefButton id={a.id} size="sm" />
         <IconButton size="sm" icon="trash" label="Delete voice note" onClick={onDelete} />
       </figcaption>
       <Transcript a={a} worker={worker} onSeek={a.url ? onSeek : undefined} onChange={onTranscript} currentMs={t * 1000} playing={playing} />
@@ -276,6 +282,7 @@ export function Attachments({
                 <span className="t-truncate t-subtle">{a.fileName}</span>
                 {a.kind === 'frame' && a.note && <span className="att__note-text">{a.note}</span>}
                 <span className="t-spacer" />
+                <CopyRefButton id={a.id} size="sm" />
                 <IconButton size="sm" icon="trash" label="Delete" onClick={() => void remove(a)} />
               </figcaption>
             </figure>

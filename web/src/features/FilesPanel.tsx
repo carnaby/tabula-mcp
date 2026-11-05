@@ -6,6 +6,7 @@ import { href, navigate } from '../router';
 import type { ProjectFile } from '../types';
 import { Alert, Badge, type Column, DataTable, EmptyState, Icon, SearchInput, Switch } from '../ui';
 import { Author, authorOf, TimeAgo } from './common';
+import { CopyRefButton } from './CopyRefButton';
 import { type FileGroup, groupFiles, ROOT_GROUP } from '../../../src/shared/file-groups';
 import { ListToolbar } from './ListToolbar';
 
@@ -30,6 +31,7 @@ const columns: Column<Row, never>[] = [
   { id: 'version', header: 'Version', width: 90, align: 'right', hideOnMobile: true, cell: ({ file: f }) => <span className="t-subtle">v{f.version}</span> },
   { id: 'by', header: 'By', width: 140, hideOnMobile: true, cell: ({ file: f }) => <Author {...authorOf(f.updatedBy)} /> },
   { id: 'updated', header: 'Updated', width: 130, align: 'right', cell: ({ file: f }) => <span className="t-subtle"><TimeAgo iso={f.updatedAt} /></span> },
+  { id: 'ref', header: 'Reference', width: 48, align: 'right', cell: ({ file: f }) => <CopyRefButton id={f.id} size="sm" /> },
 ];
 
 /** The project's synced files, grouped by folder (the first two levels); the agent work folder last and collapsed. */

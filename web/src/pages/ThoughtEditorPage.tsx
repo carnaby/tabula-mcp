@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../api';
 import { AuthorMeta, authorInfo, authorOf } from '../features/common';
+import { CopyRefButton } from '../features/CopyRefButton';
 import { EditorBar, SaveButton } from '../features/EditorBar';
 import { HistoryDialog } from '../features/HistoryDialog';
 import { invalidate, useQuery, useSaveShortcut, useUnsavedGuard } from '../hooks/data';
@@ -166,6 +167,7 @@ function Editor({ initial, from, back }: { initial: Thought | null; from?: strin
       >
         {base && (
           <>
+            <CopyRefButton id={base.id} />
             <IconButton icon="pin" label={base.pinned ? 'Unpin' : 'Pin to top'} pressed={base.pinned} onClick={() => toggle({ pinned: !base.pinned }, base.pinned ? 'Unpinned' : 'Pinned')} />
             <IconButton icon="archive" label={base.archived ? 'Restore from archive' : 'Archive'} pressed={base.archived} onClick={() => toggle({ archived: !base.archived }, base.archived ? 'Restored from archive' : 'Archived')} />
             <IconButton icon="trash" label="Delete" onClick={remove} />

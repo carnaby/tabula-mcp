@@ -218,6 +218,10 @@ describe('bug reports over MCP', () => {
       ref: `tabula:${frame.id.slice(0, 8)}`, kind: 'frame', at_s: 2, note: 'The spinner never stops.', report: ref, report_title: 'Spinner',
     });
 
+    const bare = await tool('get', { id: frame.id.slice(0, 8) });
+    expect(bare.isError).toBe(false);
+    expect(bare.content[0]!.text).toBe(`tabula:${frame.id.slice(0, 8)} · frame of bug report ${ref} · project demo · f.png`);
+
     const audio = await uploadFile(id, silentWav(1), 'audio/wav', 'voice.wav');
     await db.update(reportAttachments).set({ purgedAt: new Date() }).where(eq(reportAttachments.id, audio.id));
     const rec = await tool('get', { id: `tabula:${audio.id.slice(0, 8)}` });

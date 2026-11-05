@@ -97,6 +97,26 @@ describe('resolveRecord', () => {
   });
 });
 
+describe('resolveRecord with 8+ hex', () => {
+  it('reaches files and attachments from a bare or # prefix, in any case', async () => {
+    await seedProject(db, 'demo');
+    const report = await createReport(db, { projectId: 'demo', title: 'Video' }, HUMAN);
+    const frame = await attachment(report.id, 'frame');
+    await putFile(db, 'demo', { path: 'docs/plan.md', content: 'x', baseSha256: null }, 'cli');
+    const [file] = await db.select().from(projectFiles).where(eq(projectFiles.path, 'docs/plan.md'));
+    for (const [id, type] of [[frame.id, 'attachment'], [file!.id, 'file']] as const) {
+      const hex = id.slice(0, 8);
+      for (const form of [hex, `#${hex}`, hex.toUpperCase(), `#${hex.toUpperCase()}`, `tabula:${hex}`, id.slice(0, 13)]) {
+        expect((await resolveRecord(db, form)).type, form).toBe(type);
+      }
+    }
+  });
+
+  it('shows a missed 8+ hex id as a reference, without the short-id hint', async () => {
+    await expect(resolveRecord(db, 'ffff0000')).rejects.toMatchObject({ code: 'not_found', message: 'no record matches tabula:ffff0000' });
+  });
+});
+
 describe('resolveRecord misses', () => {
   it('points a missed old short id at the tabula: form for files and attachments', async () => {
     await expect(resolveRecord(db, '#ffff')).rejects.toMatchObject({

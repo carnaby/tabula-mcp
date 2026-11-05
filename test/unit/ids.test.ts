@@ -8,7 +8,7 @@ const C = 'b7c01234-0000-4000-8000-000000000003';
 describe('parseIdRef', () => {
   it('parses a full uuid', () => expect(parseIdRef(A.toUpperCase())).toEqual({ kind: 'full', id: A }));
   it('parses a #prefix as the old short form', () => expect(parseIdRef('#a1f3')).toEqual({ kind: 'prefix', prefix: 'a1f3', legacy: true }));
-  it('parses a bare prefix with dashes as hex', () => expect(parseIdRef('a1f3c2d4-00')).toEqual({ kind: 'prefix', prefix: 'a1f3c2d400', legacy: true }));
+  it('parses a bare prefix with dashes as hex; 8+ hex is not legacy', () => expect(parseIdRef('a1f3c2d4-00')).toEqual({ kind: 'prefix', prefix: 'a1f3c2d400', legacy: false }));
   it('parses tabula: references in any case, with spaces and dashes', () => {
     expect(parseIdRef('tabula:a1f3c2d4')).toEqual({ kind: 'prefix', prefix: 'a1f3c2d4', legacy: false });
     expect(parseIdRef(' TABULA: A1F3 ')).toEqual({ kind: 'prefix', prefix: 'a1f3', legacy: false });

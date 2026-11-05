@@ -17,7 +17,7 @@ import { claudeMdSection, TABULA_JSON } from './snippet.js';
 const SETUP_NEXT_STEP =
   'Save tabula_json as .tabula.json in the repository root, then run `tabula status` before the first `tabula push` and check the files it lists; narrow "sync" if it would upload more than the untracked files meant for Tabula.';
 
-const idParam = z.string().describe('A reference "tabula:xxxxxxxx", a full uuid, or the short #xxxx id shown in recall.');
+const idParam = z.string().describe('A reference "tabula:xxxxxxxx", a full uuid, or the short #xxxx id shown in recall. Pass a tabula: reference as given, with its prefix.');
 const projectParam = z.string().describe('Project slug from the "Memory (Tabula)" section, e.g. "acme".');
 const kindParam = z.enum(MEMORY_KINDS);
 

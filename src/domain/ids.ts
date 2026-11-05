@@ -3,11 +3,13 @@ import { badRequest } from './errors.js';
 
 /**
  * A record id as agents and the UI pass it; `prefix` is hex without dashes (dashes and letter case never matter).
- * `tabula:` references and full uuids reach every record type. The older short form (`#a1f3` or bare hex) is
- * `legacy`: it keeps the scope it had when only rules, notes, thoughts and reports had ids, so a rule's short id
+ * `tabula:` references and full uuids reach every record type. The older short form (`#a1f3` or bare hex of fewer
+ * than 8 characters) is `legacy`: it keeps the scope it had when only rules, notes, thoughts and reports had ids, so a rule's short id
  * from recall cannot turn ambiguous because a file or an attachment id starts with the same characters.
  */
 export type IdRef = { kind: 'full'; id: string } | { kind: 'prefix'; prefix: string; legacy: boolean };
+
+const FULL_SCOPE_MIN_HEX = 8;
 
 export function parseIdRef(raw: string): IdRef {
   const v = raw.trim().toLowerCase();
@@ -18,7 +20,7 @@ export function parseIdRef(raw: string): IdRef {
     if (hex.length === 32) {
       return { kind: 'full', id: `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}` };
     }
-    return { kind: 'prefix', prefix: hex, legacy: !isRef };
+    return { kind: 'prefix', prefix: hex, legacy: !isRef && hex.length < FULL_SCOPE_MIN_HEX };
   }
   throw badRequest(`id "${raw}" must be a reference (tabula:a1f3c2d4), a uuid or its first 4+ hex characters (e.g. #a1f3)`);
 }

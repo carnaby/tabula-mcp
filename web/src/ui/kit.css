@@ -146,8 +146,27 @@ button, input, select, textarea {
 .t-icon-btn {
   padding: 0;
   width: var(--control-h);
+  flex: none;
 }
+a.t-btn { text-decoration: none; }
 .t-icon-btn.t-btn--sm { width: var(--control-h-sm); }
+
+/* In-text toggles: accent text, no box until hover; the negative margin keeps the text aligned with its block. */
+.t-text-btn {
+  min-height: 32px;
+  margin-left: -6px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--accent-strong);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.t-text-btn:hover { background: var(--surface-hover); }
 .t-icon-btn[aria-pressed='true'] {
   --btn-bg: var(--accent-soft);
   --btn-fg: var(--accent-soft-fg);
@@ -407,7 +426,7 @@ button, input, select, textarea {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 28px;
+  height: var(--chip-h, 28px);
   padding: 0 11px;
   border-radius: var(--radius-full);
   border: 1px solid var(--border);
@@ -421,7 +440,20 @@ button, input, select, textarea {
 .t-chip:hover { border-color: var(--border-strong); color: var(--text); }
 .t-chip[aria-pressed='true'] { background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }
 .t-chip__count { opacity: 0.65; font-variant-numeric: tabular-nums; }
-.t-chip-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.t-chip-row { --chip-h: 28px; position: relative; display: flex; gap: 6px; flex-wrap: wrap; }
+/* Touch screens: chips get a 32px tap target. */
+@media (pointer: coarse), (max-width: 640px) {
+  .t-chip-row { --chip-h: 32px; }
+}
+/* Collapsed to `--chip-rows` rows; the padding keeps the focus ring of the edge chips inside the clip. */
+.t-chip-row[data-collapsed='true'] {
+  max-height: calc(var(--chip-rows, 4) * var(--chip-h) + (var(--chip-rows, 4) - 1) * 6px + 8px);
+  margin: -4px;
+  padding: 4px;
+  overflow: hidden;
+}
+/* Chips below the cut are clipped; hidden too, so Tab does not land on them. */
+.t-chip-row[data-collapsed='true'] > .t-chip--cut { visibility: hidden; }
 
 .t-kbd {
   display: inline-flex;
@@ -624,8 +656,9 @@ button, input, select, textarea {
 .t-pagination__info { font-variant-numeric: tabular-nums; padding: 0 6px; white-space: nowrap; }
 .t-pagination__size { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
 .t-pagination__size .t-select { width: auto; }
+.t-table-sort { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+.t-table-sort .t-select { flex: 1; width: auto; }
 
-.t-table-wrap .t-mobile-sort { display: none; }
 
 /* Narrow screens: each row becomes a card. */
 @media (max-width: 760px) {
@@ -656,7 +689,6 @@ button, input, select, textarea {
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
   }
-  .t-table-wrap .t-mobile-sort { display: flex; }
   .t-table-foot { justify-content: center; }
   .t-pagination__size { display: none; }
 }
@@ -843,7 +875,71 @@ button, input, select, textarea {
   flex: none;
 }
 .t-avatar--agent { background: var(--accent-soft); color: var(--accent-soft-fg); border-color: transparent; }
+.t-avatar--code { background: var(--author-code-soft); color: var(--author-code); border-color: transparent; }
+.t-avatar--ai { background: var(--author-ai-soft); color: var(--author-ai); border-color: transparent; }
 .t-avatar .t-icon { width: 13px; height: 13px; }
+.t-avatar--code .t-icon, .t-avatar--ai .t-icon { stroke-width: 2.4; }
+
+.t-author { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; vertical-align: middle; }
+
+/* ---------- Popover ---------- */
+
+.t-popover { position: relative; display: inline-flex; min-width: 0; max-width: 100%; }
+.t-popover__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: var(--control-h);
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.t-popover__trigger:hover, .t-popover__trigger[aria-expanded='true'] { background: var(--surface-hover); }
+.t-popover__panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  display: grid;
+  gap: 2px;
+  width: max-content;
+  min-width: 200px;
+  max-width: min(300px, calc(100vw - 32px));
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-lg);
+  font-size: var(--text-sm);
+  text-align: left;
+  animation: t-fade 120ms var(--ease);
+}
+.t-popover__panel hr { border: 0; border-top: 1px solid var(--border); margin: 4px -6px; }
+.t-popover__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: var(--control-h);
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-weight: 550;
+  text-align: left;
+  cursor: pointer;
+}
+.t-popover__item:hover { background: var(--surface-hover); }
+.t-popover__item .t-icon { color: var(--text-muted); }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }

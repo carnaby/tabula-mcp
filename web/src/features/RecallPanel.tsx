@@ -2,6 +2,7 @@ import { api } from '../api';
 import { useQuery } from '../hooks/data';
 import { copyText } from '../format';
 import { Alert, Badge, Button, Skeleton, useToast } from '../ui';
+import { InfoLine } from './PageHeader';
 
 const TRIM_LABELS: Record<string, string> = {
   'files-collapsed': 'file list collapsed',
@@ -20,9 +21,12 @@ export function RecallPanel({ project }: { project: string }) {
 
   return (
     <div className="t-stack">
-      <p className="t-muted">
-        The exact digest an agent receives from <code className="t-mono">recall("{project}")</code>: the global rules, the project state and the list of synced files. Claude Code asks for it without the state (the files are on disk); claude.ai gets it as shown.
-      </p>
+      <InfoLine
+        label="About the recall preview"
+        more="The global rules, the project state and the list of synced files. Claude Code asks for it without the state (the files are on disk); claude.ai gets it as shown."
+      >
+        The exact digest an agent receives from <code className="t-mono">recall("{project}")</code>.
+      </InfoLine>
       {q.error && <Alert tone="danger">{q.error.message}</Alert>}
       <div className="t-card t-card--pad t-stack">
         <div className="meter">

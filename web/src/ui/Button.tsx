@@ -65,6 +65,22 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
   );
 });
 
+/** A small accent text button for in-text toggles ("More" / "Less", "Show all" / "Show less"); 32px tap target. */
+export function TextButton({ className, type = 'button', ...rest }: ButtonHTMLAttributes<HTMLButtonElement>) {
+  return <button type={type} className={cx('t-text-btn', className)} {...rest} />;
+}
+
+/** An IconButton that is a link (e.g. "back"): opens in a new tab on long press / middle click like any link. */
+export function IconLink({
+  href, icon, label, variant = 'ghost', size = 'md', className,
+}: { href: string; icon: IconName; label: string; variant?: ButtonVariant; size?: 'md' | 'sm'; className?: string }) {
+  return (
+    <a href={href} className={classes(variant, size, cx('t-icon-btn', className))} aria-label={label} title={label}>
+      <Icon name={icon} />
+    </a>
+  );
+}
+
 export function ButtonLink({
   href, variant = 'default', size = 'md', icon, children, className,
 }: { href: string; variant?: ButtonVariant; size?: 'md' | 'sm'; icon?: IconName; children: ReactNode; className?: string }) {

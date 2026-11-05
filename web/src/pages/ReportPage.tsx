@@ -1,24 +1,28 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '../api';
-import { Author, ProjectSelect, TimeAgo } from '../features/common';
+import { AuthorMeta, authorInfo, authorOf, ProjectSelect } from '../features/common';
+import { EditorBar, SaveButton } from '../features/EditorBar';
 import { Attachments } from '../features/reports/Attachments';
 import { canRecordScreen, canRecordVoice, Recorder } from '../features/reports/Recorder';
 import { STATUS_TONE } from '../features/reports/ReportsList';
 import { useUploads } from '../features/reports/uploads';
 import { invalidate, usePersistentState, useQuery, useSaveShortcut, useUnsavedGuard } from '../hooks/data';
-import { href, navigate } from '../router';
+import { backTarget, href, navigate } from '../router';
 import { type Attachment, type Project, type Report, REPORT_STATUS_INFO, type ReportStatus } from '../types';
 import {
   Alert, Badge, Button, EmptyState, Field, IconButton, Input, Markdown, MarkdownEditor, Segmented, Skeleton, Textarea, useConfirm, useToast,
 } from '../ui';
 
-export function ReportPage({ id, project, projects }: { id: string; project?: string; projects: Project[] | undefined }) {
+export function ReportPage({
+  id, project, from, projects,
+}: { id: string; project?: string; from?: string; projects: Project[] | undefined }) {
   const isNew = id === 'new';
+  const back = backTarget(from, href.reports(), projects);
   const loaded = useQuery((s) => api.report(id, s), [id], { enabled: !isNew, refetchOnFocus: false });
   if (!isNew && loaded.error) {
     return (
       <main className="content">
-        <EmptyState icon="bug" title="Report not found" action={<Button onClick={() => navigate(href.reports())}>Back to reports</Button>}>
+        <EmptyState icon="bug" title="Report not found" action={<Button onClick={() => navigate(back.href)}>{back.label}</Button>}>
           {loaded.error instanceof ApiError && loaded.error.status === 404 ? 'It may have been deleted.' : loaded.error.message}
         </EmptyState>
       </main>
@@ -31,6 +35,8 @@ export function ReportPage({ id, project, projects }: { id: string; project?: st
       initial={isNew ? null : (report as Report)}
       initialAttachments={attachments}
       defaultProject={project}
+      from={from}
+      back={back}
       projects={projects?.filter((p) => p.id !== 'global')}
     />
   );
@@ -39,8 +45,15 @@ export function ReportPage({ id, project, projects }: { id: string; project?: st
 type Draft = { projectId: string; title: string; body: string };
 
 function Editor({
-  initial, initialAttachments, defaultProject, projects,
-}: { initial: Report | null; initialAttachments: Attachment[]; defaultProject?: string; projects: Project[] | undefined }) {
+  initial, initialAttachments, defaultProject, from, back, projects,
+}: {
+  initial: Report | null;
+  initialAttachments: Attachment[];
+  defaultProject?: string;
+  from?: string;
+  back: { href: string; label: string };
+  projects: Project[] | undefined;
+}) {
   const [lastProject, setLastProject] = usePersistentState('tabula.report.project', { id: '' });
   const [base, setBase] = useState<Report | null>(initial);
   const [draft, setDraft] = useState<Draft>({
@@ -113,7 +126,7 @@ function Editor({
       setLastProject({ id: r.projectId });
       invalidate('reports');
       // Swap the address without remounting: uploads in progress keep going.
-      history.replaceState(null, '', href.report(r.id));
+      history.replaceState(null, '', href.report(r.id, undefined, from));
       return r;
     })().catch((e: unknown) => {
       creating.current = null; // let the next attempt try again
@@ -168,7 +181,7 @@ function Editor({
           setBase(r);
           setDraft((d) => ({ ...d, title: r.title, body: r.body, projectId: r.projectId }));
           setTriageDraft(r.triage);
-          if (r.editedBy !== 'human') notify(`Updated by ${r.editedBy}`);
+          if (r.editedBy !== 'human') notify(`Updated by ${authorInfo('agent', r.editedBy).name}`);
         }
       } catch { /* offline; the next save will tell */ }
     };
@@ -220,34 +233,27 @@ function Editor({
     await api.deleteReport(base.id);
     guard.current = false;
     invalidate('reports');
-    window.location.replace(href.reports());
+    window.location.replace(back.href);
   };
 
   const closed = base?.status === 'done';
 
   return (
     <main className="content">
-      <a className="back-link" href={href.reports()}>← Bug reports</a>
-
-      <div className="editor__bar">
-        <div className="editor__meta">
-          {base ? (
-            <>
-              <Author source={base.editedBy === 'human' ? 'human' : 'agent'} label={base.editedBy} />
-              <span>·</span>
-              <TimeAgo iso={base.updatedAt} />
-            </>
+      <EditorBar
+        back={back}
+        dirty={textDirty}
+        meta={
+          base ? (
+            <AuthorMeta author={authorOf(base.editedBy)} iso={base.updatedAt} />
           ) : (
-            <span>New bug report</span>
-          )}
-          {textDirty && <span className="dirty-dot" title="Unsaved changes" />}
-        </div>
-        <span className="t-spacer" />
+            <span className="t-truncate">New bug report</span>
+          )
+        }
+      >
         {base && <IconButton icon="trash" label="Delete report" onClick={() => void remove()} />}
-        <Button variant="primary" icon="check" loading={saving} disabled={!!base && !textDirty} onClick={() => void save()} title="Save (Ctrl/⌘ S)">
-          Save
-        </Button>
-      </div>
+        <SaveButton loading={saving} disabled={!!base && !textDirty} onClick={() => void save()} />
+      </EditorBar>
 
       {error && <Alert tone="danger">{error}</Alert>}
 

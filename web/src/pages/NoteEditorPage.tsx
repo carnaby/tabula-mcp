@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { api, ApiError } from '../api';
-import { TimeAgo } from '../features/common';
+import { AuthorMeta } from '../features/common';
+import { EditorBar, SaveButton } from '../features/EditorBar';
+import { fullDate } from '../format';
 import { invalidate, useQuery, useSaveShortcut, useUnsavedGuard } from '../hooks/data';
-import { href, navigate } from '../router';
+import { backTarget, href, navigate } from '../router';
 import type { Note } from '../types';
 import { Alert, Badge, Button, EmptyState, Field, IconButton, MarkdownEditor, Skeleton, TagInput, useConfirm, useToast } from '../ui';
 
@@ -10,13 +12,14 @@ type Draft = { title: string; body: string; tags: string[] };
 const toDraft = (n: Note | null): Draft => ({ title: n?.title ?? '', body: n?.body ?? '', tags: n?.tags ?? [] });
 const same = (a: Draft, b: Draft) => a.title === b.title && a.body === b.body && a.tags.join(',') === b.tags.join(',');
 
-export function NoteEditorPage({ id }: { id: string }) {
+export function NoteEditorPage({ id, from }: { id: string; from?: string }) {
   const isNew = id === 'new';
+  const back = backTarget(from, href.notes());
   const loaded = useQuery((s) => api.note(id, s), [id], { enabled: !isNew, refetchOnFocus: false });
   if (!isNew && loaded.error) {
     return (
       <main className="content">
-        <EmptyState icon="fileText" title="Note not found" action={<Button onClick={() => navigate(href.notes())}>Back to notes</Button>}>
+        <EmptyState icon="fileText" title="Note not found" action={<Button onClick={() => navigate(back.href)}>{back.label}</Button>}>
           {loaded.error instanceof ApiError && loaded.error.status === 404 ? 'It may have been deleted.' : loaded.error.message}
         </EmptyState>
       </main>
@@ -30,10 +33,10 @@ export function NoteEditorPage({ id }: { id: string }) {
       </main>
     );
   }
-  return <Editor initial={isNew ? null : loaded.data!} />;
+  return <Editor initial={isNew ? null : loaded.data!} from={from} back={back} />;
 }
 
-function Editor({ initial }: { initial: Note | null }) {
+function Editor({ initial, from, back }: { initial: Note | null; from?: string; back: { href: string; label: string } }) {
   const [base, setBase] = useState(initial);
   const [draft, setDraft] = useState(toDraft(initial));
   const [saving, setSaving] = useState(false);
@@ -57,7 +60,7 @@ function Editor({ initial }: { initial: Note | null }) {
       notify('Note saved');
       if (!base) {
         dirtyRef.current = false;
-        window.location.replace(href.note(n.id));
+        window.location.replace(href.note(n.id, from));
       }
     } catch (e) {
       setError((e as Error).message);
@@ -88,7 +91,7 @@ function Editor({ initial }: { initial: Note | null }) {
       setDraft(toDraft(base));
       invalidate('notes');
       notify('Note deleted');
-      window.location.replace(href.notes());
+      window.location.replace(back.href);
     } catch (e) {
       notify((e as Error).message, { tone: 'danger' });
     }
@@ -96,24 +99,34 @@ function Editor({ initial }: { initial: Note | null }) {
 
   return (
     <main className="content">
-      <a className="back-link" href={href.notes()}>← Notes</a>
-      <div className="editor__bar">
-        <div className="editor__meta">
-          {base ? <>Updated <TimeAgo iso={base.updatedAt} /></> : 'New note'}
-          {base?.projectId && <Badge tone="outline">{base.projectId}</Badge>}
-          {dirty && <span className="dirty-dot" title="Unsaved changes" />}
-        </div>
-        <span className="t-spacer" />
+      {/* Notes don't store who wrote them (agents only read them), so the bar shows when, not who. */}
+      <EditorBar
+        back={back}
+        dirty={dirty}
+        meta={
+          base ? (
+            <AuthorMeta
+              iso={base.updatedAt}
+              details={
+                <>
+                  <span className="t-subtle">Created {fullDate(base.createdAt)}</span>
+                  {base.projectId && <span><Badge tone="outline" icon="folder">{base.projectId}</Badge></span>}
+                </>
+              }
+            />
+          ) : (
+            <span className="t-truncate">New note</span>
+          )
+        }
+      >
         {base && (
           <>
             <IconButton icon="pin" label={base.pinned ? 'Unpin' : 'Pin to top'} pressed={base.pinned} onClick={() => void togglePin()} />
             <IconButton icon="trash" label="Delete note" onClick={() => void remove()} />
           </>
         )}
-        <Button variant="primary" icon="check" loading={saving} disabled={invalid || (!dirty && !!base)} onClick={() => void save()} title="Save (Ctrl/⌘ S)">
-          Save
-        </Button>
-      </div>
+        <SaveButton loading={saving} disabled={invalid || (!dirty && !!base)} onClick={() => void save()} />
+      </EditorBar>
       {error && <Alert tone="danger">{error}</Alert>}
       <div className="editor">
         <input

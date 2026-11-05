@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { api } from '../api';
 import { invalidate, useQuery } from '../hooks/data';
 import { fullDate, shortId } from '../format';
 import { KIND_INFO, KINDS, type Memory, type MemoryKind, type Project } from '../types';
 import { Alert, Badge, Button, Counter, Dialog, Field, Input, TagInput, Textarea, useConfirm, useToast, charCount } from '../ui';
-import { Author, KindBadge, ProjectSelect } from './common';
+import { Author, authorIcon, AuthorMeta, authorInfo, KindBadge, ProjectSelect } from './common';
 
 export type MemoryDialogState =
   | { mode: 'edit'; memory: Memory }
@@ -32,6 +32,7 @@ function MemoryDialogInner({ state, onClose, projects }: { state: MemoryDialogSt
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [showChain, setShowChain] = useState(false);
+  const chainRef = useRef<HTMLDivElement>(null);
   const [replace, setReplace] = useState<MemoryDialogState>(null);
   const { confirm, prompt } = useConfirm();
   const notify = useToast();
@@ -67,6 +68,7 @@ function MemoryDialogInner({ state, onClose, projects }: { state: MemoryDialogSt
       : run(() => api.createMemory({ ...draft, supersedesId: supersedes?.id ?? null }), supersedes ? 'New version saved; the old one is deprecated' : 'Memory created');
 
   const title = memory ? 'Edit memory' : supersedes ? 'Replace with a new version' : 'New memory';
+  const hasChain = !!memory && (!!memory.supersedesId || memory.status === 'deprecated');
 
   return (
     <>
@@ -75,7 +77,25 @@ function MemoryDialogInner({ state, onClose, projects }: { state: MemoryDialogSt
         onClose={close}
         title={title}
         size="lg"
-        headerExtra={memory && <Badge tone="outline">{shortId(memory.id)}</Badge>}
+        headerExtra={
+          memory && (
+            <AuthorMeta
+              author={{ source: memory.source, label: memory.agentLabel }}
+              iso={memory.createdAt}
+              heading="Written"
+              details={
+                <>
+                  {memory.updatedAt !== memory.createdAt && <span className="t-subtle">Updated {fullDate(memory.updatedAt)}</span>}
+                  <span className="t-subtle">Id <span className="t-mono">{shortId(memory.id)}</span></span>
+                </>
+              }
+              onHistory={hasChain ? () => {
+                setShowChain(true);
+                requestAnimationFrame(() => chainRef.current?.scrollIntoView({ block: 'nearest' }));
+              } : undefined}
+            />
+          )
+        }
         footer={
           <>
             {memory && (
@@ -131,7 +151,7 @@ function MemoryDialogInner({ state, onClose, projects }: { state: MemoryDialogSt
           </Alert>
         )}
         {memory?.source === 'agent' && (
-          <Alert icon="bot">Written by agent <strong>{memory.agentLabel ?? 'unknown'}</strong>. Your edits are not marked as human-written; agents can still supersede it.</Alert>
+          <Alert icon={authorIcon(authorInfo(memory.source, memory.agentLabel).kind)}>{authorInfo(memory.source, memory.agentLabel).title}. Your edits are not marked as human-written; agents can still supersede it.</Alert>
         )}
 
         {!memory && !supersedes && (
@@ -176,13 +196,12 @@ function MemoryDialogInner({ state, onClose, projects }: { state: MemoryDialogSt
           <>
             <dl className="meta-grid">
               <dt>Project</dt><dd>{memory.projectId}</dd>
-              <dt>Author</dt><dd><Author source={memory.source} label={memory.agentLabel} /></dd>
               <dt>Created</dt><dd>{fullDate(memory.createdAt)}</dd>
               <dt>Updated</dt><dd>{fullDate(memory.updatedAt)}</dd>
               <dt>Id</dt><dd className="t-mono">{memory.id}</dd>
             </dl>
-            {(memory.supersedesId || memory.status === 'deprecated') && (
-              <div className="t-stack" style={{ gap: 8 }}>
+            {hasChain && (
+              <div ref={chainRef} className="t-stack" style={{ gap: 8 }}>
                 <Button size="sm" icon="link" onClick={() => setShowChain(!showChain)} style={{ justifySelf: 'start' }}>
                   {showChain ? 'Hide' : 'Show'} version history
                 </Button>

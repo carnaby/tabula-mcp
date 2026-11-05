@@ -3,9 +3,9 @@ import { api } from '../api';
 import { useClampPage, useDebounced, useQuery, useTableState } from '../hooks/data';
 import { excerpt } from '../format';
 import { KIND_INFO, KINDS, type Memory, type MemoryKind, type MemorySort, type Project, type Source } from '../types';
-import { Alert, Badge, Button, type Column, DataTable, EmptyState, PAGE_SIZES, Pagination, SearchInput, Segmented, Select } from '../ui';
+import { Alert, Badge, Button, type Column, DataTable, EmptyState, PAGE_SIZES, Pagination, SearchInput, Segmented, Select, TableSort } from '../ui';
 import { Author, KindBadge, ProjectSelect, TimeAgo } from './common';
-import { FilterToggle } from './FilterToggle';
+import { ListToolbar } from './ListToolbar';
 import { MemoryDialog, type MemoryDialogState } from './MemoryDialog';
 
 type Filters = { q: string; kind: MemoryKind | ''; status: 'active' | 'deprecated' | 'all'; source: Source | ''; project: string };
@@ -15,7 +15,6 @@ export function MemoriesTable({ project, projects }: { project?: string; project
     sort: 'createdAt', dir: 'desc', filters: { q: '', kind: '', status: 'active', source: '', project: '' },
   });
   const [dialog, setDialog] = useState<MemoryDialogState>(null);
-  const [filtersOpen, setFiltersOpen] = useState(false);
   const q = useDebounced(t.filters.q);
   const scope = project ?? t.filters.project;
   const query = useQuery(
@@ -56,37 +55,36 @@ export function MemoriesTable({ project, projects }: { project?: string; project
 
   return (
     <div className="t-stack">
-      <div className="toolbar">
-        <SearchInput value={t.filters.q} onChange={(v) => t.setFilter('q', v)} placeholder="Search title, tags, body" />
-        <FilterToggle
-          open={filtersOpen}
-          onToggle={() => setFiltersOpen(!filtersOpen)}
-          active={[t.filters.kind, t.filters.source, t.filters.project, t.filters.status !== 'active'].filter(Boolean).length}
-        />
-        <div className="toolbar__filters" data-open={filtersOpen}>
-        {!project && <ProjectSelect projects={projects} value={t.filters.project} onChange={(v) => t.setFilter('project', v)} allowAll />}
-        <Select
-          aria-label="Kind"
-          value={t.filters.kind}
-          onChange={(v) => t.setFilter('kind', v)}
-          options={[{ value: '' as const, label: 'All kinds' }, ...KINDS.map((k) => ({ value: k, label: KIND_INFO[k].label }))]}
-        />
-        <Select
-          aria-label="Author"
-          value={t.filters.source}
-          onChange={(v) => t.setFilter('source', v)}
-          options={[{ value: '' as const, label: 'Anyone' }, { value: 'agent' as const, label: 'Agents' }, { value: 'human' as const, label: 'You' }]}
-        />
-        <Segmented
-          label="Status"
-          value={t.filters.status}
-          onChange={(v) => t.setFilter('status', v)}
-          options={[{ value: 'active', label: 'Active' }, { value: 'deprecated', label: 'Deprecated' }, { value: 'all', label: 'All' }]}
-        />
-        </div>
-        <span className="t-spacer" />
-        <Button variant="primary" icon="plus" onClick={() => setDialog({ mode: 'create', projectId: scope || 'global' })}>New memory</Button>
-      </div>
+      <ListToolbar
+        search={<SearchInput value={t.filters.q} onChange={(v) => t.setFilter('q', v)} placeholder="Search title, tags, body" />}
+        filters={
+          <>
+            {!project && <ProjectSelect projects={projects} value={t.filters.project} onChange={(v) => t.setFilter('project', v)} allowAll />}
+            <Select
+              aria-label="Kind"
+              value={t.filters.kind}
+              onChange={(v) => t.setFilter('kind', v)}
+              options={[{ value: '' as const, label: 'All kinds' }, ...KINDS.map((k) => ({ value: k, label: KIND_INFO[k].label }))]}
+            />
+            <Select
+              aria-label="Author"
+              value={t.filters.source}
+              onChange={(v) => t.setFilter('source', v)}
+              options={[{ value: '' as const, label: 'Anyone' }, { value: 'agent' as const, label: 'Agents' }, { value: 'human' as const, label: 'You' }]}
+            />
+            <Segmented
+              label="Status"
+              value={t.filters.status}
+              onChange={(v) => t.setFilter('status', v)}
+              options={[{ value: 'active', label: 'Active' }, { value: 'deprecated', label: 'Deprecated' }, { value: 'all', label: 'All' }]}
+            />
+          </>
+        }
+        // On wide screens the column headers sort; where the table turns into cards this picker takes over.
+        sort={<TableSort columns={columns} sort={{ sort: t.sort, dir: t.dir }} onSort={t.setSort} />}
+        active={[t.filters.kind, t.filters.source, t.filters.project, t.filters.status !== 'active', !(t.sort === 'createdAt' && t.dir === 'desc')].filter(Boolean).length}
+        action={<Button variant="primary" icon="plus" onClick={() => setDialog({ mode: 'create', projectId: scope || 'global' })}>New memory</Button>}
+      />
 
       {query.error && <Alert tone="danger">{query.error.message}</Alert>}
 

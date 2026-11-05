@@ -4,28 +4,40 @@ export type ProjectTab = 'state' | 'reports' | 'files' | 'recall' | 'setup';
 export type GlobalTab = 'rules' | 'recall';
 export type Route =
   | { name: 'thoughts' }
-  | { name: 'thought'; id: string | 'new' }
+  | { name: 'thought'; id: string | 'new'; from?: string }
   | { name: 'notes' }
-  | { name: 'note'; id: string | 'new' }
+  | { name: 'note'; id: string | 'new'; from?: string }
   | { name: 'global'; tab: GlobalTab }
   | { name: 'search'; q: string }
   | { name: 'reports' }
-  | { name: 'report'; id: string | 'new'; project?: string }
-  | { name: 'project'; project: string; tab: ProjectTab; path?: string }
+  /** `project` preselects the project of a new report; `from` is where the back button leads. */
+  | { name: 'report'; id: string | 'new'; project?: string; from?: string }
+  | { name: 'project'; project: string; tab: ProjectTab; path?: string; from?: string }
   | { name: 'notFound' };
 
+/** `?a=1&b=2` from the defined values, or '' when there are none. */
+const query = (params: Record<string, string | undefined>) => {
+  const q = new URLSearchParams(Object.entries(params).filter((e): e is [string, string] => !!e[1])).toString();
+  return q ? `?${q}` : '';
+};
+
+/**
+ * Editor links take an optional `from`: the address of the page the link is on, so the editor's back button returns
+ * there (a project's bug reports, a search with its query). It travels in the address, so a reloaded or shared link
+ * keeps it; without it the back button goes to the record type's own list.
+ */
 export const href = {
   thoughts: () => '#/thoughts',
-  thought: (id: string) => `#/thoughts/${id}`,
+  thought: (id: string, from?: string) => `#/thoughts/${id}${query({ from })}`,
   notes: () => '#/notes',
-  note: (id: string) => `#/notes/${id}`,
+  note: (id: string, from?: string) => `#/notes/${id}${query({ from })}`,
   global: (tab: GlobalTab = 'rules') => `#/global${tab === 'rules' ? '' : `/${tab}`}`,
   reports: () => '#/reports',
-  report: (id: string, project?: string) => `#/reports/${id}${project ? `?project=${encodeURIComponent(project)}` : ''}`,
+  report: (id: string, project?: string, from?: string) => `#/reports/${id}${query({ project, from })}`,
   search: (q = '') => `#/search${q ? `?q=${encodeURIComponent(q)}` : ''}`,
   project: (p: string, tab: ProjectTab = 'state') =>
     `#/p/${encodeURIComponent(p)}${tab === 'state' ? '' : `/${tab}`}`,
-  file: (p: string, path: string) => `#/p/${encodeURIComponent(p)}/files?path=${encodeURIComponent(path)}`,
+  file: (p: string, path: string, from?: string) => `#/p/${encodeURIComponent(p)}/files${query({ path, from })}`,
 };
 
 export function parse(hash: string): Route {
@@ -38,11 +50,12 @@ export function parse(hash: string): Route {
   }
   const params = new URLSearchParams(query);
   const [a, b, c, d] = parts;
-  if (!a || a === 'thoughts') return b ? { name: 'thought', id: b } : { name: 'thoughts' };
-  if (a === 'notes') return b ? { name: 'note', id: b } : { name: 'notes' };
+  const from = params.get('from') ?? undefined;
+  if (!a || a === 'thoughts') return b ? { name: 'thought', id: b, from } : { name: 'thoughts' };
+  if (a === 'notes') return b ? { name: 'note', id: b, from } : { name: 'notes' };
   if (a === 'global') return { name: 'global', tab: b === 'recall' ? 'recall' : 'rules' };
   if (a === 'search') return { name: 'search', q: params.get('q') ?? '' };
-  if (a === 'reports') return b ? { name: 'report', id: b, project: params.get('project') ?? undefined } : { name: 'reports' };
+  if (a === 'reports') return b ? { name: 'report', id: b, project: params.get('project') ?? undefined, from } : { name: 'reports' };
   // Links from earlier versions of the UI.
   if (a === 'memories' && !b) return { name: 'global', tab: 'rules' };
   if (a === 'recall' && !b) return { name: 'global', tab: 'recall' };
@@ -50,10 +63,52 @@ export function parse(hash: string): Route {
   if (a === 'p' && b) {
     if (!c) return { name: 'project', project: b, tab: 'state' };
     if (c === 'notes') return d ? { name: 'note', id: d } : { name: 'notes' };
-    if (c === 'files') return { name: 'project', project: b, tab: 'files', path: params.get('path') ?? undefined };
+    if (c === 'files') return { name: 'project', project: b, tab: 'files', path: params.get('path') ?? undefined, from };
     if (c === 'state' || c === 'reports' || c === 'recall' || c === 'setup') return { name: 'project', project: b, tab: c };
   }
   return { name: 'notFound' };
+}
+
+/**
+ * Where an editor's back button leads: the `from` address when it is a list page of this app, else `fallback`.
+ * Only list-like pages are accepted, so a crafted link can't send the button somewhere odd (or into a loop).
+ * With `projects`, the label names a project by its name instead of its slug.
+ */
+export function backTarget(
+  from: string | undefined,
+  fallback: string,
+  projects?: readonly { id: string; name: string }[],
+): { href: string; label: string } {
+  const name = (slug: string) => projects?.find((p) => p.id === slug)?.name || slug;
+  const target = from?.startsWith('#/') ? from : fallback;
+  const label = backLabel(parse(target), name);
+  if (label) return { href: target, label };
+  return { href: fallback, label: backLabel(parse(fallback), name) ?? 'Back' };
+}
+
+/**
+ * The section a page belongs to for the navigation: an editor opened from a project's list (its `from`) belongs to
+ * that project, everything else to itself.
+ */
+export function sectionOf(route: Route): Route {
+  const from = 'from' in route && route.from?.startsWith('#/') ? parse(route.from) : null;
+  return from?.name === 'project' ? from : route;
+}
+
+function backLabel(route: Route, name: (slug: string) => string): string | null {
+  switch (route.name) {
+    case 'thoughts': return 'Back to Thoughts';
+    case 'notes': return 'Back to Notes';
+    case 'reports': return 'Back to Bug reports';
+    case 'global': return 'Back to Global';
+    case 'search': return route.q ? `Back to search “${route.q}”` : 'Back to Search';
+    case 'project':
+      if (route.path) return null;
+      if (route.tab === 'reports') return `Back to ${name(route.project)} bug reports`;
+      if (route.tab === 'files') return `Back to ${name(route.project)} files`;
+      return `Back to ${name(route.project)}`;
+    default: return null;
+  }
 }
 
 /** Editors with unsaved changes register here; navigation asks before leaving them. */

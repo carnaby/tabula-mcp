@@ -22,7 +22,7 @@ export type Column<T, S extends string> = {
 };
 
 export function DataTable<T, S extends string>({
-  columns, rows, rowKey, onRowClick, sort, onSort, loading, empty, footer, rowMuted, label,
+  columns, rows, rowKey, onRowClick, sort, onSort, loading, empty, footer, rowMuted, label, headless,
 }: {
   columns: Column<T, S>[];
   rows: T[] | undefined;
@@ -35,41 +35,25 @@ export function DataTable<T, S extends string>({
   footer?: ReactNode;
   rowMuted?: (row: T) => boolean;
   label: string;
+  /** Column headers only for screen readers (e.g. several tables under their own group headings). */
+  headless?: boolean;
 }) {
   const toggle = (c: Column<T, S>) => {
     if (!c.sort || !onSort) return;
     if (sort?.sort === c.sort) onSort({ sort: c.sort, dir: sort.dir === 'asc' ? 'desc' : 'asc' });
     else onSort({ sort: c.sort, dir: c.firstDir ?? 'asc' });
   };
-  const sortable = columns.filter((c) => c.sort);
 
   return (
     <div className="t-table-wrap t-table-wrap--cards">
-      {sort && onSort && sortable.length > 0 && (
-        <div className="t-mobile-sort t-row" style={{ marginBottom: 10 }}>
-          <Select
-            size="sm"
-            aria-label="Sort by"
-            value={sort.sort}
-            onChange={(v) => {
-              const c = sortable.find((x) => x.sort === v)!;
-              onSort({ sort: v, dir: c.firstDir ?? 'asc' });
-            }}
-            options={sortable.map((c) => ({ value: c.sort!, label: `Sort: ${c.header}` }))}
-            style={{ width: 'auto', flex: 1 }}
-          />
-          <IconButton
-            variant="default"
-            size="sm"
-            icon={sort.dir === 'asc' ? 'arrowUp' : 'arrowDown'}
-            label={sort.dir === 'asc' ? 'Ascending' : 'Descending'}
-            onClick={() => onSort({ ...sort, dir: sort.dir === 'asc' ? 'desc' : 'asc' })}
-          />
-        </div>
-      )}
       <div className="t-table-scroll">
         <table className={cx('t-table', loading && rows && 't-table__loading')} aria-label={label} aria-busy={loading}>
-          <thead>
+          {headless && (
+            <colgroup>
+              {columns.map((c) => <col key={c.id} style={{ width: c.width }} />)}
+            </colgroup>
+          )}
+          <thead className={headless ? 't-sr-only' : undefined}>
             <tr>
               {columns.map((c) => {
                 const active = sort?.sort === c.sort && !!c.sort;
@@ -130,6 +114,34 @@ export function DataTable<T, S extends string>({
       </div>
       {rows?.length === 0 && empty}
       {footer && rows && rows.length > 0 && <div className="t-table-foot">{footer}</div>}
+    </div>
+  );
+}
+
+/** Sort by one of the sortable columns plus a direction toggle (for card layouts that have no column headers). */
+export function TableSort<T, S extends string>({
+  columns, sort, onSort, size, className,
+}: { columns: Column<T, S>[]; sort: SortState<S>; onSort: (s: SortState<S>) => void; size?: 'sm'; className?: string }) {
+  const sortable = columns.filter((c) => c.sort);
+  return (
+    <div className={cx('t-table-sort', className)}>
+      <Select
+        size={size}
+        aria-label="Sort by"
+        value={sort.sort}
+        onChange={(v) => {
+          const c = sortable.find((x) => x.sort === v)!;
+          onSort({ sort: v, dir: c.firstDir ?? 'asc' });
+        }}
+        options={sortable.map((c) => ({ value: c.sort!, label: `Sort: ${c.header}` }))}
+      />
+      <IconButton
+        variant="default"
+        size={size}
+        icon={sort.dir === 'asc' ? 'arrowUp' : 'arrowDown'}
+        label={sort.dir === 'asc' ? 'Ascending' : 'Descending'}
+        onClick={() => onSort({ ...sort, dir: sort.dir === 'asc' ? 'desc' : 'asc' })}
+      />
     </div>
   );
 }

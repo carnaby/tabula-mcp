@@ -25,7 +25,7 @@ function StateFile({ project, file }: { project: string; file: ProjectFile }) {
   return (
     <section className="t-card t-card--pad t-stack">
       <div className="t-row">
-        <a className="t-mono" href={href.file(project, file.path)}>{file.path}</a>
+        <a className="t-mono" href={href.file(project, file.path, href.project(project))}>{file.path}</a>
         <span className="t-spacer" />
         <span className="t-subtle"><TimeAgo iso={file.updatedAt} /></span>
       </div>

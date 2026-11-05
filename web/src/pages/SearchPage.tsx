@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { Highlighted, KindBadge, TimeAgo } from '../features/common';
 import { MemoryDialog, type MemoryDialogState } from '../features/MemoryDialog';
+import { PageHeader } from '../features/PageHeader';
 import { useDebounced, useQuery } from '../hooks/data';
 import { href, navigate } from '../router';
 import type { Project, SearchHit } from '../types';
@@ -30,10 +31,12 @@ export function SearchPage({ q: initialQ, projects }: { q: string; projects: Pro
   }, [dq]);
 
   const open = async (h: SearchHit) => {
-    if (h.type === 'file') return navigate(href.file(h.project!, h.title));
-    if (h.type === 'thought') return navigate(href.thought(h.id));
-    if (h.type === 'report') return navigate(href.report(h.id));
-    if (h.type === 'note') return navigate(href.note(h.id));
+    // The editor's back button returns to this search with its query.
+    const from = href.search(dq);
+    if (h.type === 'file') return navigate(href.file(h.project!, h.title, from));
+    if (h.type === 'thought') return navigate(href.thought(h.id, from));
+    if (h.type === 'report') return navigate(href.report(h.id, undefined, from));
+    if (h.type === 'note') return navigate(href.note(h.id, from));
     try {
       setDialog({ mode: 'edit', memory: await api.memory(h.id) });
     } catch (e) {
@@ -42,13 +45,12 @@ export function SearchPage({ q: initialQ, projects }: { q: string; projects: Pro
   };
 
   return (
-    <main className="content">
-      <div className="page-head">
-        <div className="page-head__text">
-          <h1>Search</h1>
-          <p>Global rules, project files, notes and thoughts at once. Words match as prefixes: “drizz pri” finds “Drizzle over Prisma”.</p>
-        </div>
-      </div>
+    <main className="content content--wide">
+      <PageHeader
+        title="Search"
+        description="Rules, files, reports, notes and thoughts."
+        more="Global rules, project files, bug reports, notes and thoughts at once. Words match as prefixes: “drizz pri” finds “Drizzle over Prisma”."
+      />
       <div className="search-hero">
         <SearchInput ref={input} value={q} onChange={setQ} placeholder="Search everything" />
       </div>

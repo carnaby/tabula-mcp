@@ -4,7 +4,7 @@ import { useQuery } from '../hooks/data';
 import { fullDate } from '../format';
 import type { Thought, ThoughtRevision } from '../types';
 import { Alert, Button, Dialog, EmptyState, Markdown, Skeleton } from '../ui';
-import { Author, TimeAgo } from './common';
+import { Author, authorOf, TimeAgo } from './common';
 
 export function HistoryDialog({
   thought, open, onClose, onRestore,
@@ -37,7 +37,7 @@ export function HistoryDialog({
             <strong>v{thought.version} · current</strong>
             <span className="t-subtle"><TimeAgo iso={thought.updatedAt} /></span>
           </div>
-          <Author source={thought.editedBy === 'human' ? 'human' : 'agent'} label={thought.editedBy} />
+          <Author {...authorOf(thought.editedBy)} />
         </div>
         {!revs.data && <Skeleton height={44} />}
         {revs.data?.length === 0 && <EmptyState icon="history" title="No earlier versions">The text hasn't been changed since it was written.</EmptyState>}
@@ -47,7 +47,7 @@ export function HistoryDialog({
               <strong className="t-truncate">v{r.version} · {r.title}</strong>
               <span className="t-subtle" title={fullDate(r.createdAt)}><TimeAgo iso={r.createdAt} /></span>
             </div>
-            <Author source={r.editedBy === 'human' ? 'human' : 'agent'} label={r.editedBy} />
+            <Author {...authorOf(r.editedBy)} />
           </button>
         ))}
       </div>

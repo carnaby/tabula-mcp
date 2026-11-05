@@ -4,6 +4,7 @@ import { href } from '../../router';
 import { type Project, REPORT_STATUS_INFO, type ReportSort, type ReportStatus, type ReportSummary } from '../../types';
 import { Alert, Badge, type BadgeTone, Button, ButtonLink, EmptyState, Icon, Pagination, SearchInput, Segmented, Skeleton } from '../../ui';
 import { ProjectSelect, TimeAgo } from '../common';
+import { ListToolbar } from '../ListToolbar';
 
 type Filters = { q: string; status: 'open' | 'done' | 'all'; project: string };
 export const STATUS_TONE: Record<ReportStatus, BadgeTone> = { new: 'accent', triaged: 'info', done: 'success' };
@@ -36,23 +37,29 @@ export function ReportsList({ project, projects }: { project?: string; projects:
   );
   useClampPage(list.data?.total, t.page, t.pageSize, t.setPage);
   const multiProject = !project && (projects?.filter((p) => p.id !== 'global').length ?? 0) > 1;
+  // On a project's tab, reports remember it so their back button returns here (the global list is the default).
+  const from = project ? href.project(project, 'reports') : undefined;
 
   return (
     <div className="t-stack">
-      <div className="toolbar">
-        <SearchInput value={t.filters.q} onChange={(v) => t.setFilter('q', v)} placeholder="Search reports" />
-        {multiProject && (
-          <ProjectSelect projects={projects?.filter((p) => p.id !== 'global')} value={t.filters.project} onChange={(v) => t.setFilter('project', v)} allowAll />
-        )}
-        <Segmented
-          label="Status"
-          value={t.filters.status}
-          onChange={(v) => t.setFilter('status', v)}
-          options={[{ value: 'open', label: 'Open' }, { value: 'done', label: 'Done' }, { value: 'all', label: 'All' }]}
-        />
-        <span className="t-spacer" />
-        <ButtonLink href={href.report('new', scope || undefined)} variant="primary" icon="plus">New report</ButtonLink>
-      </div>
+      <ListToolbar
+        search={<SearchInput value={t.filters.q} onChange={(v) => t.setFilter('q', v)} placeholder="Search reports" />}
+        quick={
+          <Segmented
+            label="Status"
+            value={t.filters.status}
+            onChange={(v) => t.setFilter('status', v)}
+            options={[{ value: 'open', label: 'Open' }, { value: 'done', label: 'Done' }, { value: 'all', label: 'All' }]}
+          />
+        }
+        filters={
+          multiProject && (
+            <ProjectSelect projects={projects?.filter((p) => p.id !== 'global')} value={t.filters.project} onChange={(v) => t.setFilter('project', v)} allowAll />
+          )
+        }
+        active={t.filters.project ? 1 : 0}
+        action={<ButtonLink href={href.report('new', scope || undefined, from)} variant="primary" icon="plus">New report</ButtonLink>}
+      />
 
       {list.error && <Alert tone="danger">{list.error.message}</Alert>}
       {!list.data && <div className="t-stack">{[0, 1, 2].map((i) => <Skeleton key={i} height={76} style={{ borderRadius: 12 }} />)}</div>}
@@ -60,14 +67,14 @@ export function ReportsList({ project, projects }: { project?: string; projects:
         (t.filters.q || t.filters.status !== 'open' || t.filters.project ? (
           <EmptyState icon="search" title="No reports match" action={<Button onClick={t.resetFilters}>Clear filters</Button>} />
         ) : (
-          <EmptyState icon="bug" title="No open bug reports" action={<ButtonLink href={href.report('new', scope || undefined)} variant="primary" icon="plus">Report a bug</ButtonLink>}>
+          <EmptyState icon="bug" title="No open bug reports" action={<ButtonLink href={href.report('new', scope || undefined, from)} variant="primary" icon="plus">Report a bug</ButtonLink>}>
             Testing on the phone? Record the screen, say what's wrong, add it here. An agent turns it into tasks.
           </EmptyState>
         ))}
       {list.data && list.data.items.length > 0 && (
         <div className="report-list" style={{ opacity: list.loading ? 0.6 : 1 }}>
           {list.data.items.map((r) => (
-            <a key={r.id} href={href.report(r.id)} className="t-card t-card--interactive report-card">
+            <a key={r.id} href={href.report(r.id, undefined, from)} className="t-card t-card--interactive report-card">
               <div className="report-card__top">
                 <span className="report-card__title">{r.title}</span>
                 <Badge tone={STATUS_TONE[r.status]}>{REPORT_STATUS_INFO[r.status].label}</Badge>

@@ -133,8 +133,8 @@
   font-size: var(--text-2xl);
   overflow-wrap: anywhere;
 }
-.page-head__info { color: var(--text-subtle); }
-.page-head__info[aria-expanded='true'] { --btn-bg: var(--accent-soft); --btn-fg: var(--accent-soft-fg); }
+.info-btn { color: var(--text-subtle); }
+.info-btn[aria-expanded='true'] { --btn-bg: var(--accent-soft); --btn-fg: var(--accent-soft-fg); }
 .page-head__desc { color: var(--text-muted); max-width: 680px; overflow-wrap: anywhere; }
 .page-head__desc[data-clamped='true'] {
   display: -webkit-box;
@@ -143,28 +143,17 @@
   overflow: hidden;
 }
 .page-head__clamp { display: grid; justify-items: start; gap: 2px; }
-.page-head__toggle {
-  min-height: 32px;
-  margin: -4px 0 -6px -6px;
-  padding: 0 6px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: none;
-  color: var(--accent-strong);
-  font: inherit;
-  font-size: var(--text-sm);
-  font-weight: 600;
-  cursor: pointer;
-}
-.page-head__toggle:hover { background: var(--surface-hover); }
-.page-head__more {
+.page-head__clamp > .t-text-btn { margin-top: -4px; margin-bottom: -6px; }
+.info-more {
   max-width: 680px;
   padding: 2px 0 2px 12px;
   border-left: 3px solid var(--border-strong);
   color: var(--text-muted);
   font-size: var(--text-sm);
 }
-.page-head__more[hidden] { display: none; }
+.info-more[hidden] { display: none; }
+.info-line { display: flex; align-items: flex-start; gap: 2px; }
+.info-line > p { flex: 1; min-width: 0; padding-top: 7px; }
 .page-head > .t-tabs { margin-top: 8px; }
 
 /* List toolbar (ListToolbar): search → quick filter → filters → sort … New. */
@@ -189,7 +178,6 @@
 }
 
 .tag-chips { display: grid; justify-items: start; gap: 4px; }
-.tag-chips__toggle.t-btn { height: 32px; margin-left: -6px; padding: 0 6px; color: var(--accent-strong); }
 
 /* Project files grouped by folder. */
 .file-groups { display: grid; gap: 14px; }
@@ -525,7 +513,6 @@ div.file-group__head { cursor: default; }
   .kind-picker { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .thought-grid { grid-template-columns: minmax(0, 1fr); }
   .thought-card { min-height: 0; }
-  .editor__label-hide-sm { display: none; }
   /* Save as an icon-only primary button; its label stays for screen readers (and in the tooltip). */
   .editor__save.t-btn { width: var(--control-h); padding: 0; }
   .editor__save .editor__save-label {

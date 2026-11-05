@@ -45,7 +45,7 @@ export function SearchPage({ q: initialQ, projects }: { q: string; projects: Pro
   };
 
   return (
-    <main className="content">
+    <main className="content content--wide">
       <PageHeader
         title="Search"
         description="Rules, files, reports, notes and thoughts."

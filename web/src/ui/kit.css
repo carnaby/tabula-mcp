@@ -150,6 +150,23 @@ button, input, select, textarea {
 }
 a.t-btn { text-decoration: none; }
 .t-icon-btn.t-btn--sm { width: var(--control-h-sm); }
+
+/* In-text toggles: accent text, no box until hover; the negative margin keeps the text aligned with its block. */
+.t-text-btn {
+  min-height: 32px;
+  margin-left: -6px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--accent-strong);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.t-text-btn:hover { background: var(--surface-hover); }
 .t-icon-btn[aria-pressed='true'] {
   --btn-bg: var(--accent-soft);
   --btn-fg: var(--accent-soft-fg);
@@ -642,7 +659,6 @@ a.t-btn { text-decoration: none; }
 .t-table-sort { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
 .t-table-sort .t-select { flex: 1; width: auto; }
 
-.t-table-wrap .t-mobile-sort { display: none; }
 
 /* Narrow screens: each row becomes a card. */
 @media (max-width: 760px) {
@@ -673,7 +689,6 @@ a.t-btn { text-decoration: none; }
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
   }
-  .t-table-wrap .t-mobile-sort { display: flex; }
   .t-table-foot { justify-content: center; }
   .t-pagination__size { display: none; }
 }

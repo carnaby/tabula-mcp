@@ -98,7 +98,6 @@ export function MemoriesTable({ project, projects }: { project?: string; project
         onRowClick={(m) => setDialog({ mode: 'edit', memory: m })}
         sort={{ sort: t.sort, dir: t.dir }}
         onSort={t.setSort}
-        mobileSort={false}
         empty={
           filtered ? (
             <EmptyState icon="search" title="No memories match" action={<Button onClick={t.resetFilters}>Clear filters</Button>}>

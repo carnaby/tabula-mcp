@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '../api';
-import { AuthorMeta, ProjectSelect } from '../features/common';
+import { AuthorMeta, authorInfo, authorOf, ProjectSelect } from '../features/common';
 import { EditorBar, SaveButton } from '../features/EditorBar';
 import { Attachments } from '../features/reports/Attachments';
 import { canRecordScreen, canRecordVoice, Recorder } from '../features/reports/Recorder';
@@ -17,7 +17,7 @@ export function ReportPage({
   id, project, from, projects,
 }: { id: string; project?: string; from?: string; projects: Project[] | undefined }) {
   const isNew = id === 'new';
-  const back = backTarget(from, href.reports());
+  const back = backTarget(from, href.reports(), projects);
   const loaded = useQuery((s) => api.report(id, s), [id], { enabled: !isNew, refetchOnFocus: false });
   if (!isNew && loaded.error) {
     return (
@@ -181,7 +181,7 @@ function Editor({
           setBase(r);
           setDraft((d) => ({ ...d, title: r.title, body: r.body, projectId: r.projectId }));
           setTriageDraft(r.triage);
-          if (r.editedBy !== 'human') notify(`Updated by ${r.editedBy}`);
+          if (r.editedBy !== 'human') notify(`Updated by ${authorInfo('agent', r.editedBy).name}`);
         }
       } catch { /* offline; the next save will tell */ }
     };
@@ -245,7 +245,7 @@ function Editor({
         dirty={textDirty}
         meta={
           base ? (
-            <AuthorMeta author={{ source: base.editedBy === 'human' ? 'human' : 'agent', label: base.editedBy }} iso={base.updatedAt} />
+            <AuthorMeta author={authorOf(base.editedBy)} iso={base.updatedAt} />
           ) : (
             <span className="t-truncate">New bug report</span>
           )

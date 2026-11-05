@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { fullDate, timeAgo } from '../format';
 import { KIND_INFO, type MemoryKind, type Project, type Source } from '../types';
-import { Badge, cx, Icon, Markdown, Popover, Select } from '../ui';
+import { Badge, cx, Icon, type IconName, Markdown, Popover, Select } from '../ui';
 
 export function KindBadge({ kind }: { kind: MemoryKind }) {
   return <Badge tone={kind} title={KIND_INFO[kind].hint}>{KIND_INFO[kind].label}</Badge>;
@@ -20,13 +20,19 @@ export function authorInfo(source: Source, label?: string | null): { kind: Autho
   return label ? { kind: 'agent', name: label, title: `Written by agent ${label}` } : { kind: 'agent', name: 'Agent', title: 'Written by an agent' };
 }
 
+/** Records that keep only who edited them last ("human" or the agent's label) as an author. */
+export const authorOf = (by: string): { source: Source; label: string } => ({ source: by === 'human' ? 'human' : 'agent', label: by });
+
+/** The author's icon: a person for you, the spark for Claude Code and claude.ai, a bot for any other agent. */
+export const authorIcon = (kind: AuthorKind): IconName => (kind === 'you' ? 'user' : kind === 'agent' ? 'bot' : 'claude');
+
 /**
  * Who wrote it as a coloured icon: you (grey person), Claude Code (red spark), claude.ai (orange spark), any other
  * agent (bot). `compact` shows the icon only; the name is then in the tooltip and the accessible name.
  */
 export function Author({ source, label, compact }: { source: Source; label?: string | null; compact?: boolean }) {
   const a = authorInfo(source, label);
-  const icon = a.kind === 'you' ? 'user' : a.kind === 'agent' ? 'bot' : 'claude';
+  const icon = authorIcon(a.kind);
   return (
     <span className="t-author" title={a.title}>
       <span className={cx('t-avatar', AUTHOR_CLASS[a.kind])} {...(compact ? { role: 'img', 'aria-label': a.title } : {})}>
@@ -112,10 +118,6 @@ export function Highlighted({ text }: { text: string }) {
   const parts = text.split(/\*\*(.+?)\*\*/g);
   return <>{parts.map((p, i) => (i % 2 ? <mark key={i}>{p}</mark> : p))}</>;
 }
-
-export const FileAuthor = ({ by, compact }: { by: string; compact?: boolean }) => (
-  <Author source={by === 'human' ? 'human' : 'agent'} label={by} compact={compact} />
-);
 
 export const isMarkdown = (path: string) => /\.(md|markdown)$/i.test(path);
 

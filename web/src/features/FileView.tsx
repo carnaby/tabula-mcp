@@ -4,16 +4,18 @@ import { invalidate, useQuery } from '../hooks/data';
 import { copyText, formatSize } from '../format';
 import { backTarget, href, navigate } from '../router';
 import { Alert, Badge, Button, EmptyState, IconButton, Skeleton, useConfirm, useToast } from '../ui';
-import { AuthorMeta, FileContent, TimeAgo } from './common';
+import { AuthorMeta, authorOf, FileContent, TimeAgo } from './common';
 import { EditorBar } from './EditorBar';
 import { FileHistoryDialog } from './FileHistoryDialog';
 
-export function FileView({ project, path, from }: { project: string; path: string; from?: string }) {
+export function FileView({
+  project, path, from, projects,
+}: { project: string; path: string; from?: string; projects?: readonly { id: string; name: string }[] }) {
   const file = useQuery((s) => api.file(project, path, s), [project, path], { topics: ['files'] });
   const [history, setHistory] = useState(false);
   const { confirm } = useConfirm();
   const notify = useToast();
-  const back = backTarget(from, href.project(project, 'files'));
+  const back = backTarget(from, href.project(project, 'files'), projects);
 
   if (file.error) {
     return (
@@ -49,7 +51,7 @@ export function FileView({ project, path, from }: { project: string; path: strin
         meta={
           f ? (
             <AuthorMeta
-              author={{ source: f.updatedBy === 'human' ? 'human' : 'agent', label: f.updatedBy }}
+              author={authorOf(f.updatedBy)}
               iso={f.updatedAt}
               heading="Last changed"
               details={<span className="t-subtle">Version {f.version} · {formatSize(f.size)}</span>}

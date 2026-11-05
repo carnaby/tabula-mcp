@@ -49,7 +49,7 @@ export function ProjectPage({
         }
       />
       {tab === 'state' && <StatePanel project={project} />}
-      {tab === 'files' && (path ? <FileView project={project} path={path} from={from} /> : <FilesPanel key={project} project={project} />)}
+      {tab === 'files' && (path ? <FileView project={project} path={path} from={from} projects={projects} /> : <FilesPanel key={project} project={project} />)}
       {tab === 'reports' && <ReportsList project={project} projects={projects} />}
       {tab === 'recall' && <RecallPanel project={project} />}
       {tab === 'setup' && <SetupPanel project={p} />}

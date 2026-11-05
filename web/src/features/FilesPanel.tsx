@@ -5,7 +5,7 @@ import { formatSize } from '../format';
 import { href, navigate } from '../router';
 import type { ProjectFile } from '../types';
 import { Alert, Badge, type Column, DataTable, EmptyState, Icon, SearchInput, Switch } from '../ui';
-import { FileAuthor, TimeAgo } from './common';
+import { Author, authorOf, TimeAgo } from './common';
 import { type FileGroup, groupFiles, ROOT_GROUP } from './file-groups';
 import { ListToolbar } from './ListToolbar';
 
@@ -28,7 +28,7 @@ const columns: Column<Row, never>[] = [
   },
   { id: 'size', header: 'Size', width: 100, align: 'right', cell: ({ file: f }) => <span className="t-subtle t-nowrap">{formatSize(f.size)}</span> },
   { id: 'version', header: 'Version', width: 90, align: 'right', hideOnMobile: true, cell: ({ file: f }) => <span className="t-subtle">v{f.version}</span> },
-  { id: 'by', header: 'By', width: 140, hideOnMobile: true, cell: ({ file: f }) => <FileAuthor by={f.updatedBy} /> },
+  { id: 'by', header: 'By', width: 140, hideOnMobile: true, cell: ({ file: f }) => <Author {...authorOf(f.updatedBy)} /> },
   { id: 'updated', header: 'Updated', width: 130, align: 'right', cell: ({ file: f }) => <span className="t-subtle"><TimeAgo iso={f.updatedAt} /></span> },
 ];
 

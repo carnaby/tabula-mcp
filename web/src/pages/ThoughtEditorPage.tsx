@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../api';
-import { AuthorMeta } from '../features/common';
+import { AuthorMeta, authorInfo, authorOf } from '../features/common';
 import { EditorBar, SaveButton } from '../features/EditorBar';
 import { HistoryDialog } from '../features/HistoryDialog';
 import { invalidate, useQuery, useSaveShortcut, useUnsavedGuard } from '../hooks/data';
@@ -13,7 +13,6 @@ import {
 type Draft = { title: string; body: string; tags: string[] };
 const toDraft = (t: Thought | null): Draft => ({ title: t?.title ?? '', body: t?.body ?? '', tags: t?.tags ?? [] });
 const same = (a: Draft, b: Draft) => a.title === b.title && a.body === b.body && a.tags.join('\u0001') === b.tags.join('\u0001');
-const isAgent = (t: Thought) => t.editedBy !== 'human';
 
 export function ThoughtEditorPage({ id, from }: { id: string; from?: string }) {
   const isNew = id === 'new';
@@ -75,7 +74,7 @@ function Editor({ initial, from, back }: { initial: Thought | null; from?: strin
         if (latest.version === base.version) return;
         if (!dirtyRef.current) {
           adopt(latest);
-          notify(`Updated by ${latest.editedBy === 'human' ? 'you in another tab' : latest.editedBy}`);
+          notify(`Updated by ${latest.editedBy === 'human' ? 'you in another tab' : authorInfo('agent', latest.editedBy).name}`);
         } else {
           setRemote(latest);
         }
@@ -155,7 +154,7 @@ function Editor({ initial, from, back }: { initial: Thought | null; from?: strin
         meta={
           base ? (
             <AuthorMeta
-              author={{ source: isAgent(base) ? 'agent' : 'human', label: base.editedBy }}
+              author={authorOf(base.editedBy)}
               iso={base.updatedAt}
               details={<span className="t-subtle">Version {base.version}{base.archived ? ' · archived' : ''}</span>}
               onHistory={() => setHistory(true)}
@@ -181,7 +180,7 @@ function Editor({ initial, from, back }: { initial: Thought | null; from?: strin
         <Alert tone="warn">
           <span>
             {conflict ? 'Not saved: ' : ''}
-            <strong>{remote.editedBy === 'human' ? 'You (in another tab)' : remote.editedBy}</strong> changed this thought to v{remote.version} while you were editing.
+            <strong>{remote.editedBy === 'human' ? 'You (in another tab)' : authorInfo('agent', remote.editedBy).name}</strong> changed this thought to v{remote.version} while you were editing.
           </span>
           <div className="t-row">
             <Button size="sm" onClick={async () => {

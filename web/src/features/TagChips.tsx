@@ -1,5 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
-import { Button, Chip } from '../ui';
+import { Chip, TextButton } from '../ui';
 
 const MAX_ROWS = 4;
 
@@ -73,9 +73,9 @@ export function TagChips({
         ))}
       </div>
       {collapsible && (
-        <Button variant="ghost" size="sm" className="tag-chips__toggle" aria-expanded={expanded} aria-controls={id} onClick={() => setExpanded(!expanded)}>
+        <TextButton aria-expanded={expanded} aria-controls={id} onClick={() => setExpanded(!expanded)}>
           {expanded ? 'Show less' : `Show all (${ordered.length})`}
-        </Button>
+        </TextButton>
       )}
     </div>
   );

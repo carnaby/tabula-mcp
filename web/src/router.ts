@@ -72,16 +72,30 @@ export function parse(hash: string): Route {
 /**
  * Where an editor's back button leads: the `from` address when it is a list page of this app, else `fallback`.
  * Only list-like pages are accepted, so a crafted link can't send the button somewhere odd (or into a loop).
+ * With `projects`, the label names a project by its name instead of its slug.
  */
-export function backTarget(from: string | undefined, fallback: string): { href: string; label: string } {
+export function backTarget(
+  from: string | undefined,
+  fallback: string,
+  projects?: readonly { id: string; name: string }[],
+): { href: string; label: string } {
+  const name = (slug: string) => projects?.find((p) => p.id === slug)?.name || slug;
   const target = from?.startsWith('#/') ? from : fallback;
-  const route = parse(target);
-  const label = backLabel(route);
+  const label = backLabel(parse(target), name);
   if (label) return { href: target, label };
-  return { href: fallback, label: backLabel(parse(fallback)) ?? 'Back' };
+  return { href: fallback, label: backLabel(parse(fallback), name) ?? 'Back' };
 }
 
-function backLabel(route: Route): string | null {
+/**
+ * The section a page belongs to for the navigation: an editor opened from a project's list (its `from`) belongs to
+ * that project, everything else to itself.
+ */
+export function sectionOf(route: Route): Route {
+  const from = 'from' in route && route.from?.startsWith('#/') ? parse(route.from) : null;
+  return from?.name === 'project' ? from : route;
+}
+
+function backLabel(route: Route, name: (slug: string) => string): string | null {
   switch (route.name) {
     case 'thoughts': return 'Back to Thoughts';
     case 'notes': return 'Back to Notes';
@@ -90,9 +104,9 @@ function backLabel(route: Route): string | null {
     case 'search': return route.q ? `Back to search “${route.q}”` : 'Back to Search';
     case 'project':
       if (route.path) return null;
-      if (route.tab === 'reports') return `Back to ${route.project} bug reports`;
-      if (route.tab === 'files') return `Back to ${route.project} files`;
-      return `Back to ${route.project}`;
+      if (route.tab === 'reports') return `Back to ${name(route.project)} bug reports`;
+      if (route.tab === 'files') return `Back to ${name(route.project)} files`;
+      return `Back to ${name(route.project)}`;
     default: return null;
   }
 }

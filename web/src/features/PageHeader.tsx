@@ -1,5 +1,5 @@
 import { type ReactNode, useId, useLayoutEffect, useRef, useState } from 'react';
-import { IconButton } from '../ui';
+import { IconButton, TextButton } from '../ui';
 
 /**
  * The head of every top-level page: title (+ a chip such as the project slug), a one-line description, an optional
@@ -17,8 +17,7 @@ export function PageHeader({
   clamp?: boolean;
   tabs?: ReactNode;
 }) {
-  const [infoOpen, setInfoOpen] = useState(false);
-  const infoId = useId();
+  const info = useInfo();
   return (
     <header className="page-head">
       <div className="page-head__title">
@@ -26,25 +25,46 @@ export function PageHeader({
           {title}
           {chip}
         </h1>
-        {more && (
-          <IconButton
-            className="page-head__info"
-            icon="info"
-            label="About this page"
-            aria-expanded={infoOpen}
-            aria-controls={infoId}
-            onClick={() => setInfoOpen(!infoOpen)}
-          />
-        )}
+        {more && <InfoButton {...info} label="About this page" />}
       </div>
       {description && (clamp ? <ClampedText>{description}</ClampedText> : <p className="page-head__desc">{description}</p>)}
-      {more && (
-        <div id={infoId} className="page-head__more" hidden={!infoOpen}>
-          {more}
-        </div>
-      )}
+      {more && <InfoMore {...info}>{more}</InfoMore>}
       {tabs}
     </header>
+  );
+}
+
+/** A short line with an ⓘ toggle at its end that reveals the longer explanation below (e.g. inside a tab). */
+export function InfoLine({ children, more, label = 'More about this' }: { children: ReactNode; more: ReactNode; label?: string }) {
+  const info = useInfo();
+  return (
+    <div className="t-stack" style={{ gap: 6 }}>
+      <div className="info-line">
+        <p className="t-muted">{children}</p>
+        <InfoButton {...info} label={label} />
+      </div>
+      <InfoMore {...info}>{more}</InfoMore>
+    </div>
+  );
+}
+
+type Info = { open: boolean; toggle: () => void; id: string };
+
+function useInfo(): Info {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  return { open, toggle: () => setOpen((o) => !o), id };
+}
+
+function InfoButton({ open, toggle, id, label }: Info & { label: string }) {
+  return <IconButton className="info-btn" icon="info" label={label} aria-expanded={open} aria-controls={id} onClick={toggle} />;
+}
+
+function InfoMore({ open, id, children }: Info & { children: ReactNode }) {
+  return (
+    <div id={id} className="info-more" hidden={!open}>
+      {children}
+    </div>
   );
 }
 
@@ -71,9 +91,9 @@ function ClampedText({ children }: { children: ReactNode }) {
         {children}
       </p>
       {overflows && (
-        <button type="button" className="page-head__toggle" aria-expanded={expanded} aria-controls={id} onClick={() => setExpanded(!expanded)}>
+        <TextButton aria-expanded={expanded} aria-controls={id} onClick={() => setExpanded(!expanded)}>
           {expanded ? 'Less' : 'More'}
-        </button>
+        </TextButton>
       )}
     </div>
   );

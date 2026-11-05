@@ -1,5 +1,5 @@
 import { api } from '../api';
-import { Author, TimeAgo } from '../features/common';
+import { Author, authorOf, TimeAgo } from '../features/common';
 import { ListToolbar } from '../features/ListToolbar';
 import { PageHeader } from '../features/PageHeader';
 import { TagChips } from '../features/TagChips';
@@ -111,7 +111,7 @@ export function ThoughtsPage() {
                 </div>
               )}
               <div className="thought-card__meta">
-                <Author source={th.editedBy === 'human' ? 'human' : 'agent'} label={th.editedBy} />
+                <Author {...authorOf(th.editedBy)} />
                 <span>·</span>
                 <TimeAgo iso={th.updatedAt} />
                 {th.version > 1 && <span title="Number of versions">· v{th.version}</span>}

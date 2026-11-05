@@ -2,7 +2,7 @@ import './tokens.css';
 import './kit.css';
 
 export { Badge, Chip, Kbd, type BadgeTone } from './Badge';
-export { Button, ButtonLink, cx, IconButton, IconLink, type ButtonVariant } from './Button';
+export { Button, ButtonLink, cx, IconButton, IconLink, TextButton, type ButtonVariant } from './Button';
 export { ConfirmProvider, useConfirm } from './Confirm';
 export { DataTable, Pagination, PAGE_SIZES, TableSort, type Column, type SortState } from './DataTable';
 export { Dialog } from './Dialog';

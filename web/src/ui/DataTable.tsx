@@ -22,7 +22,7 @@ export type Column<T, S extends string> = {
 };
 
 export function DataTable<T, S extends string>({
-  columns, rows, rowKey, onRowClick, sort, onSort, loading, empty, footer, rowMuted, label, mobileSort = true, headless,
+  columns, rows, rowKey, onRowClick, sort, onSort, loading, empty, footer, rowMuted, label, headless,
 }: {
   columns: Column<T, S>[];
   rows: T[] | undefined;
@@ -35,8 +35,6 @@ export function DataTable<T, S extends string>({
   footer?: ReactNode;
   rowMuted?: (row: T) => boolean;
   label: string;
-  /** The sort picker above the cards on narrow screens; off when the page puts a `TableSort` in its toolbar. */
-  mobileSort?: boolean;
   /** Column headers only for screen readers (e.g. several tables under their own group headings). */
   headless?: boolean;
 }) {
@@ -45,15 +43,9 @@ export function DataTable<T, S extends string>({
     if (sort?.sort === c.sort) onSort({ sort: c.sort, dir: sort.dir === 'asc' ? 'desc' : 'asc' });
     else onSort({ sort: c.sort, dir: c.firstDir ?? 'asc' });
   };
-  const sortable = columns.filter((c) => c.sort);
 
   return (
     <div className="t-table-wrap t-table-wrap--cards">
-      {mobileSort && sort && onSort && sortable.length > 0 && (
-        <div className="t-mobile-sort t-row" style={{ marginBottom: 10 }}>
-          <TableSort columns={columns} sort={sort} onSort={onSort} size="sm" />
-        </div>
-      )}
       <div className="t-table-scroll">
         <table className={cx('t-table', loading && rows && 't-table__loading')} aria-label={label} aria-busy={loading}>
           {headless && (

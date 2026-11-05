@@ -3,6 +3,7 @@ import { api } from '../../api';
 import { formatSize } from '../../format';
 import type { Attachment, TranscriptState, WorkerStatus } from '../../types';
 import { Badge, Button, Icon, IconButton, Textarea, useConfirm, useToast } from '../../ui';
+import { Author, authorOf } from '../common';
 import { clock } from './Recorder';
 import { Transcript } from './Transcript';
 import type { Upload } from './uploads';
@@ -187,7 +188,7 @@ function AudioCard({
         <div className="att__gone"><Icon name="mic" /> Voice note deleted after the report was closed</div>
       )}
       <figcaption className="att__cap">
-        {a.createdBy !== 'human' && <Badge icon="bot">{a.createdBy}</Badge>}
+        {a.createdBy !== 'human' && <Author {...authorOf(a.createdBy)} compact />}
         <span className="t-truncate">{a.fileName}</span>
         <span className="t-subtle t-nowrap">{a.durationMs !== null ? `${clock(a.durationMs)} · ` : ''}{formatSize(a.size)}</span>
         <span className="t-spacer" />
@@ -271,7 +272,7 @@ export function Attachments({
               )}
               <figcaption className="att__cap">
                 {a.kind === 'frame' && <Badge tone="accent" icon="aperture">{clock(a.atMs ?? 0)}</Badge>}
-                {a.createdBy !== 'human' && <Badge icon="bot">{a.createdBy}</Badge>}
+                {a.createdBy !== 'human' && <Author {...authorOf(a.createdBy)} compact />}
                 <span className="t-truncate t-subtle">{a.fileName}</span>
                 {a.kind === 'frame' && a.note && <span className="att__note-text">{a.note}</span>}
                 <span className="t-spacer" />

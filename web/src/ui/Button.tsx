@@ -65,6 +65,11 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
   );
 });
 
+/** A small accent text button for in-text toggles ("More" / "Less", "Show all" / "Show less"); 32px tap target. */
+export function TextButton({ className, type = 'button', ...rest }: ButtonHTMLAttributes<HTMLButtonElement>) {
+  return <button type={type} className={cx('t-text-btn', className)} {...rest} />;
+}
+
 /** An IconButton that is a link (e.g. "back"): opens in a new tab on long press / middle click like any link. */
 export function IconLink({
   href, icon, label, variant = 'ghost', size = 'md', className,

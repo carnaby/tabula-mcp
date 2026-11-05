@@ -4,7 +4,7 @@ import { invalidate, useQuery } from '../hooks/data';
 import { formatSize, fullDate } from '../format';
 import type { FileRevision, ProjectFileContent } from '../types';
 import { Alert, Button, Dialog, EmptyState, Skeleton, useToast } from '../ui';
-import { FileAuthor, FileContent, TimeAgo } from './common';
+import { Author, authorOf, FileContent, TimeAgo } from './common';
 
 export function FileHistoryDialog({
   project, file, open, onClose,
@@ -61,7 +61,7 @@ export function FileHistoryDialog({
             <strong>v{file.version} · current</strong>
             <span className="t-subtle"><TimeAgo iso={file.updatedAt} /> · {formatSize(file.size)}</span>
           </div>
-          <FileAuthor by={file.updatedBy} />
+          <Author {...authorOf(file.updatedBy)} />
         </div>
         {!revs.data && <Skeleton height={44} />}
         {revs.data?.length === 0 && <EmptyState icon="history" title="No earlier versions">The file hasn't changed since it was first pushed.</EmptyState>}
@@ -71,7 +71,7 @@ export function FileHistoryDialog({
               <strong>v{r.version}</strong>
               <span className="t-subtle" title={fullDate(r.createdAt)}><TimeAgo iso={r.createdAt} /> · {formatSize(r.size)}</span>
             </div>
-            <FileAuthor by={r.updatedBy} />
+            <Author {...authorOf(r.updatedBy)} />
           </button>
         ))}
       </div>

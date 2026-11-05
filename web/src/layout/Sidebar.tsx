@@ -4,7 +4,7 @@ import { workerAlive } from '../features/reports/Transcript';
 import { timeAgo } from '../format';
 import { useQuery } from '../hooks/data';
 import { promptInstall, useCanInstall } from '../pwa';
-import { href, type Route } from '../router';
+import { href, type Route, sectionOf } from '../router';
 import type { Project, WorkerStatus } from '../types';
 import { Button, Icon, type IconName, IconButton, Input, Kbd, Logo, Segmented, useConfirm, useTheme } from '../ui';
 
@@ -53,7 +53,9 @@ export function Sidebar({
   const openReports = Object.values(reportCounts.data ?? {}).reduce((a, b) => a + b, 0);
   const [filter, setFilter] = useState('');
   const { confirm } = useConfirm();
-  const activeProject = route.name === 'project' ? route.project : null;
+  // A report opened from a project's Bug reports tab highlights that project, not the global list.
+  const section = sectionOf(route);
+  const activeProject = section.name === 'project' ? section.project : null;
   const global = projects?.find((p) => p.id === 'global');
   const all = (projects ?? []).filter((p) => p.id !== 'global');
   const f = filter.toLowerCase();
@@ -74,15 +76,15 @@ export function Sidebar({
         </button>
 
         <div className="nav-section">Notebook</div>
-        <NavItem to={href.thoughts()} icon="lightbulb" label="Thoughts" active={route.name === 'thoughts' || route.name === 'thought'} />
-        <NavItem to={href.notes()} icon="fileText" label="Notes" active={route.name === 'notes' || route.name === 'note'} />
+        <NavItem to={href.thoughts()} icon="lightbulb" label="Thoughts" active={section.name === 'thoughts' || section.name === 'thought'} />
+        <NavItem to={href.notes()} icon="fileText" label="Notes" active={section.name === 'notes' || section.name === 'note'} />
 
         <div className="nav-section">Testing</div>
-        <NavItem to={href.reports()} icon="bug" label="Bug reports" count={openReports || undefined} active={route.name === 'reports' || route.name === 'report'} />
+        <NavItem to={href.reports()} icon="bug" label="Bug reports" count={openReports || undefined} active={section.name === 'reports' || section.name === 'report'} />
         <WorkerLine status={worker.data} />
 
         <div className="nav-section">For agents</div>
-        <NavItem to={href.global()} icon="globe" label="Global" count={global?.memory_count} active={route.name === 'global'} />
+        <NavItem to={href.global()} icon="globe" label="Global" count={global?.memory_count} active={section.name === 'global'} />
 
         <div className="nav-section">
           <span>Projects</span>

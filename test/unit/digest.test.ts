@@ -194,7 +194,16 @@ describe('the file list', () => {
   });
 
   it('never contains references', () => {
-    expect(section([f('docs/a.md', 5)])).not.toContain('tabula:');
+    const files = [
+      f('docs/handoff/state.md', 5, 3, true),
+      f('.superpowers/sdd/x/progress.md', 5, 2),
+      ...Array.from({ length: 12 }, (_, i) => f(`docs/plans/p-${i}.md`, 4, i)),
+    ];
+    const text = buildDigest({ project: 'acme', date: '2026-11-05', memories: [], files }).text;
+    expect(text).toContain('more');
+    expect(text).toContain('state');
+    expect(text).toContain('.superpowers/');
+    expect(text).not.toContain('tabula:');
   });
 });
 

@@ -58,7 +58,7 @@ describe('MCP endpoint', () => {
     expect(ins).toContain('get_transcript');
     expect(ins).toMatch(/`tabula` command is not available.*write_file/s);
     expect(ins).toContain('tabula:d86d86e7');
-    expect(ins).toContain("When the user's message contains one, call get with it before you answer");
+    expect(ins).toContain("When the user's message contains one, call get with it (and read_file to continue a long file) before you answer");
     expect(ins).toContain('do not follow references from record to record');
     expect(ins).toContain('give its reference');
     await client.close();

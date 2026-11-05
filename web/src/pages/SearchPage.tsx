@@ -20,15 +20,15 @@ const TYPE: Record<RecordType, { icon: IconName; label: string }> = {
 };
 
 /** One record a reference leads to, as a card; tapping it opens the record by its full reference. */
-function RefCard({ type, title, ref, onPick }: { type: RecordType; title: string; ref: string; onPick: (ref: string) => void }) {
+function RefCard({ type, title, reference, onPick }: { type: RecordType; title: string; reference: string; onPick: (ref: string) => void }) {
   return (
-    <button type="button" className="t-card t-card--interactive hit" onClick={() => onPick(ref)}>
+    <button type="button" className="t-card t-card--interactive hit" onClick={() => onPick(reference)}>
       <span className="hit__icon"><Icon name={TYPE[type].icon} /></span>
       <span className="hit__body">
         <span className="hit__title">{title}</span>
         <span className="t-row" style={{ gap: 6 }}>
           <Badge tone="outline">{TYPE[type].label}</Badge>
-          <span className="t-mono t-subtle" style={{ fontSize: 12 }}>{ref}</span>
+          <span className="t-mono t-subtle" style={{ fontSize: 12 }}>{reference}</span>
         </span>
       </span>
     </button>
@@ -42,7 +42,7 @@ function RefResult({ value, result, onPick }: { value: string; result: { target?
     return (
       <div className="t-stack">
         <p className="t-muted">{value} matches one record:</p>
-        <div className="hits"><RefCard type={target.type} title={target.title} ref={target.ref} onPick={onPick} /></div>
+        <div className="hits"><RefCard type={target.type} title={target.title} reference={target.ref} onPick={onPick} /></div>
       </div>
     );
   }
@@ -55,7 +55,7 @@ function RefResult({ value, result, onPick }: { value: string; result: { target?
     <div className="t-stack">
       <p className="t-muted">{value} matches {candidates.length} records. Pick one:</p>
       <div className="hits">
-        {candidates.map((c) => <RefCard key={c.id} type={c.type} title={c.title} ref={c.ref} onPick={onPick} />)}
+        {candidates.map((c) => <RefCard key={c.id} type={c.type} title={c.title} reference={c.ref} onPick={onPick} />)}
       </div>
     </div>
   );

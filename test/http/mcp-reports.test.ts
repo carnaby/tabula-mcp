@@ -88,6 +88,17 @@ describe('bug reports over MCP', () => {
     expect(json((await tool('update_report', { id, status: 'done', expected_version: 2 })).content)).toMatchObject({ version: 3, status: 'done' });
   });
 
+  it('names an attachment and its report when a report tool gets an attachment reference', async () => {
+    const { id, ref } = json((await tool('create_report', { project: 'demo', title: 'Blank page' })).content);
+    const photo = await uploadFile(id, PNG, 'image/png', 'p.png');
+    for (const name of ['get_report', 'update_report']) {
+      const r = await tool(name, { id: `tabula:${photo.id.slice(0, 8)}`, status: 'triaged' });
+      expect(r.isError).toBe(true);
+      expect(text(r.content)).toContain(`is an attachment of bug report ${ref}`);
+      expect(text(r.content)).toMatch(/use get/);
+    }
+  });
+
   it('tells agents where report slugs come from', async () => {
     const client = new Client({ name: 'tabula-test', version: '0.0.0' });
     await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), {

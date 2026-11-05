@@ -179,8 +179,7 @@ async function attachmentBlocks(ctx: AgentContext, a: Attachment, report: Report
   const m = isImage || !a.purgedAt ? requireMedia(ctx) : ctx.media;
   const view = { ...attachmentForAgent(a, m), report: refOf(report.id), report_title: report.title };
   if (isImage) {
-    const media = requireMedia(ctx);
-    const { image, mime } = await attachmentImage(ctx.db, media.store, media.paths, a.id);
+    const { image, mime } = await attachmentImage(ctx.db, m!.store, m!.paths, a.id);
     return [{ type: 'image', image, mime }, jsonBlock(view)];
   }
   const s = (await transcriptStates(ctx.db, [a.id])).get(a.id);
@@ -318,7 +317,7 @@ export async function agentUpdateThought(
   input: { id: string; title?: string; body?: string; append?: string; tags?: string[]; expected_version?: number },
 ): Promise<{ id: string; ref: string; version: number }> {
   const r = await resolveRecord(ctx.db, input.id);
-  if (r.type !== 'thought') throw badRequest(`${r.record.id} is a ${r.type}, not a thought`);
+  if (r.type !== 'thought') throw badRequest(`${r.record.id} is ${aOrAn(r.type)}, not a thought`);
   if ((input.body !== undefined || input.title !== undefined) && input.expected_version === undefined) {
     throw badRequest(
       `expected_version is required when you pass body or title (a full replace). Call get or find_thoughts first to read the current version of ${r.record.id}, then pass it as expected_version. Only append may be sent without it.`,
@@ -343,6 +342,8 @@ export const agentFindThoughts = async (
 
 /** Links in agent replies last a day: long enough to download in the same session. */
 const AGENT_LINK_TTL = 24 * 3600;
+
+const aOrAn = (noun: string) => (/^[aeiou]/.test(noun) ? 'an ' : 'a ') + noun;
 
 function requireMedia(ctx: AgentContext): AgentMedia {
   if (!ctx.media) throw new Error('media storage is not configured for this MCP context');
@@ -447,7 +448,12 @@ export async function agentListReports(
 
 async function requireReportRef(ctx: AgentContext, id: string): Promise<Report> {
   const r = await resolveRecord(ctx.db, id);
-  if (r.type !== 'report') throw badRequest(`${r.record.id} is a ${r.type}, not a bug report`);
+  if (r.type === 'attachment') {
+    throw badRequest(
+      `${r.record.id} is an attachment of bug report ${refOf(r.report.id)}, not a bug report; use get with it to see the attachment, or pass the report's reference`,
+    );
+  }
+  if (r.type !== 'report') throw badRequest(`${r.record.id} is ${aOrAn(r.type)}, not a bug report`);
   return r.record;
 }
 

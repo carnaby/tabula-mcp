@@ -120,9 +120,14 @@ function VideoCard({
     const v = ref.current;
     if (!frame || !v) return;
     const jump = () => { v.currentTime = (frame.atMs ?? 0) / 1000; };
+    // The video only gets its height with the metadata, which pushes the frame down: bring it back into view then.
+    const late = () => {
+      jump();
+      document.getElementById(attachmentDomId(frame.id))?.scrollIntoView({ block: 'center' });
+    };
     if (v.readyState >= 1) jump();
-    else v.addEventListener('loadedmetadata', jump, { once: true });
-    return () => v.removeEventListener('loadedmetadata', jump);
+    else v.addEventListener('loadedmetadata', late, { once: true });
+    return () => v.removeEventListener('loadedmetadata', late);
     // Only on mount: later selections are the user's.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

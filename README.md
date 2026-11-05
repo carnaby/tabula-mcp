@@ -179,13 +179,15 @@ At the start of a session the agent calls `recall` once and gets plain text:
 # Where we are
 …
 
-## Files (14) — `read_file` for the content
-- docs/handoff/2026-10-26-state.md — 2026-10-26, 3.1 KB (state)
-- docs/superpowers/specs/2026-10-20-mixer-design.md — 2026-10-20, 18.4 KB
+## Files (14) — 10 newest; `read_file` for the content
+docs/handoff/ — 2026-10-26-state.md (10-26, 3.1 KB, state)
+docs/superpowers/ — specs/2026-10-20-mixer-design.md (10-20, 18.4 KB), plans/2026-10-20-mixer.md (10-20, 31.0 KB)
 …
+- 4 more — `list_files`
 ```
 
 - **Fixed order:** global rules → global gotchas → global facts and decisions (titles only) → project state → the file list.
+- **The file list** names the 10 newest files, one line per folder, grouped like the Files tab of the UI (the first two levels of the path; root files under `/`; `.superpowers/` last), and counts the rest for `list_files`. No references: an agent needs the paths.
 - **Budget of 3 000 tokens** (estimated as characters / 4). The global rules and the file list come first; the state gets the room they leave and is cut at a line break with a pointer to `read_file`. If the rules and the list alone are too long, the list collapses into a count, then facts collapse, then gotcha and rule bodies shrink to their first sentence.
 - **`include_state`:** Claude Code on a computer passes `false` — the hook already restored the files on disk. Claude Code on the web and claude.ai get the state in the digest.
 - **Plain text, not JSON.** The agent reads the digest rather than parsing it, and JSON would cost 30–40 % more tokens.
@@ -195,13 +197,13 @@ At the start of a session the agent calls `recall` once and gets plain text:
 | Tool | What it does |
 |---|---|
 | `recall(project, include_state?)` | The digest above. Called once at the start of a session. |
-| `list_files(project)` / `read_file(project, path, offset?)` | The project's synced files with version and sha256. `read_file` answers in separate text blocks: a header line `[file <path> · version <n> · sha256 <hex> · <n> characters]`, the text exactly as stored, and for long files (parts of 100 000 characters) a last block with the next offset. |
+| `list_files(project)` / `read_file(project, path, offset?)` | The project's synced files with version and sha256. `read_file` answers in separate text blocks: a header line `[file <path> · tabula:<id> · version <n> · sha256 <hex> · <n> characters]`, the text exactly as stored, and for long files (parts of 100 000 characters) a last block with the next offset. |
 | `write_file(project, path, content, base_sha256?)` · `delete_file(project, path, base_sha256)` | For sessions without the `tabula` command. Only paths matching the project's `sync` patterns (refused until a `tabula push` has sent them), never `.env`, never the `global` project. A new file needs no base; changing or deleting an existing one needs the sha256 of the version the agent read, a stale one is a 409 with the current sha256, and there is no force. Paths matching `state` become the project state. The writer is the agent's label. |
 | `search(query, project?, kind?, include_deprecated?, limit?)` | Full-text search over the global rules and the project files (Postgres `tsvector`, `simple` configuration). |
-| `get(id)` | One rule, note or thought in full; accepts the short `#xxxx` id from the digest. |
+| `get(id)` | Any record by its reference `tabula:xxxxxxxx` (or a full uuid, or the `#xxxx` id from the digest): a rule, note, thought, bug report, project file or attachment. The reply starts with a line saying what it is — `tabula:d86d86e7 · bug report · project music-creator · Video and transcript` — then the record: a file's text like `read_file`, a photo or frame as an image with its note, a recording's transcript status. |
 | `remember(project="global", kind, title, body, tags?, supersedes_id?)` | Adds a global rule — only when the user explicitly asks. Any other project is refused with the reason. |
 | `deprecate(id, reason)` | Retires a global rule the agent wrote. Refuses human-written records. |
-| `find_notes(query?, tag?, limit?)` | Reads your Notes — only when you mention them. |
+| `find_notes(query?, tag?, limit?)` | Reads your Notes — only when you mention them or paste a reference. |
 | `save_thought` · `update_thought` · `find_thoughts` | The Thoughts notebook, on request; edits use `expected_version` and keep the previous version. |
 | `list_reports(project?, status?, query?)` · `get_report(id)` | Bug reports and their attachments (photos, videos, voice notes, saved frames; a frame may carry the user's note) with links valid for 24 hours; videos and voice notes carry their transcript (`[2:41] what was said`) or its status. `query` also matches transcripts. |
 | `get_transcript(attachment_id, offset?)` | The whole transcript of a video or voice note in parts of 50 000 characters, with the times to pick frames from. |
@@ -211,9 +213,13 @@ At the start of a session the agent calls `recall` once and gets plain text:
 
 The tool descriptions are part of the design: they are what an agent reads before deciding whether to call a tool, and they say when *not* to.
 
+Every tool that returns records gives each one a `ref` (`tabula:xxxxxxxx`), so the agent can tell you which record it saved or found; `get`, `get_report`, `update_report`, `update_thought` and the attachment tools take references back.
+
 ### When agents use it
 
 Tabula is registered once per client, so it is visible in every project. The server's MCP *instructions* tell every client to use it for a project only when that project's `CLAUDE.md` (or claude.ai project instructions) contains a **"Memory (Tabula)"** section naming the project, never to guess a slug, and never to write project memories. Thoughts and Notes work anywhere, on request.
+
+**References.** Every record has a reference, `tabula:` and the first 8 hex characters of its id (the Tabula icon in the UI copies it). The server instructions tell every client: a reference in your message is opened with `get` (and `read_file` to continue a long file) before the answer — it overrides the "Memory (Tabula)" condition and the notes rule, because you pointed at the record; a reference inside a record is opened only when the task needs it, never chained; and when the agent tells you about a record it saved, found or changed, it gives the record's reference.
 
 The section is the whole per-project protocol:
 
@@ -235,12 +241,13 @@ You don't write it by hand: tell the agent *"use Tabula in this project"* and it
 
 A responsive React app with its own small UI kit (`web/src/ui`), light and dark themes, and an installable icon for the home screen.
 
-- **Sidebar** — Thoughts, Notes, Global, and the projects with their file counts. On phones it is a drawer.
+- **Sidebar** — Thoughts, Notes, Global, and the projects with their file counts, the most recently active first (files, bug reports and notes count). On phones it is a drawer.
 - **Thoughts** and **Notes** — card grids with search, tag chips, sort and pinning; a Markdown editor with Write / Split / Preview and Ctrl/⌘ S. Thoughts also keep a version history and warn when an agent changed the text while you were typing.
 - **Global** — the rules table (kind, author, status, prefix search; edit, retire, supersede) and the recall preview.
 - **Project** — **State** (the state files rendered as Markdown), **Files** (list, preview, the last 20 versions with restore, delete and restore), **Recall preview** (the exact digest with a budget meter) and **Setup** (the CLAUDE.md section, a `.tabula.json`, the install commands and the hook).
 - **Bug reports** — capture a bug on the phone while testing: pick the project, say what's wrong, add photos, screen recordings (from the gallery, or *Record screen* on a desktop) and voice notes. Uploads start at once and show their progress. While a video is paused, *Save frame* keeps that moment as a picture; select a saved frame to play from there, add a note ("what the video doesn't say") or delete it. The transcript follows playback. An agent writes the **triage** (cause and tasks) into the report; it shows up when you come back to the window. Also a tab on each project. Videos and voice notes get a transcript with clickable times once the transcription worker has processed them (see below); a line under *Bug reports* in the sidebar shows whether the worker is running.
-- **Search** (Ctrl/⌘ K) — global rules, project files, notes, thoughts and bug reports at once; words match as prefixes.
+- **Search** (Ctrl/⌘ K) — global rules, project files, notes, thoughts and bug reports at once; words match as prefixes. A pasted reference (`tabula:d86d86e7`) opens its record directly — a rule in its dialog, an attachment inside its report (a frame selected, the video at its moment); a shorter one (`tabula:d86d`) lists what it matches to pick from.
+- **References** — the Tabula icon in an editor's bar, a rule's dialog, a file and every attachment or frame copies the record's reference. Paste it into a chat with Claude and Claude opens exactly that record.
 
 **Install it as an app.** Tabula is a PWA: in Chrome or Edge use *Install app* in the sidebar (or the install icon in the address bar); on iPhone use Share → *Add to Home Screen*. A service worker caches only the app shell and the hashed build assets — `/api` and `/mcp` always go to the network, so data is never stale and the token never ends up in a cache. Installation needs HTTPS (or `localhost`).
 
@@ -377,6 +384,7 @@ src/
   domain/       records, validation, search, digest builder, token estimate
   agent/        what agents may do (source tagging, read-only human records)
   mcp/          MCP server, tool descriptions, server instructions, CLAUDE.md section
+  shared/       pure helpers the UI builds too (references, grouping files by folder)
   http/         Fastify app, REST API, bearer auth, static UI
   db/           Drizzle schema, client, migrations runner
   maintenance/  one-off data migrations run inside the container

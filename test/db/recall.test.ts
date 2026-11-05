@@ -31,14 +31,14 @@ describe('recall', () => {
     expect(d.text).toContain('# Tabula · alpha · 2026-10-26');
     expect(d.text).toContain('- Global rule (#');
     expect(d.text).toMatch(/## Project state\n### docs\/handoff\/state\.md \(\d{4}-\d{2}-\d{2}\)\nNext: ship it/);
-    expect(d.text).toContain('- docs/plan.md — ');
-    for (const absent of ['Alpha project memory', 'Deprecated rule', 'Private note', 'secret plans', 'docs/beta.md', 'docs/gone.md']) {
+    expect(d.text).toMatch(/^docs\/ — plan\.md \(\d{2}-\d{2}, 4 B\)$/m);
+    for (const absent of ['Alpha project memory', 'Deprecated rule', 'Private note', 'secret plans', 'beta.md', 'gone.md']) {
       expect(d.text).not.toContain(absent);
     }
 
     const lean = await recall(db, 'alpha', { includeState: false });
     expect(lean.text).not.toContain('Next: ship it');
-    expect(lean.text).toContain('- docs/handoff/state.md — ');
+    expect(lean.text).toMatch(/^docs\/handoff\/ — state\.md \(\d{2}-\d{2}, 13 B, state\)$/m);
   });
 
   it('fails for an unknown project', async () => {

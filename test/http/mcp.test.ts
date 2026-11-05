@@ -57,6 +57,29 @@ describe('MCP endpoint', () => {
     expect(ins).toContain('find_notes');
     expect(ins).toContain('get_transcript');
     expect(ins).toMatch(/`tabula` command is not available.*write_file/s);
+    expect(ins).toContain('tabula:d86d86e7');
+    expect(ins).toContain("When the user's message contains one, call get with it (and read_file to continue a long file) before you answer");
+    expect(ins).toContain('do not follow references from record to record');
+    expect(ins).toContain('give its reference');
+    await client.close();
+  });
+
+  it('get opens a rule or a file by reference and starts with a line saying what it is', async () => {
+    const rule = await createMemory(db, { projectId: 'global', kind: 'rule', title: 'Run tests via pnpm', body: 'b', source: 'human' });
+    await putFile(db, 'demo', { path: 'docs/plan.md', content: '# Plan\nShip it.', baseSha256: null }, 'cli');
+    const fileId = (await getFile(db, 'demo', 'docs/plan.md')).id;
+    const client = await connect('/mcp', bearer);
+    const get = async (id: string) => (await client.callTool({ name: 'get', arguments: { id } })).content as Content;
+
+    const ruleOut = await get(`TABULA:${rule.id.slice(0, 8).toUpperCase()}`);
+    expect(ruleOut[0]!.text).toBe(`tabula:${rule.id.slice(0, 8)} · global rule · Run tests via pnpm`);
+    expect(JSON.parse(ruleOut[1]!.text)).toMatchObject({ type: 'memory', ref: `tabula:${rule.id.slice(0, 8)}`, body: 'b' });
+
+    const fileOut = await get(`tabula:${fileId.slice(0, 8)}`);
+    expect(fileOut.map((c) => c.type)).toEqual(['text', 'text', 'text']);
+    expect(fileOut[0]!.text).toBe(`tabula:${fileId.slice(0, 8)} · project file · project demo · docs/plan.md`);
+    expect(fileOut[1]!.text).toMatch(/^\[file docs\/plan\.md · tabula:[0-9a-f]{8} · version 1 · sha256 [0-9a-f]{64} · 15 characters\]$/);
+    expect(fileOut[2]!.text).toBe('# Plan\nShip it.');
     await client.close();
   });
 
@@ -84,7 +107,7 @@ describe('MCP endpoint', () => {
     ]);
     const read = (await client.callTool({ name: 'read_file', arguments: { project: 'demo', path: 'docs/handoff/state.md' } })).content as Content;
     expect(read.map((c) => c.type)).toEqual(['text', 'text']);
-    expect(read[0]!.text).toMatch(/^\[file docs\/handoff\/state\.md · version 1 · sha256 [0-9a-f]{64} · 18 characters\]$/);
+    expect(read[0]!.text).toMatch(/^\[file docs\/handoff\/state\.md · tabula:[0-9a-f]{8} · version 1 · sha256 [0-9a-f]{64} · 18 characters\]$/);
     expect(read[1]!.text).toBe('Next: ship the CLI');
     const missing = await client.callTool({ name: 'read_file', arguments: { project: 'demo', path: 'docs/nope.md' } });
     expect(textOf(missing)).toMatch(/^404: file "docs\/nope\.md" does not exist/);
@@ -103,7 +126,7 @@ describe('MCP endpoint', () => {
 
     await setSyncConfig(db, 'demo', { sync: ['docs/**'], state: ['docs/handoff/*.md'] });
     const created = JSON.parse(textOf(await call('write_file', { project: 'demo', path, content: '# Spec' })));
-    expect(created).toEqual({ path, sha256: expect.stringMatching(/^[0-9a-f]{64}$/), version: 1, changed: true, state: false });
+    expect(created).toEqual({ path, ref: expect.stringMatching(/^tabula:[0-9a-f]{8}$/), sha256: expect.stringMatching(/^[0-9a-f]{64}$/), version: 1, changed: true, state: false });
     expect(await getFile(db, 'demo', path)).toMatchObject({ content: '# Spec', updatedBy: 'claude-ai' });
     const listed = JSON.parse(textOf(await call('list_files', { project: 'demo' })));
     expect(listed).toMatchObject([{ path, sha256: created.sha256, version: 1 }]);
@@ -128,6 +151,35 @@ describe('MCP endpoint', () => {
     expect(noDeleteBase instanceof Error || (noDeleteBase as { isError?: boolean }).isError === true).toBe(true);
     expect(JSON.parse(textOf(await call('delete_file', { project: 'demo', path, base_sha256: updated.sha256 })))).toEqual({ path, deleted: true });
     expect(JSON.parse(textOf(await call('list_files', { project: 'demo' })))).toEqual([]);
+    await client.close();
+  });
+
+  it('gives a ref with every record the tools return, and says so in their descriptions', async () => {
+    const REF = /^tabula:[0-9a-f]{8}$/;
+    await setSyncConfig(db, 'demo', { sync: ['docs/**'], state: [] });
+    await createNote(db, { title: 'Arch notes', body: 'layers' });
+    const client = await connect('/mcp', bearer);
+    const call = async (name: string, args: Record<string, unknown>) => JSON.parse(textOf(await client.callTool({ name, arguments: args })));
+
+    const rule = await call('remember', { project: 'global', kind: 'rule', title: 'Refs everywhere', body: 'Because.' });
+    expect(rule.ref).toBe(`tabula:${rule.id.slice(0, 8)}`);
+    expect((await call('search', { query: 'refs' }))[0].ref).toBe(rule.ref);
+    const saved = await call('save_thought', { title: 'Ref idea', body: 'refs' });
+    expect(saved.ref).toMatch(REF);
+    expect((await call('update_thought', { id: saved.ref, append: 'more' })).ref).toBe(saved.ref);
+    expect((await call('find_thoughts', { query: 'ref' }))[0].ref).toBe(saved.ref);
+    expect((await call('find_notes', { query: 'arch' }))[0].ref).toMatch(REF);
+    const written = await call('write_file', { project: 'demo', path: 'docs/a.md', content: '# A' });
+    expect(written.ref).toMatch(REF);
+    expect((await call('list_files', { project: 'demo' }))[0].ref).toBe(written.ref);
+
+    const { tools } = await client.listTools();
+    for (const name of [
+      'remember', 'save_thought', 'update_thought', 'find_thoughts', 'find_notes', 'search', 'create_report', 'update_report',
+      'list_reports', 'get_report', 'get_frame', 'view_attachment', 'list_files', 'read_file', 'write_file',
+    ]) {
+      expect(tools.find((t) => t.name === name)!.description, name).toContain('"tabula:xxxxxxxx"');
+    }
     await client.close();
   });
 
@@ -238,7 +290,7 @@ describe('MCP endpoint', () => {
     expect(stale.isError).toBe(true);
     expect(textOf(stale)).toMatch(/^409: thought was changed meanwhile by claude-code/);
 
-    const got = JSON.parse(textOf(await client.callTool({ name: 'get', arguments: { id: saved.id.slice(0, 8) } })));
+    const got = JSON.parse(((await client.callTool({ name: 'get', arguments: { id: saved.id.slice(0, 8) } })).content as Content)[1]!.text);
     expect(got).toMatchObject({ type: 'thought', version: 2, body: '## Idea\nShort stingers.\n\n## Next\nTry Suno.' });
     expect((await listRevisions(db, saved.id)).map((r) => r.body)).toEqual(['## Idea\nShort stingers.']);
 

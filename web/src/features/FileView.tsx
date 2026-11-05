@@ -5,6 +5,7 @@ import { copyText, formatSize } from '../format';
 import { backTarget, href, navigate } from '../router';
 import { Alert, Badge, Button, EmptyState, IconButton, Skeleton, useConfirm, useToast } from '../ui';
 import { AuthorMeta, authorOf, FileContent, TimeAgo } from './common';
+import { CopyRefButton } from './CopyRefButton';
 import { EditorBar } from './EditorBar';
 import { FileHistoryDialog } from './FileHistoryDialog';
 
@@ -62,6 +63,7 @@ export function FileView({
       >
         {f && (
           <>
+            <CopyRefButton id={f.id} />
             <IconButton icon="copy" label="Copy content" onClick={async () => notify((await copyText(f.content)) ? 'Content copied' : 'Copy failed')} />
             <IconButton icon={f.deletedAt ? 'undo' : 'trash'} label={f.deletedAt ? 'Restore' : 'Delete'} onClick={() => void toggleDeleted()} />
           </>

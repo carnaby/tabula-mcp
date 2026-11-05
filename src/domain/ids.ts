@@ -1,15 +1,26 @@
+import { REF_PREFIX } from '../shared/refs.js';
 import { badRequest } from './errors.js';
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const PREFIX = /^[0-9a-f][0-9a-f-]{3,35}$/;
-
-export type IdRef = { kind: 'full'; id: string } | { kind: 'prefix'; prefix: string };
+/**
+ * A record id as agents and the UI pass it; `prefix` is hex without dashes (dashes and letter case never matter).
+ * `tabula:` references and full uuids reach every record type. The older short form (`#a1f3` or bare hex) is
+ * `legacy`: it keeps the scope it had when only rules, notes, thoughts and reports had ids, so a rule's short id
+ * from recall cannot turn ambiguous because a file or an attachment id starts with the same characters.
+ */
+export type IdRef = { kind: 'full'; id: string } | { kind: 'prefix'; prefix: string; legacy: boolean };
 
 export function parseIdRef(raw: string): IdRef {
-  const v = raw.trim().replace(/^#/, '').toLowerCase();
-  if (UUID.test(v)) return { kind: 'full', id: v };
-  if (PREFIX.test(v) && v.replace(/-/g, '').length >= 4) return { kind: 'prefix', prefix: v };
-  throw badRequest(`id "${raw}" must be a uuid or its first 4+ hex characters (e.g. #a1f3)`);
+  const v = raw.trim().toLowerCase();
+  const isRef = v.startsWith(REF_PREFIX);
+  const body = isRef ? v.slice(REF_PREFIX.length).trim() : v.replace(/^#/, '');
+  const hex = body.replace(/-/g, '');
+  if (/^[0-9a-f-]+$/.test(body) && /^[0-9a-f]{4,32}$/.test(hex)) {
+    if (hex.length === 32) {
+      return { kind: 'full', id: `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}` };
+    }
+    return { kind: 'prefix', prefix: hex, legacy: !isRef };
+  }
+  throw badRequest(`id "${raw}" must be a reference (tabula:a1f3c2d4), a uuid or its first 4+ hex characters (e.g. #a1f3)`);
 }
 
 /** Shortest common prefix length (>= min) at which all ids are unique. */

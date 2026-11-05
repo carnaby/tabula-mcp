@@ -86,10 +86,10 @@ function Page({ route, projects }: { route: Route; projects: Project[] | undefin
     case 'thought': return <ThoughtEditorPage id={route.id} from={route.from} />;
     case 'notes': return <NotesPage />;
     case 'note': return <NoteEditorPage id={route.id} from={route.from} />;
-    case 'global': return <GlobalPage tab={route.tab} projects={projects} />;
+    case 'global': return <GlobalPage tab={route.tab} memory={route.memory} projects={projects} />;
     case 'search': return <SearchPage q={route.q} projects={projects} />;
     case 'reports': return <ReportsPage projects={projects} />;
-    case 'report': return <ReportPage id={route.id} project={route.project} from={route.from} projects={projects} />;
+    case 'report': return <ReportPage id={route.id} project={route.project} from={route.from} attachment={route.attachment} projects={projects} />;
     case 'project': return <ProjectPage project={route.project} tab={route.tab} path={route.path} from={route.from} projects={projects} />;
     default:
       return (

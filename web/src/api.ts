@@ -1,5 +1,5 @@
 import type {
-  FileRevision, FileRevisionContent, Memory, MemoryKind, MemorySort, Note, NoteSort, Page, Project, RecallPreview, SearchHit, Source, Thought,
+  FileRevision, FileRevisionContent, Memory, MemoryKind, MemorySort, Note, NoteSort, Page, Project, RecallPreview, RefTarget, SearchHit, Source, Thought,
   ProjectFile, ProjectFileContent, ThoughtRevision, ThoughtSort,
   Attachment, TranscriptState, WorkerStatus, ReportDetail, Report, ReportSort, ReportStatus, ReportSummary,
 } from './types';
@@ -15,7 +15,8 @@ export const setToken = storage.set;
 export const clearToken = storage.clear;
 
 export class ApiError extends Error {
-  constructor(readonly status: number, message: string) {
+  /** The error body; e.g. `candidates` of an ambiguous reference. */
+  constructor(readonly status: number, message: string, readonly data: Record<string, unknown> = {}) {
     super(message);
   }
 }
@@ -36,8 +37,8 @@ async function request<T>(method: string, path: string, body?: unknown, signal?:
     throw new ApiError(401, 'unauthorized');
   }
   if (!res.ok) {
-    const e = (await res.json().catch(() => ({}))) as { message?: string; error?: string };
-    throw new ApiError(res.status, e.message ?? e.error ?? res.statusText);
+    const e = (await res.json().catch(() => ({}))) as { message?: string; error?: string } & Record<string, unknown>;
+    throw new ApiError(res.status, e.message ?? e.error ?? res.statusText, e);
   }
   return (res.status === 204 ? undefined : await res.json()) as T;
 }
@@ -119,6 +120,7 @@ export const api = {
   transcriptionStatus: (signal?: S) => request<WorkerStatus>('GET', '/transcription/status', undefined, signal),
 
   search: (q: string, signal?: S) => request<SearchHit[]>('GET', `/search${qs({ q, limit: 30 })}`, undefined, signal),
+  resolve: (ref: string, signal?: S) => request<RefTarget>('GET', `/resolve/${encodeURIComponent(ref)}`, undefined, signal),
   recall: (project: string, signal?: S) => request<RecallPreview>('GET', `/recall/${encodeURIComponent(project)}`, undefined, signal),
 };
 

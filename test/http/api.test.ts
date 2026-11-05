@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { memories } from '../../src/db/schema.js';
 import { buildApp } from '../../src/http/app.js';
-import { TEST_TOKEN, testConfig, useTestDb } from '../helpers.js';
+import { TEST_TOKEN, TEST_WORKER_TOKEN, testConfig, useTestDb } from '../helpers.js';
 
 const db = useTestDb();
 let app: FastifyInstance;
@@ -145,5 +146,32 @@ describe('REST API', () => {
     expect(n.json()).toMatchObject({ projectId: null, tags: ['music'] });
     expect((await call('GET', '/api/notes?tag=music')).json()).toMatchObject({ total: 1 });
     expect((await call('GET', '/api/notes/tags')).json()).toEqual([{ tag: 'music', count: 1 }]);
+  });
+
+  it('resolves a reference for the UI, ambiguous ones with their candidates, under the main token only', async () => {
+    const t = (await call('POST', '/api/thoughts', { title: 'Idea' })).json();
+    const ref = `tabula:${t.id.slice(0, 8)}`;
+    const ok = await call('GET', `/api/resolve/${encodeURIComponent(ref.toUpperCase())}`);
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json()).toEqual({ ref, type: 'thought', id: t.id, project: null, title: 'Idea', status: 'active' });
+
+    const missing = await call('GET', '/api/resolve/tabula%3Affff0000');
+    expect(missing.statusCode).toBe(404);
+    expect(missing.json()).toMatchObject({ error: 'not_found', message: 'no record matches tabula:ffff0000' });
+    expect((await call('GET', '/api/resolve/tabula%3Azz')).statusCode).toBe(400);
+
+    const row = { projectId: 'global', kind: 'rule' as const, body: 'b', source: 'human' as const };
+    await db.insert(memories).values([
+      { ...row, id: 'abcd1000-0000-4000-8000-000000000000', title: 'First' },
+      { ...row, id: 'abcd2000-0000-4000-8000-000000000000', title: 'Second' },
+    ]);
+    const ambiguous = await call('GET', '/api/resolve/tabula%3Aabcd');
+    expect(ambiguous.statusCode).toBe(400);
+    expect(ambiguous.json()).toMatchObject({ error: 'bad_request', message: expect.stringMatching(/ambiguous/) });
+    expect(ambiguous.json().candidates.map((c: { ref: string }) => c.ref).sort()).toEqual(['tabula:abcd1000', 'tabula:abcd2000']);
+
+    for (const headers of [{}, { authorization: `Bearer ${TEST_WORKER_TOKEN}` }]) {
+      expect((await app.inject({ method: 'GET', url: `/api/resolve/${encodeURIComponent(ref)}`, headers })).statusCode).toBe(401);
+    }
   });
 });

@@ -1,4 +1,4 @@
-// Groups project files by folder for the Files tab. No imports: the unit tests load it outside the web build.
+// Groups project files by folder: the Files tab of the UI and the file list of the recall digest. No imports: the web UI builds this file too.
 
 /** Agent work files (specs, plans, progress) live under this folder; their group goes last, collapsed. */
 export const WORK_DIR = '.superpowers';

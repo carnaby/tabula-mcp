@@ -4,6 +4,7 @@ import { formatSize } from '../../format';
 import type { Attachment, TranscriptState, WorkerStatus } from '../../types';
 import { Badge, Button, Icon, IconButton, Textarea, useConfirm, useToast } from '../../ui';
 import { Author, authorOf } from '../common';
+import { CopyRefButton } from '../CopyRefButton';
 import { clock } from './Recorder';
 import { Transcript } from './Transcript';
 import type { Upload } from './uploads';
@@ -18,6 +19,9 @@ function seek(media: HTMLMediaElement | null, ms: number) {
 }
 
 const NOTE_MAX = 2000;
+
+/** The DOM id of an attachment's card (or frame thumbnail), for #/reports/<id>?attachment=<id>. */
+export const attachmentDomId = (id: string) => `att-${id}`;
 
 /** The user's note on a saved frame: saved on blur and on Ctrl/Cmd+Enter, when it changed. */
 function FrameNote({ frame, onSaved }: { frame: Attachment; onSaved: (f: Attachment) => void }) {
@@ -65,7 +69,10 @@ function FrameNote({ frame, onSaved }: { frame: Attachment; onSaved: (f: Attachm
   };
   return (
     <div className="att__note">
-      <span className="att__note-state t-subtle" role="status">{state === 'saving' ? 'Saving…' : state === 'saved' ? 'Saved' : ' '}</span>
+      <div className="att__note-head">
+        <span className="att__note-state t-subtle" role="status">{state === 'saving' ? 'Saving…' : state === 'saved' ? 'Saved' : ' '}</span>
+        <CopyRefButton id={frame.id} size="sm" />
+      </div>
       <Textarea
         rows={2}
         maxLength={NOTE_MAX}
@@ -86,11 +93,12 @@ function FrameNote({ frame, onSaved }: { frame: Attachment; onSaved: (f: Attachm
 }
 
 function VideoCard({
-  a, frames, worker, onFrame, onTranscript, onDelete, onDeleteFrame, onNote,
+  a, frames, worker, focus, onFrame, onTranscript, onDelete, onDeleteFrame, onNote,
 }: {
   a: Attachment;
   frames: Attachment[];
   worker: WorkerStatus | undefined;
+  focus?: string;
   onFrame: (f: Attachment) => void;
   onTranscript: (t: TranscriptState) => void;
   onDelete: () => void;
@@ -101,13 +109,30 @@ function VideoCard({
   const [busy, setBusy] = useState(false);
   const [t, setT] = useState(0);
   const [playing, setPlaying] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(() => (focus && frames.some((f) => f.id === focus) ? focus : null));
   // Derived, so a deleted frame is no longer selected.
   const selected = frames.find((f) => f.id === selectedId) ?? null;
   const notify = useToast();
   const onSeek = useCallback((ms: number) => seek(ref.current, ms), []);
+  // Opened on one of its frames: the video waits at that moment, like a tap on the frame but without playing.
+  useEffect(() => {
+    const frame = frames.find((f) => f.id === focus);
+    const v = ref.current;
+    if (!frame || !v) return;
+    const jump = () => { v.currentTime = (frame.atMs ?? 0) / 1000; };
+    // The video only gets its height with the metadata, which pushes the frame down: bring it back into view then.
+    const late = () => {
+      jump();
+      document.getElementById(attachmentDomId(frame.id))?.scrollIntoView({ block: 'center' });
+    };
+    if (v.readyState >= 1) jump();
+    else v.addEventListener('loadedmetadata', late, { once: true });
+    return () => v.removeEventListener('loadedmetadata', late);
+    // Only on mount: later selections are the user's.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   return (
-    <figure className="att att--wide">
+    <figure id={attachmentDomId(a.id)} className="att att--wide" data-focused={focus === a.id || undefined}>
       {a.url ? (
         <video ref={ref} className="att__media" src={a.url} controls playsInline preload="metadata" onTimeUpdate={(e) => setT(e.currentTarget.currentTime)} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} />
       ) : (
@@ -138,12 +163,13 @@ function VideoCard({
           </Button>
         )}
         <span className="t-spacer" />
+        <CopyRefButton id={a.id} size="sm" />
         <IconButton size="sm" icon="trash" label="Delete video" onClick={onDelete} />
       </figcaption>
       {frames.length > 0 && (
         <div className="att__frames">
           {frames.map((f) => (
-            <div key={f.id} className="att__frame-wrap">
+            <div key={f.id} id={attachmentDomId(f.id)} className="att__frame-wrap">
               <button
                 type="button"
                 className="att__frame"
@@ -174,14 +200,14 @@ function VideoCard({
 }
 
 function AudioCard({
-  a, worker, onTranscript, onDelete,
-}: { a: Attachment; worker: WorkerStatus | undefined; onTranscript: (t: TranscriptState) => void; onDelete: () => void }) {
+  a, worker, focus, onTranscript, onDelete,
+}: { a: Attachment; worker: WorkerStatus | undefined; focus?: string; onTranscript: (t: TranscriptState) => void; onDelete: () => void }) {
   const ref = useRef<HTMLAudioElement>(null);
   const [t, setT] = useState(0);
   const [playing, setPlaying] = useState(false);
   const onSeek = useCallback((ms: number) => seek(ref.current, ms), []);
   return (
-    <figure className="att att--wide">
+    <figure id={attachmentDomId(a.id)} className="att att--wide" data-focused={focus === a.id || undefined}>
       {a.url ? (
         <audio ref={ref} className="att__audio" src={a.url} controls preload="metadata" onTimeUpdate={(e) => setT(e.currentTarget.currentTime)} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} />
       ) : (
@@ -192,6 +218,7 @@ function AudioCard({
         <span className="t-truncate">{a.fileName}</span>
         <span className="t-subtle t-nowrap">{a.durationMs !== null ? `${clock(a.durationMs)} · ` : ''}{formatSize(a.size)}</span>
         <span className="t-spacer" />
+        <CopyRefButton id={a.id} size="sm" />
         <IconButton size="sm" icon="trash" label="Delete voice note" onClick={onDelete} />
       </figcaption>
       <Transcript a={a} worker={worker} onSeek={a.url ? onSeek : undefined} onChange={onTranscript} currentMs={t * 1000} playing={playing} />
@@ -200,7 +227,7 @@ function AudioCard({
 }
 
 export function Attachments({
-  attachments, uploads, worker, onChanged, onDismissUpload,
+  attachments, uploads, worker, onChanged, onDismissUpload, focus,
 }: {
   attachments: Attachment[];
   uploads: Upload[];
@@ -208,7 +235,15 @@ export function Attachments({
   /** Takes an update function: uploads finishing meanwhile change the list too, so it must not be replaced from a stale copy. */
   onChanged: Dispatch<SetStateAction<Attachment[]>>;
   onDismissUpload: (key: string) => void;
+  /** The attachment the page was opened on. */
+  focus?: string;
 }) {
+  // Opened on one attachment: bring it into view once, when the page opens.
+  useEffect(() => {
+    if (focus) document.getElementById(attachmentDomId(focus))?.scrollIntoView({ block: 'center' });
+    // Only on mount: later the user scrolls.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const { confirm } = useConfirm();
   const notify = useToast();
   const remove = async (a: Attachment) => {
@@ -248,6 +283,7 @@ export function Attachments({
           key={v.id}
           a={v}
           worker={worker}
+          focus={focus}
           frames={attachments.filter((f) => f.kind === 'frame' && f.sourceId === v.id).sort((x, y) => (x.atMs ?? 0) - (y.atMs ?? 0))}
           onFrame={(f) => onChanged((list) => (list.some((x) => x.id === f.id) ? list : [...list, f]))}
           onTranscript={(t) => setTranscript(v.id, t)}
@@ -257,12 +293,12 @@ export function Attachments({
         />
       ))}
       {audios.map((x) => (
-        <AudioCard key={x.id} a={x} worker={worker} onTranscript={(t) => setTranscript(x.id, t)} onDelete={() => void remove(x)} />
+        <AudioCard key={x.id} a={x} worker={worker} focus={focus} onTranscript={(t) => setTranscript(x.id, t)} onDelete={() => void remove(x)} />
       ))}
       {loose.length > 0 && (
         <div className="att-grid">
           {loose.map((a) => (
-            <figure key={a.id} className="att">
+            <figure key={a.id} id={attachmentDomId(a.id)} className="att" data-focused={focus === a.id || undefined}>
               {a.url ? (
                 <a href={a.url} target="_blank" rel="noopener noreferrer" className="att__thumb">
                   {a.mime === 'image/heic' ? <span className="att__gone"><Icon name="image" /> HEIC — open</span> : <img src={a.url} alt={a.fileName} loading="lazy" />}
@@ -276,6 +312,7 @@ export function Attachments({
                 <span className="t-truncate t-subtle">{a.fileName}</span>
                 {a.kind === 'frame' && a.note && <span className="att__note-text">{a.note}</span>}
                 <span className="t-spacer" />
+                <CopyRefButton id={a.id} size="sm" />
                 <IconButton size="sm" icon="trash" label="Delete" onClick={() => void remove(a)} />
               </figcaption>
             </figure>

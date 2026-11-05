@@ -54,6 +54,15 @@ const ICONS = {
       <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
     </>
   ),
+  /** A record's reference (tabula:xxxxxxxx): the wax tablet and stylus of the logo, in outline. Not "copy", which copies content. */
+  tabula: (
+    <>
+      <rect x="3" y="3" width="13" height="18" rx="2" />
+      <path d="M7 8h5M7 12h3M7 16h4" />
+      <path d="M21 3 14.6 17.2" />
+      <path d="m14.6 17.2-1.3 3.1" strokeWidth={1.25} />
+    </>
+  ),
   folder: (
     <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
   ),

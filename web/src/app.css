@@ -316,6 +316,8 @@ div.file-group__head { cursor: default; }
 .file-view__path { font-size: var(--text-md); font-weight: 650; overflow-wrap: anywhere; min-width: 0; }
 .author-meta__info { display: grid; gap: 4px; padding: 6px 8px; color: var(--text); white-space: normal; }
 .author-meta__info .t-subtle { font-size: var(--text-xs); }
+/* A dialog head with the author and actions (the memory dialog): on phones the time truncates, not the title. */
+.t-dialog__head:has(> .author-meta) > h2 { flex: 1 0 auto; }
 .editor__grid { display: grid; gap: 14px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 .dirty-dot {
   width: 8px;
@@ -567,6 +569,9 @@ div.file-group__head { cursor: default; }
   overflow: hidden;
   min-width: 0;
 }
+.att[data-focused] { border-color: var(--accent-strong); box-shadow: 0 0 0 2px var(--ring); }
+/* Opened on an attachment (#/reports/<id>?attachment=<id>): scrolled into view below the sticky top and editor bars. */
+.att, .att__frame-wrap { scroll-margin-top: 120px; }
 .att__thumb { display: block; aspect-ratio: 4 / 3; background: var(--surface-2); }
 .att__thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .att__media { width: 100%; max-height: min(60vh, 520px); background: #000; display: block; }
@@ -607,6 +612,8 @@ div.file-group__head { cursor: default; }
 .att__note .t-textarea { width: 100%; min-height: 0; font-size: var(--text-sm); resize: vertical; }
 /* A non-breaking space keeps the line's height so the textarea does not jump. */
 .att__note-state { display: block; min-height: 1.2em; margin-bottom: 2px; font-size: 12px; }
+.att__note-head { display: flex; align-items: center; gap: 6px; }
+.att__note-head .att__note-state { flex: 1; margin-bottom: 0; }
 .att__note-text { flex-basis: 100%; white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--text-sm); color: var(--text-muted); }
 .att__frame-del.t-icon-btn { position: absolute; top: 4px; right: 4px; width: 32px; height: 32px; }
 

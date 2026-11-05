@@ -569,6 +569,7 @@ div.file-group__head { cursor: default; }
   overflow: hidden;
   min-width: 0;
 }
+.att[data-focused] { border-color: var(--accent-strong); box-shadow: 0 0 0 2px var(--ring); }
 .att__thumb { display: block; aspect-ratio: 4 / 3; background: var(--surface-2); }
 .att__thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .att__media { width: 100%; max-height: min(60vh, 520px); background: #000; display: block; }

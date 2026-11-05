@@ -15,8 +15,8 @@ import {
 } from '../ui';
 
 export function ReportPage({
-  id, project, from, projects,
-}: { id: string; project?: string; from?: string; projects: Project[] | undefined }) {
+  id, project, from, attachment, projects,
+}: { id: string; project?: string; from?: string; attachment?: string; projects: Project[] | undefined }) {
   const isNew = id === 'new';
   const back = backTarget(from, href.reports(), projects);
   const loaded = useQuery((s) => api.report(id, s), [id], { enabled: !isNew, refetchOnFocus: false });
@@ -38,6 +38,7 @@ export function ReportPage({
       defaultProject={project}
       from={from}
       back={back}
+      focus={attachment}
       projects={projects?.filter((p) => p.id !== 'global')}
     />
   );
@@ -46,13 +47,15 @@ export function ReportPage({
 type Draft = { projectId: string; title: string; body: string };
 
 function Editor({
-  initial, initialAttachments, defaultProject, from, back, projects,
+  initial, initialAttachments, defaultProject, from, back, focus, projects,
 }: {
   initial: Report | null;
   initialAttachments: Attachment[];
   defaultProject?: string;
   from?: string;
   back: { href: string; label: string };
+  /** The attachment the page was opened on. */
+  focus?: string;
   projects: Project[] | undefined;
 }) {
   const [lastProject, setLastProject] = usePersistentState('tabula.report.project', { id: '' });
@@ -346,7 +349,7 @@ function Editor({
           )}
           <input ref={camera} type="file" accept="image/*,video/*" capture="environment" hidden onChange={(e) => { void addFiles([...(e.target.files ?? [])]); e.target.value = ''; }} />
           <input ref={gallery} type="file" accept="image/*,video/*,audio/*" multiple hidden onChange={(e) => { void addFiles([...(e.target.files ?? [])]); e.target.value = ''; }} />
-          <Attachments attachments={attachments} uploads={up.uploads} worker={worker.data} onChanged={setAttachments} onDismissUpload={up.dismiss} />
+          <Attachments attachments={attachments} uploads={up.uploads} worker={worker.data} onChanged={setAttachments} onDismissUpload={up.dismiss} focus={focus} />
         </section>
 
         {base && (

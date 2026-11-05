@@ -7,11 +7,11 @@ export type Route =
   | { name: 'thought'; id: string | 'new'; from?: string }
   | { name: 'notes' }
   | { name: 'note'; id: string | 'new'; from?: string }
-  | { name: 'global'; tab: GlobalTab }
+  | { name: 'global'; tab: GlobalTab; memory?: string }
   | { name: 'search'; q: string }
   | { name: 'reports' }
-  /** `project` preselects the project of a new report; `from` is where the back button leads. */
-  | { name: 'report'; id: string | 'new'; project?: string; from?: string }
+  /** `project` preselects the project of a new report; `from` is where the back button leads; `attachment` is shown first. */
+  | { name: 'report'; id: string | 'new'; project?: string; from?: string; attachment?: string }
   | { name: 'project'; project: string; tab: ProjectTab; path?: string; from?: string }
   | { name: 'notFound' };
 
@@ -38,6 +38,10 @@ export const href = {
   project: (p: string, tab: ProjectTab = 'state') =>
     `#/p/${encodeURIComponent(p)}${tab === 'state' ? '' : `/${tab}`}`,
   file: (p: string, path: string, from?: string) => `#/p/${encodeURIComponent(p)}/files${query({ path, from })}`,
+  /** A global rule in its dialog over the Global page: where a rule's reference leads. */
+  memory: (id: string) => `#/global${query({ memory: id })}`,
+  /** A report opened on one attachment: a frame is selected and its video waits at that moment. */
+  attachment: (reportId: string, id: string) => `#/reports/${reportId}${query({ attachment: id })}`,
 };
 
 export function parse(hash: string): Route {
@@ -53,9 +57,13 @@ export function parse(hash: string): Route {
   const from = params.get('from') ?? undefined;
   if (!a || a === 'thoughts') return b ? { name: 'thought', id: b, from } : { name: 'thoughts' };
   if (a === 'notes') return b ? { name: 'note', id: b, from } : { name: 'notes' };
-  if (a === 'global') return { name: 'global', tab: b === 'recall' ? 'recall' : 'rules' };
+  if (a === 'global') return { name: 'global', tab: b === 'recall' ? 'recall' : 'rules', memory: params.get('memory') ?? undefined };
   if (a === 'search') return { name: 'search', q: params.get('q') ?? '' };
-  if (a === 'reports') return b ? { name: 'report', id: b, project: params.get('project') ?? undefined, from } : { name: 'reports' };
+  if (a === 'reports') {
+    return b
+      ? { name: 'report', id: b, project: params.get('project') ?? undefined, from, attachment: params.get('attachment') ?? undefined }
+      : { name: 'reports' };
+  }
   // Links from earlier versions of the UI.
   if (a === 'memories' && !b) return { name: 'global', tab: 'rules' };
   if (a === 'recall' && !b) return { name: 'global', tab: 'recall' };

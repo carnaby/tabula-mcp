@@ -81,6 +81,15 @@ export type SearchHit = {
   updated_at: string;
 };
 
+export type RecordType = 'memory' | 'note' | 'thought' | 'report' | 'file' | 'attachment';
+/** What a reference points at (GET /api/resolve/:ref). */
+export type RefTarget = {
+  ref: string; type: RecordType; id: string; project: string | null; title: string;
+  kind?: string; report_id?: string; path?: string; status?: string;
+};
+/** One of the records an ambiguous reference matches; `ref` tells it apart. */
+export type RefCandidate = { type: RecordType; id: string; ref: string; title: string };
+
 export type ProjectFile = {
   id: string;
   path: string;

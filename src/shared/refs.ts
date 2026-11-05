@@ -5,9 +5,12 @@ export const REF_PREFIX = 'tabula:';
 /** A record's reference: `tabula:` and the first 8 hex characters of its uuid. */
 export const refOf = (id: string): string => `${REF_PREFIX}${id.slice(0, 8).toLowerCase()}`;
 
-/** Quotes and backticks around a reference copied out of a chat, and the punctuation after it. */
-const WRAP_START = /^[`'"“”‘’]+/;
-const WRAP_END = /[`'"“”‘’.,;:!?]+$/;
+/**
+ * What a reference picks up when it is copied out of a chat: quotes, backticks and Markdown wrappers around it
+ * (`(…)`, `[…]`, `<…>`, `**…**`, `_…_`), and the punctuation after it.
+ */
+const WRAP_START = /^[`'"“”‘’([<*_]+/;
+const WRAP_END = /[`'"“”‘’)\]>*_.,;:!?]+$/;
 
 /**
  * The reference a search query consists of, normalized (`tabula:` + 4–32 hex characters, dashes ignored), or null when the query is anything else. Spaces and letter case do not matter.

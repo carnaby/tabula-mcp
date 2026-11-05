@@ -241,7 +241,7 @@ You don't write it by hand: tell the agent *"use Tabula in this project"* and it
 
 A responsive React app with its own small UI kit (`web/src/ui`), light and dark themes, and an installable icon for the home screen.
 
-- **Sidebar** — Thoughts, Notes, Global, and the projects with their file counts. On phones it is a drawer.
+- **Sidebar** — Thoughts, Notes, Global, and the projects with their file counts, the most recently active first (files, bug reports and notes count). On phones it is a drawer.
 - **Thoughts** and **Notes** — card grids with search, tag chips, sort and pinning; a Markdown editor with Write / Split / Preview and Ctrl/⌘ S. Thoughts also keep a version history and warn when an agent changed the text while you were typing.
 - **Global** — the rules table (kind, author, status, prefix search; edit, retire, supersede) and the recall preview.
 - **Project** — **State** (the state files rendered as Markdown), **Files** (list, preview, the last 20 versions with restore, delete and restore), **Recall preview** (the exact digest with a budget meter) and **Setup** (the CLAUDE.md section, a `.tabula.json`, the install commands and the hook).

@@ -266,7 +266,7 @@ function Editor({
               ) : (
                 <ProjectSelect
                   id={fid}
-                  projects={[{ id: '', name: 'Pick a project…', description: '', memory_count: 0, file_count: 0 }, ...(projects ?? [])]}
+                  projects={[{ id: '', name: 'Pick a project…', description: '', memory_count: 0, file_count: 0, last_activity_at: '' }, ...(projects ?? [])]}
                   value={draft.projectId}
                   onChange={async (projectId) => {
                     setDraft({ ...draft, projectId });

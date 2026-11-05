@@ -11,7 +11,7 @@ References: every Tabula record has a reference, "tabula:" and 8 hex characters 
 const REF = 'Every record in the reply has its ref ("tabula:xxxxxxxx"); give it to the user when you mention the record.';
 
 export const TOOL_DESCRIPTIONS = {
-  list_projects: `List Tabula projects: slug, one-line description, number of synced files and of active memories (global rules live in "global").
+  list_projects: `List Tabula projects, the most recently active first (global first): slug, one-line description, number of synced files and of active memories (global rules live in "global").
 Call it when you are unsure which project slug to use. Never invent a slug; projects are created by the human or, on the user's explicit request, by setup_project.`,
 
   recall: `Call at the start of a session when the project's CLAUDE.md (or project instructions) names a Tabula project. Returns the global rules (follow them), the project state (the content of its handoff state files) and the 10 newest of the project's synced files, grouped by folder (list_files has them all). Pass include_state: false only where the \`tabula\` command restored the files to disk (Claude Code on a computer with the repository); in Claude Code on the web and in claude.ai keep the default (true). Without such a section do not call it, and never guess a slug.`,

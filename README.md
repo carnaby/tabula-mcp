@@ -195,10 +195,10 @@ At the start of a session the agent calls `recall` once and gets plain text:
 | Tool | What it does |
 |---|---|
 | `recall(project, include_state?)` | The digest above. Called once at the start of a session. |
-| `list_files(project)` / `read_file(project, path, offset?)` | The project's synced files with version and sha256. `read_file` answers in separate text blocks: a header line `[file <path> · version <n> · sha256 <hex> · <n> characters]`, the text exactly as stored, and for long files (parts of 100 000 characters) a last block with the next offset. |
+| `list_files(project)` / `read_file(project, path, offset?)` | The project's synced files with version and sha256. `read_file` answers in separate text blocks: a header line `[file <path> · tabula:<id> · version <n> · sha256 <hex> · <n> characters]`, the text exactly as stored, and for long files (parts of 100 000 characters) a last block with the next offset. |
 | `write_file(project, path, content, base_sha256?)` · `delete_file(project, path, base_sha256)` | For sessions without the `tabula` command. Only paths matching the project's `sync` patterns (refused until a `tabula push` has sent them), never `.env`, never the `global` project. A new file needs no base; changing or deleting an existing one needs the sha256 of the version the agent read, a stale one is a 409 with the current sha256, and there is no force. Paths matching `state` become the project state. The writer is the agent's label. |
 | `search(query, project?, kind?, include_deprecated?, limit?)` | Full-text search over the global rules and the project files (Postgres `tsvector`, `simple` configuration). |
-| `get(id)` | One rule, note or thought in full; accepts the short `#xxxx` id from the digest. |
+| `get(id)` | Any record by its reference `tabula:xxxxxxxx` (or a full uuid, or the `#xxxx` id from the digest): a rule, note, thought, bug report, project file or attachment. The reply starts with a line saying what it is — `tabula:d86d86e7 · bug report · project music-creator · Video and transcript` — then the record: a file's text like `read_file`, a photo or frame as an image with its note, a recording's transcript status. |
 | `remember(project="global", kind, title, body, tags?, supersedes_id?)` | Adds a global rule — only when the user explicitly asks. Any other project is refused with the reason. |
 | `deprecate(id, reason)` | Retires a global rule the agent wrote. Refuses human-written records. |
 | `find_notes(query?, tag?, limit?)` | Reads your Notes — only when you mention them. |
@@ -214,6 +214,8 @@ The tool descriptions are part of the design: they are what an agent reads befor
 ### When agents use it
 
 Tabula is registered once per client, so it is visible in every project. The server's MCP *instructions* tell every client to use it for a project only when that project's `CLAUDE.md` (or claude.ai project instructions) contains a **"Memory (Tabula)"** section naming the project, never to guess a slug, and never to write project memories. Thoughts and Notes work anywhere, on request.
+
+**References.** Every record has a reference, `tabula:` and the first 8 hex characters of its id (the Tabula icon in the UI copies it). The server instructions tell every client: a reference in your message is opened with `get` before the answer — it overrides the "Memory (Tabula)" condition and the notes rule, because you pointed at the record; a reference inside a record is opened only when the task needs it, never chained; and when the agent tells you about a record it saved, found or changed, it gives the record's reference.
 
 The section is the whole per-project protocol:
 

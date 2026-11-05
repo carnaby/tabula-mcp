@@ -57,6 +57,29 @@ describe('MCP endpoint', () => {
     expect(ins).toContain('find_notes');
     expect(ins).toContain('get_transcript');
     expect(ins).toMatch(/`tabula` command is not available.*write_file/s);
+    expect(ins).toContain('tabula:d86d86e7');
+    expect(ins).toContain("When the user's message contains one, call get with it before you answer");
+    expect(ins).toContain('do not follow references from record to record');
+    expect(ins).toContain('give its reference');
+    await client.close();
+  });
+
+  it('get opens a rule or a file by reference and starts with a line saying what it is', async () => {
+    const rule = await createMemory(db, { projectId: 'global', kind: 'rule', title: 'Run tests via pnpm', body: 'b', source: 'human' });
+    await putFile(db, 'demo', { path: 'docs/plan.md', content: '# Plan\nShip it.', baseSha256: null }, 'cli');
+    const fileId = (await getFile(db, 'demo', 'docs/plan.md')).id;
+    const client = await connect('/mcp', bearer);
+    const get = async (id: string) => (await client.callTool({ name: 'get', arguments: { id } })).content as Content;
+
+    const ruleOut = await get(`TABULA:${rule.id.slice(0, 8).toUpperCase()}`);
+    expect(ruleOut[0]!.text).toBe(`tabula:${rule.id.slice(0, 8)} · global rule · Run tests via pnpm`);
+    expect(JSON.parse(ruleOut[1]!.text)).toMatchObject({ type: 'memory', ref: `tabula:${rule.id.slice(0, 8)}`, body: 'b' });
+
+    const fileOut = await get(`tabula:${fileId.slice(0, 8)}`);
+    expect(fileOut.map((c) => c.type)).toEqual(['text', 'text', 'text']);
+    expect(fileOut[0]!.text).toBe(`tabula:${fileId.slice(0, 8)} · project file · project demo · docs/plan.md`);
+    expect(fileOut[1]!.text).toMatch(/^\[file docs\/plan\.md · tabula:[0-9a-f]{8} · version 1 · sha256 [0-9a-f]{64} · 15 characters\]$/);
+    expect(fileOut[2]!.text).toBe('# Plan\nShip it.');
     await client.close();
   });
 
@@ -84,7 +107,7 @@ describe('MCP endpoint', () => {
     ]);
     const read = (await client.callTool({ name: 'read_file', arguments: { project: 'demo', path: 'docs/handoff/state.md' } })).content as Content;
     expect(read.map((c) => c.type)).toEqual(['text', 'text']);
-    expect(read[0]!.text).toMatch(/^\[file docs\/handoff\/state\.md · version 1 · sha256 [0-9a-f]{64} · 18 characters\]$/);
+    expect(read[0]!.text).toMatch(/^\[file docs\/handoff\/state\.md · tabula:[0-9a-f]{8} · version 1 · sha256 [0-9a-f]{64} · 18 characters\]$/);
     expect(read[1]!.text).toBe('Next: ship the CLI');
     const missing = await client.callTool({ name: 'read_file', arguments: { project: 'demo', path: 'docs/nope.md' } });
     expect(textOf(missing)).toMatch(/^404: file "docs\/nope\.md" does not exist/);
@@ -238,7 +261,7 @@ describe('MCP endpoint', () => {
     expect(stale.isError).toBe(true);
     expect(textOf(stale)).toMatch(/^409: thought was changed meanwhile by claude-code/);
 
-    const got = JSON.parse(textOf(await client.callTool({ name: 'get', arguments: { id: saved.id.slice(0, 8) } })));
+    const got = JSON.parse(((await client.callTool({ name: 'get', arguments: { id: saved.id.slice(0, 8) } })).content as Content)[1]!.text);
     expect(got).toMatchObject({ type: 'thought', version: 2, body: '## Idea\nShort stingers.\n\n## Next\nTry Suno.' });
     expect((await listRevisions(db, saved.id)).map((r) => r.body)).toEqual(['## Idea\nShort stingers.']);
 

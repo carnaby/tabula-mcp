@@ -4,28 +4,20 @@ import {
   type AgentContext, agentDeprecate, agentFindNotes, agentFindThoughts, agentGet, agentListFiles, agentListProjects,
   agentDeleteFile, agentReadFile, agentRecall, agentRemember, agentSaveThought, agentSearch, agentUpdateThought, agentWriteFile,
   agentCreateReport, agentGetFrame, agentGetReport, agentGetTranscript, agentListReports, agentUpdateReport, agentViewAttachment, type AgentImage,
-  type AgentFileRead,
+  type AgentBlock, type AgentFileRead,
 } from '../agent/operations.js';
 import { REPORT_STATUSES } from '../domain/reports.js';
 import { badRequest, DomainError, loggableError } from '../domain/errors.js';
 import { createProject } from '../domain/projects.js';
 import { MEMORY_KINDS, validateProjectSlug } from '../domain/validation.js';
-import { TOOL_DESCRIPTIONS as D } from './descriptions.js';
+import { SERVER_INSTRUCTIONS, TOOL_DESCRIPTIONS as D } from './descriptions.js';
 import { claudeMdSection, TABULA_JSON } from './snippet.js';
-
-const SERVER_INSTRUCTIONS = `Tabula keeps each project's files that are not in git (handoff state, private specs and plans) and the global rules that apply to every project. It ranks below the code and the client's own local memory: on a conflict they win.
-Use Tabula for a project only when its CLAUDE.md (or project instructions) has a "Memory (Tabula)" section naming its Tabula project. Without that section do not call recall, search, list_files, read_file, write_file or delete_file, and never guess a project slug.
-Where the \`tabula\` command is not available (Claude Code on the web, claude.ai), the synced files are not on disk: call recall with include_state: true, read files with read_file, and save every new or changed synced file (spec, plan, progress.md, handoff state) with write_file. On a computer with the repository and the \`tabula\` command, edit the files on disk and run \`tabula push\` instead.
-Never write project memories: remember and deprecate work only on global rules, and only when the user explicitly asks.
-When the user explicitly asks to start using Tabula in a project: call setup_project with the project folder name as the slug, put the section it returns into CLAUDE.md (create the file if it is missing; replace an older "Memory (Tabula)" section), save the suggested .tabula.json in the repository root, run \`tabula status\` before the first \`tabula push\` and check the files it lists (a broad "sync" pattern can upload far more than intended), then call recall.
-Thoughts and Notes need no such section and work anywhere. Thoughts are the user's notebook of saved conversations: when the user explicitly asks to save something to Tabula, or to find or change a saved thought, use find_thoughts, save_thought and update_thought. Notes are the user's own notes: read them with find_notes and get only when the user mentions their notes.
-Bug reports belong to a project and need no such section either: when the user asks about bug reports or to process them, use list_reports and get_report; read the transcripts of videos and voice notes first (get_report shows them, get_transcript the rest), pick the moments the user points at and look at them with get_frame, look at photos with view_attachment, then write the tasks with update_report. To record a new bug with create_report, take the project slug from list_projects; never guess it.`;
 
 /** Returned by setup_project: the first push uploads everything "sync" matches, so look before it does. */
 const SETUP_NEXT_STEP =
   'Save tabula_json as .tabula.json in the repository root, then run `tabula status` before the first `tabula push` and check the files it lists; narrow "sync" if it would upload more than the untracked files meant for Tabula.';
 
-const idParam = z.string().describe('Full uuid or the short #xxxx id shown in recall and search.');
+const idParam = z.string().describe('A reference "tabula:xxxxxxxx", a full uuid, or the short #xxxx id shown in recall.');
 const projectParam = z.string().describe('Project slug from the "Memory (Tabula)" section, e.g. "acme".');
 const kindParam = z.enum(MEMORY_KINDS);
 
@@ -42,6 +34,22 @@ async function runImageTool(log: McpLogger | undefined, fn: () => Promise<AgentI
         { type: 'image' as const, data: r.image.toString('base64'), mimeType: r.mime },
         { type: 'text' as const, text: r.text },
       ],
+    };
+  } catch (e) {
+    return runTool(log, () => Promise.reject(e));
+  }
+}
+
+/** get answers in separate blocks: the headline first, then JSON, a file's text or an image. */
+async function runBlocks(log: McpLogger | undefined, fn: () => Promise<AgentBlock[]>) {
+  try {
+    const blocks = await fn();
+    return {
+      content: blocks.map((b) =>
+        b.type === 'text'
+          ? { type: 'text' as const, text: b.text }
+          : { type: 'image' as const, data: b.image.toString('base64'), mimeType: b.mime },
+      ),
     };
   } catch (e) {
     return runTool(log, () => Promise.reject(e));
@@ -113,7 +121,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
   );
 
   server.registerTool('get', { description: D.get, inputSchema: z.object({ id: idParam }) }, ({ id }) =>
-    run(() => agentGet(ctx, id)),
+    runBlocks(ctx.log, () => agentGet(ctx, id)),
   );
 
   server.registerTool(

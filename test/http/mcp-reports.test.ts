@@ -72,8 +72,9 @@ describe('bug reports over MCP', () => {
     expect(up).toMatchObject({ version: 2, status: 'triaged' });
     expect(json((await tool('update_report', { id: created.id, append_triage: '- [ ] add a test' })).content).version).toBe(3);
 
-    const got = json((await tool('get', { id: created.id })).content);
-    expect(got).toMatchObject({ type: 'report', triage: '## Tasks\n- [ ] fix redirect\n\n- [ ] add a test' });
+    const shown = (await tool('get', { id: created.id })).content;
+    expect(shown[0]!.text).toBe(`tabula:${created.id.slice(0, 8)} · bug report · project demo · Login loops`);
+    expect(JSON.parse(shown[1]!.text!)).toMatchObject({ type: 'report', ref: `tabula:${created.id.slice(0, 8)}`, triage: '## Tasks\n- [ ] fix redirect\n\n- [ ] add a test' });
     expect((await tool('create_report', { project: 'global', title: 'x' })).isError).toBe(true);
   });
 
@@ -190,6 +191,31 @@ describe('bug reports over MCP', () => {
     } finally {
       await off.close();
     }
+  });
+
+  it('get shows a frame as an image with its time, note and report, and a deleted recording with where its transcript is', async () => {
+    const { id } = json((await tool('create_report', { project: 'demo', title: 'Spinner' })).content);
+    const ref = `tabula:${id.slice(0, 8)}`;
+    const frame = await uploadFile(id, PNG, 'image/png', 'f.png');
+    await db.update(reportAttachments).set({ kind: 'frame', atMs: 2000, note: 'The spinner never stops.' }).where(eq(reportAttachments.id, frame.id));
+    const shown = await tool('get', { id: `tabula:${frame.id.slice(0, 8)}` });
+    expect(shown.isError).toBe(false);
+    expect(shown.content.map((c) => c.type)).toEqual(['text', 'image', 'text']);
+    expect(shown.content[0]!.text).toBe(`tabula:${frame.id.slice(0, 8)} · frame of bug report ${ref} · project demo · f.png`);
+    expect(shown.content[1]!.data).toBe(PNG.toString('base64'));
+    expect(JSON.parse(shown.content[2]!.text!)).toMatchObject({
+      ref: `tabula:${frame.id.slice(0, 8)}`, kind: 'frame', at_s: 2, note: 'The spinner never stops.', report: ref, report_title: 'Spinner',
+    });
+
+    const audio = await uploadFile(id, silentWav(1), 'audio/wav', 'voice.wav');
+    await db.update(reportAttachments).set({ purgedAt: new Date() }).where(eq(reportAttachments.id, audio.id));
+    const rec = await tool('get', { id: `tabula:${audio.id.slice(0, 8)}` });
+    expect(rec.content.map((c) => c.type)).toEqual(['text', 'text']);
+    expect(rec.content[0]!.text).toBe(`tabula:${audio.id.slice(0, 8)} · voice note of bug report ${ref} · project demo · recording deleted · voice.wav`);
+    expect(JSON.parse(rec.content[1]!.text!)).toMatchObject({
+      kind: 'audio', deleted: 'deleted after the report was closed', report: ref, transcript: expect.objectContaining({ status: 'queued' }),
+      next: expect.stringContaining(`get_transcript with attachment_id "tabula:${audio.id.slice(0, 8)}"`),
+    });
   });
 
   it('get_transcript explains why there is no transcript', async () => {

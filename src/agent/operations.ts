@@ -1,13 +1,13 @@
 import { sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { AGENT_READ_ONLY, badRequest, forbidden, notFound } from '../domain/errors.js';
-import { getFile, listFiles } from '../domain/files.js';
+import { getFile, listFiles, type ProjectFile } from '../domain/files.js';
 import { isRecording, lastWorkerSeen, type TranscriptState, transcriptStates } from '../domain/jobs.js';
 import { createMemory, deprecateMemory, type Memory } from '../domain/memories.js';
 import { findNotes, type Note, type NoteHit } from '../domain/notes.js';
 import { listProjects, type ProjectSummary } from '../domain/projects.js';
 import { recall } from '../domain/recall.js';
-import { refTarget, resolveRecord } from '../domain/records.js';
+import { refTarget, type ResolvedRecord, resolveRecord } from '../domain/records.js';
 import { search, type SearchHit, type SearchParams } from '../domain/search.js';
 import { deleteSyncedFile, type SyncedWrite, writeSyncedFile } from '../domain/sync-config.js';
 import type { FfmpegPaths } from '../media/ffmpeg.js';
@@ -20,6 +20,7 @@ import {
 import { clock, sliceLines, transcriptLines } from '../domain/transcripts.js';
 import { createThought, findThoughts, type Thought, type ThoughtHit, updateThought } from '../domain/thoughts.js';
 import type { MemoryKind } from '../domain/validation.js';
+import { refOf } from '../shared/refs.js';
 
 export type AgentMedia = {
   store: MediaStore;
@@ -40,6 +41,7 @@ export const READ_CHUNK = 100_000;
 
 const memoryView = (m: Memory) => ({
   type: 'memory' as const,
+  ref: refOf(m.id),
   id: m.id,
   project: m.projectId,
   kind: m.kind,
@@ -57,6 +59,7 @@ const memoryView = (m: Memory) => ({
 
 const noteView = (n: Note) => ({
   type: 'note' as const,
+  ref: refOf(n.id),
   id: n.id,
   project: n.projectId,
   title: n.title,
@@ -70,6 +73,7 @@ const noteView = (n: Note) => ({
 
 const thoughtView = (t: Thought) => ({
   type: 'thought' as const,
+  ref: refOf(t.id),
   id: t.id,
   title: t.title,
   body: t.body,
@@ -90,6 +94,101 @@ export type AgentFile = {
 };
 /** read_file's reply: a header line with the version and hash, the text exactly as stored, and a pointer to the next part. */
 export type AgentFileRead = { header: string; text?: string; footer?: string };
+
+/** A reply in separate MCP content blocks: text, or an image. */
+export type AgentBlock = { type: 'text'; text: string } | { type: 'image'; image: Buffer; mime: string };
+const textBlock = (text: string): AgentBlock => ({ type: 'text', text });
+const jsonBlock = (value: unknown): AgentBlock => textBlock(JSON.stringify(value));
+const isoDay = (d: Date) => d.toISOString().slice(0, 10);
+
+const ATTACHMENT_WORD = { frame: 'frame', image: 'photo', video: 'video', audio: 'voice note' } as const;
+
+/** What a record is for the headline, and its state when it is not active. */
+function describeRecord(r: ResolvedRecord): { what: string; inactive?: string } {
+  switch (r.type) {
+    case 'memory':
+      return {
+        what: `${r.record.projectId === 'global' ? 'global ' : ''}${r.record.kind}`,
+        inactive: r.record.status === 'deprecated' ? 'deprecated' : undefined,
+      };
+    case 'note':
+      return { what: 'note' };
+    case 'thought':
+      return { what: 'thought', inactive: r.record.archived ? 'archived' : undefined };
+    case 'report':
+      return { what: 'bug report', inactive: r.record.status === 'done' ? 'closed' : undefined };
+    case 'file':
+      return { what: 'project file', inactive: r.record.deletedAt ? `deleted ${isoDay(r.record.deletedAt)}` : undefined };
+    case 'attachment':
+      return {
+        what: `${ATTACHMENT_WORD[r.record.kind]} of bug report ${refOf(r.report.id)}`,
+        inactive: r.record.purgedAt ? 'recording deleted' : undefined,
+      };
+  }
+}
+
+/** The first line of get: reference · what it is · project · its state when not active · title. */
+export function recordHeadline(r: ResolvedRecord): string {
+  const t = refTarget(r);
+  const { what, inactive } = describeRecord(r);
+  const project = t.project && t.project !== 'global' ? [`project ${t.project}`] : [];
+  return [t.ref, what, ...project, ...(inactive ? [inactive] : []), t.title].join(' · ');
+}
+
+/** Where a part of at most READ_CHUNK characters starting at offset ends; never inside a surrogate pair. */
+function chunkEnd(content: string, offset: number): number {
+  let end = Math.min(content.length, offset + READ_CHUNK);
+  if (end < content.length) {
+    const last = content.charCodeAt(end - 1);
+    // End one code unit earlier so the next part starts on the whole pair.
+    if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+  }
+  return end;
+}
+
+/** read_file's header line, which get repeats for a file. */
+function fileHeader(f: ProjectFile, offset: number): string {
+  const from = offset > 0 ? ` · from character ${offset}` : '';
+  return `[file ${f.path} · ${refOf(f.id)} · version ${f.version} · sha256 ${f.sha256} · ${f.content.length} characters${from}]`;
+}
+
+/** A file as get shows it: like read_file's first part; a deleted file with its last content. */
+function fileBlocks(f: ProjectFile): AgentBlock[] {
+  const total = f.content.length;
+  const end = chunkEnd(f.content, 0);
+  const blocks: AgentBlock[] = [];
+  if (f.deletedAt) {
+    blocks.push(textBlock(
+      `[deleted on ${isoDay(f.deletedAt)}: below is its last content; the user can restore it in the Tabula app (project ${f.projectId} → Files → Show deleted); until then read_file and write_file treat it as absent]`,
+    ));
+  }
+  blocks.push(textBlock(fileHeader(f, 0)), textBlock(f.content.slice(0, end)));
+  if (end < total) {
+    blocks.push(textBlock(f.deletedAt
+      ? `[… part ends at character ${end} of ${total}; the rest can be read once the user restores the file]`
+      : `[… part ends at character ${end} of ${total} — call read_file with project "${f.projectId}", path "${f.path}" and offset: ${end}]`));
+  }
+  return blocks;
+}
+
+/** A photo or frame as an image with its details; a video or voice note as details and where its transcript is. */
+async function attachmentBlocks(ctx: AgentContext, a: Attachment, report: Report): Promise<AgentBlock[]> {
+  const isImage = a.kind === 'frame' || a.kind === 'image';
+  // Only an image needs the media store; a purged recording has no link, so it needs nothing.
+  const m = isImage || !a.purgedAt ? requireMedia(ctx) : { store: ctx.media?.store as MediaStore, token: '', paths: ctx.media?.paths as FfmpegPaths };
+  const view = { ...attachmentForAgent(a, m), report: refOf(report.id), report_title: report.title };
+  if (isImage) {
+    const { image, mime } = await attachmentImage(ctx.db, m.store, m.paths, a.id);
+    return [{ type: 'image', image, mime }, jsonBlock(view)];
+  }
+  const s = (await transcriptStates(ctx.db, [a.id])).get(a.id);
+  const lastSeen = isRecording(a) && s?.status !== 'done' ? await lastWorkerSeen(ctx.db) : null;
+  return [jsonBlock({
+    ...view,
+    ...transcriptForAgent(a, s, lastSeen, ctx.workerEnabled !== false),
+    next: `call get_report with id "${refOf(report.id)}" for the report and the first part of the transcript, and get_transcript with attachment_id "${refOf(a.id)}" for all of it`,
+  })];
+}
 
 /** A record the agent may modify: a global memory written by an agent. */
 async function requireAgentWritable(db: Db, id: string): Promise<Memory> {
@@ -112,13 +211,27 @@ export async function agentRecall(ctx: AgentContext, project: string, includeSta
 
 export const agentSearch = (ctx: AgentContext, p: SearchParams): Promise<SearchHit[]> => search(ctx.db, p);
 
-export async function agentGet(ctx: AgentContext, id: string): Promise<MemoryView | NoteView | ThoughtView | Record<string, unknown>> {
+/** Any record by reference, uuid or short id; the first block always says what it is. */
+export async function agentGet(ctx: AgentContext, id: string): Promise<AgentBlock[]> {
   const r = await resolveRecord(ctx.db, id);
-  if (r.type === 'memory') return memoryView(r.record);
-  if (r.type === 'report') return { type: 'report' as const, ...reportForAgent(r.record), next: 'call get_report for its attachments' };
-  // Replaced by the full views of files and attachments in the next task.
-  if (r.type === 'file' || r.type === 'attachment') return refTarget(r);
-  return r.type === 'note' ? noteView(r.record) : thoughtView(r.record);
+  const head = textBlock(recordHeadline(r));
+  switch (r.type) {
+    case 'memory':
+      return [head, jsonBlock(memoryView(r.record))];
+    case 'note':
+      return [head, jsonBlock(noteView(r.record))];
+    case 'thought':
+      return [head, jsonBlock(thoughtView(r.record))];
+    case 'report':
+      return [head, jsonBlock({
+        type: 'report' as const, ...reportForAgent(r.record),
+        next: `call get_report with id "${refOf(r.record.id)}" for its attachments and transcripts`,
+      })];
+    case 'file':
+      return [head, ...fileBlocks(r.record)];
+    case 'attachment':
+      return [head, ...(await attachmentBlocks(ctx, r.record, r.report))];
+  }
 }
 
 export async function agentRemember(
@@ -162,14 +275,8 @@ export async function agentReadFile(
   const offset = Math.max(0, Math.trunc(input.offset ?? 0));
   const total = f.content.length;
   if (offset > 0 && offset >= total) return { header: `[offset ${offset} is past the end of the file (${total} characters)]` };
-  let end = Math.min(total, offset + READ_CHUNK);
-  // Never split a surrogate pair: end one code unit earlier so the next chunk starts on the whole pair.
-  if (end < total) {
-    const last = f.content.charCodeAt(end - 1);
-    if (last >= 0xd800 && last <= 0xdbff) end -= 1;
-  }
-  const from = offset > 0 ? ` · from character ${offset}` : '';
-  const header = `[file ${f.path} · version ${f.version} · sha256 ${f.sha256} · ${total} characters${from}]`;
+  const end = chunkEnd(f.content, offset);
+  const header = fileHeader(f, offset);
   const text = f.content.slice(offset, end);
   if (end === total) return { header, text };
   return { header, text, footer: `[… part ends at character ${end} of ${total} — call read_file again with offset: ${end}]` };
@@ -241,6 +348,7 @@ const seconds = (ms: number | null) => (ms === null ? null : Math.round(ms / 100
 
 const attachmentForAgent = (a: Attachment, m: AgentMedia) => ({
   id: a.id,
+  ref: refOf(a.id),
   kind: a.kind,
   mime: a.mime,
   size: a.size,
@@ -298,6 +406,7 @@ function transcriptForAgent(a: Attachment, s: TranscriptState | undefined, lastS
 
 const reportForAgent = (r: Report) => ({
   id: r.id,
+  ref: refOf(r.id),
   project: r.projectId,
   title: r.title,
   status: r.status,

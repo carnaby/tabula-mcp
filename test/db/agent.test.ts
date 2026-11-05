@@ -1,20 +1,23 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   agentDeleteFile, agentDeprecate, agentFindNotes, agentGet, agentListFiles, agentReadFile, agentRemember, agentUpdateThought,
-  agentWriteFile, type AgentContext, GLOBAL_ONLY, READ_CHUNK,
+  agentWriteFile, type AgentBlock, type AgentContext, GLOBAL_ONLY, READ_CHUNK,
 } from '../../src/agent/operations.js';
 import { memories } from '../../src/db/schema.js';
 import { AGENT_READ_ONLY } from '../../src/domain/errors.js';
-import { deleteFile, putFile, setStatePaths } from '../../src/domain/files.js';
+import { deleteFile, getFile, listFiles, putFile, setStatePaths } from '../../src/domain/files.js';
 import { createMemory, getMemory, listMemories } from '../../src/domain/memories.js';
 import { createNote } from '../../src/domain/notes.js';
 import { setSyncConfig } from '../../src/domain/sync-config.js';
 import { createThought, HUMAN } from '../../src/domain/thoughts.js';
+import { refOf } from '../../src/shared/refs.js';
 import { seedProject, useTestDb } from '../helpers.js';
 
 const db = useTestDb();
 const ctx: AgentContext = { db, agentLabel: 'claude-code' };
 const input = { project: 'global', kind: 'rule' as const, title: 'Run tests via pnpm', body: 'Setup lives there.' };
+const textOf = (b: AgentBlock) => (b.type === 'text' ? b.text : '');
+const viewOf = async (id: string) => JSON.parse(textOf((await agentGet(ctx, id))[1]!));
 const human = () => createMemory(db, { projectId: 'global', kind: 'rule', title: 'Human rule', body: 'By hand.', source: 'human' });
 
 describe('agent operations', () => {
@@ -88,13 +91,38 @@ describe('agent operations', () => {
     expect(await agentDeprecate(ctx, { id, reason: 'again' })).toEqual({ ok: true });
   });
 
-  it('get returns full memory and note views by prefix', async () => {
+  it('get starts with a line saying what the record is, then its full view with the ref', async () => {
     const { id } = await agentRemember(ctx, { ...input, tags: ['ci'] });
-    expect(await agentGet(ctx, `#${id.slice(0, 6)}`)).toMatchObject({
-      type: 'memory', id, project: 'global', body: 'Setup lives there.', tags: ['ci'], agent_label: 'claude-code',
+    const blocks = await agentGet(ctx, `#${id.slice(0, 6)}`);
+    expect(textOf(blocks[0]!)).toBe(`${refOf(id)} · global rule · Run tests via pnpm`);
+    expect(await viewOf(refOf(id))).toMatchObject({
+      type: 'memory', ref: refOf(id), id, project: 'global', body: 'Setup lives there.', tags: ['ci'], agent_label: 'claude-code',
     });
-    const n = await createNote(db, { title: 'Arch', body: 'Long body' });
-    expect(await agentGet(ctx, n.id)).toMatchObject({ type: 'note', project: null, body: 'Long body', pinned: false });
+    const n = await createNote(db, { projectId: 'demo', title: 'Arch', body: 'Long body' });
+    expect(textOf((await agentGet(ctx, n.id))[0]!)).toBe(`${refOf(n.id)} · note · project demo · Arch`);
+    expect(await viewOf(n.id)).toMatchObject({ type: 'note', ref: refOf(n.id), project: 'demo', body: 'Long body', pinned: false });
+  });
+
+  it('get shows a file like read_file: a long one in part with the offset, a deleted one with its last content', async () => {
+    await putFile(db, 'demo', { path: 'docs/long.md', content: 'a'.repeat(READ_CHUNK + 10), baseSha256: null }, 'cli');
+    await putFile(db, 'demo', { path: 'docs/gone.md', content: 'last words', baseSha256: null }, 'cli');
+    await deleteFile(db, 'demo', 'docs/gone.md');
+    const files = await listFiles(db, 'demo', { includeDeleted: true });
+    const idOf = (path: string) => files.find((f) => f.path === path)!.id;
+
+    const long = await agentGet(ctx, refOf(idOf('docs/long.md')));
+    expect(long).toHaveLength(4);
+    expect(textOf(long[0]!)).toBe(`${refOf(idOf('docs/long.md'))} · project file · project demo · docs/long.md`);
+    expect(textOf(long[1]!)).toMatch(/^\[file docs\/long\.md · tabula:[0-9a-f]{8} · version 1 · sha256 [0-9a-f]{64} · 100010 characters\]$/);
+    expect(textOf(long[2]!)).toBe('a'.repeat(READ_CHUNK));
+    expect(textOf(long[3]!)).toBe(
+      `[… part ends at character ${READ_CHUNK} of ${READ_CHUNK + 10} — call read_file with project "demo", path "docs/long.md" and offset: ${READ_CHUNK}]`,
+    );
+
+    const gone = await agentGet(ctx, refOf(idOf('docs/gone.md')));
+    expect(textOf(gone[0]!)).toMatch(/^tabula:[0-9a-f]{8} · project file · project demo · deleted \d{4}-\d{2}-\d{2} · docs\/gone\.md$/);
+    expect(textOf(gone[1]!)).toMatch(/^\[deleted on \d{4}-\d{2}-\d{2}: below is its last content; the user can restore it in the Tabula app/);
+    expect(textOf(gone.at(-1)!)).toBe('last words');
   });
 
   it('get reports ambiguous prefixes and misses', async () => {
@@ -116,13 +144,14 @@ describe('agent operations', () => {
       { path: 'docs/handoff/state.md', size: 10, version: 1, sha256: sha, state: true, updated_by: 'cli' },
       { path: 'docs/long.md', state: false },
     ]);
+    const { id: stateId } = await getFile(db, 'demo', 'docs/handoff/state.md');
     expect(await agentReadFile(ctx, { project: 'demo', path: 'docs/handoff/state.md' })).toEqual({
-      header: `[file docs/handoff/state.md · version 1 · sha256 ${sha} · 10 characters]`,
+      header: `[file docs/handoff/state.md · ${refOf(stateId)} · version 1 · sha256 ${sha} · 10 characters]`,
       text: 'Next: ship',
     });
     const first = await agentReadFile(ctx, { project: 'demo', path: 'docs/long.md' });
     expect(first.text).toBe('a'.repeat(READ_CHUNK));
-    expect(first.header).toMatch(/^\[file docs\/long\.md · version 1 · sha256 [0-9a-f]{64} · 100010 characters\]$/);
+    expect(first.header).toMatch(/^\[file docs\/long\.md · tabula:[0-9a-f]{8} · version 1 · sha256 [0-9a-f]{64} · 100010 characters\]$/);
     expect(first.footer).toBe(
       `[… part ends at character ${READ_CHUNK} of ${READ_CHUNK + 10} — call read_file again with offset: ${READ_CHUNK}]`,
     );

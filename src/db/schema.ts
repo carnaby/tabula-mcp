@@ -59,7 +59,7 @@ export const memories = pgTable(
     agentLabel: text('agent_label'),
     ...timestamps,
     search: tsvector('search').generatedAlwaysAs(
-      sql`setweight(to_tsvector('simple'::regconfig, coalesce(title, '')), 'A') || setweight(to_tsvector('simple'::regconfig, tabula_tags_text(tags)), 'B') || setweight(to_tsvector('simple'::regconfig, coalesce(body, '')), 'C')`,
+      sql`setweight(to_tsvector('tabula'::regconfig, coalesce(title, '')), 'A') || setweight(to_tsvector('tabula'::regconfig, tabula_tags_text(tags)), 'B') || setweight(to_tsvector('tabula'::regconfig, coalesce(body, '')), 'C')`,
     ),
   },
   (t) => [
@@ -82,7 +82,7 @@ export const notes = pgTable(
     pinned: boolean('pinned').notNull().default(false),
     ...timestamps,
     search: tsvector('search').generatedAlwaysAs(
-      sql`setweight(to_tsvector('simple'::regconfig, coalesce(title, '')), 'A') || setweight(to_tsvector('simple'::regconfig, tabula_tags_text(tags)), 'B') || setweight(to_tsvector('simple'::regconfig, coalesce(summary, '') || ' ' || coalesce(body, '')), 'C')`,
+      sql`setweight(to_tsvector('tabula'::regconfig, coalesce(title, '')), 'A') || setweight(to_tsvector('tabula'::regconfig, tabula_tags_text(tags)), 'B') || setweight(to_tsvector('tabula'::regconfig, coalesce(summary, '') || ' ' || coalesce(body, '')), 'C')`,
     ),
   },
   (t) => [
@@ -111,7 +111,7 @@ export const thoughts = pgTable(
     version: integer('version').notNull().default(1),
     ...timestamps,
     search: tsvector('search').generatedAlwaysAs(
-      sql`setweight(to_tsvector('simple'::regconfig, coalesce(title, '')), 'A') || setweight(to_tsvector('simple'::regconfig, tabula_tags_text(tags)), 'B') || setweight(to_tsvector('simple'::regconfig, coalesce(body, '')), 'C')`,
+      sql`setweight(to_tsvector('tabula'::regconfig, coalesce(title, '')), 'A') || setweight(to_tsvector('tabula'::regconfig, tabula_tags_text(tags)), 'B') || setweight(to_tsvector('tabula'::regconfig, coalesce(body, '')), 'C')`,
     ),
   },
   (t) => [
@@ -169,7 +169,7 @@ export const projectFiles = pgTable(
     // Path separators become spaces so "handoff" finds docs/handoff/state.md (Postgres would parse the
     // whole path as one token); content is indexed up to 100 000 characters because a tsvector may not exceed 1 MB.
     search: tsvector('search').generatedAlwaysAs(
-      sql`setweight(to_tsvector('simple'::regconfig, translate(coalesce(path, ''), '/._-', '    ')), 'A') || setweight(to_tsvector('simple'::regconfig, left(coalesce(content, ''), 100000)), 'C')`,
+      sql`setweight(to_tsvector('tabula'::regconfig, translate(coalesce(path, ''), '/._-', '    ')), 'A') || setweight(to_tsvector('tabula'::regconfig, left(coalesce(content, ''), 100000)), 'C')`,
     ),
   },
   (t) => [
@@ -235,7 +235,7 @@ export const reports = pgTable(
     closedAt: timestamp('closed_at', { withTimezone: true }),
     ...timestamps,
     search: tsvector('search').generatedAlwaysAs(
-      sql`setweight(to_tsvector('simple'::regconfig, coalesce(title, '')), 'A') || setweight(to_tsvector('simple'::regconfig, coalesce(body, '') || ' ' || coalesce(triage, '')), 'C')`,
+      sql`setweight(to_tsvector('tabula'::regconfig, coalesce(title, '')), 'A') || setweight(to_tsvector('tabula'::regconfig, coalesce(body, '') || ' ' || coalesce(triage, '')), 'C')`,
     ),
   },
   (t) => [
@@ -333,7 +333,7 @@ export const reportTranscripts = pgTable(
     text: text('text').notNull(),
     segments: jsonb('segments').$type<TranscriptSegment[]>().notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-    search: tsvector('search').generatedAlwaysAs(sql`to_tsvector('simple'::regconfig, left("text", 100000))`),
+    search: tsvector('search').generatedAlwaysAs(sql`to_tsvector('tabula'::regconfig, left("text", 100000))`),
   },
   (t) => [index('report_transcripts_search_idx').using('gin', t.search)],
 );

@@ -18,7 +18,7 @@ describe('schema', () => {
     });
   });
 
-  it('builds a weighted simple-config search vector', async () => {
+  it('builds a weighted search vector without stemming or diacritics (the tabula config)', async () => {
     await seedProject(db, 'demo');
     await db.insert(memories).values({
       projectId: 'demo', kind: 'decision', title: 'Drizzle over Prisma',
@@ -27,7 +27,17 @@ describe('schema', () => {
     const [row] = await db.execute<{ search: string }>(sql`SELECT search::text AS search FROM memories`);
     expect(row!.search).toContain("'drizzle':1A");
     expect(row!.search).toMatch(/'orm':\d+B/);
-    expect(row!.search).toContain("'migrácie'"); // simple config: no stemming, diacritics are kept
+    expect(row!.search).toContain("'migracie'"); // simple + unaccent: no stemming, diacritics are dropped
+    expect(row!.search).toContain("'su'");
+  });
+
+  it('keeps a GIN index on every search column', async () => {
+    const rows = await db.execute<{ indexname: string }>(sql`
+      SELECT indexname FROM pg_indexes WHERE schemaname = 'public' AND indexdef LIKE '%USING gin (search)%' ORDER BY indexname`);
+    expect([...rows].map((r) => r.indexname)).toEqual([
+      'memories_search_idx', 'notes_search_idx', 'project_files_search_idx', 'report_transcripts_search_idx', 'reports_search_idx',
+      'thoughts_search_idx',
+    ]);
   });
 
   it('enforces the title length limit', async () => {
@@ -55,7 +65,7 @@ describe('schema', () => {
     const [v] = await db.execute<{ search: string }>(sql`SELECT search::text AS search FROM project_files`);
     expect(v!.search).toMatch(/'handoff':\d+A/);
     expect(v!.search).toMatch(/'md':\d+A/);
-    expect(v!.search).toMatch(/'migrácie':\d+C/);
+    expect(v!.search).toMatch(/'migracie':\d+C/);
   });
 
   it('deletes revisions together with their file', async () => {
@@ -92,7 +102,7 @@ describe('schema', () => {
       attachmentId: a!.id, language: 'sk', model: 'large-v3', text, segments: [{ start_ms: 0, end_ms: 900, text }],
     });
     const [v] = await db.execute<{ search: string }>(sql`SELECT search::text AS search FROM report_transcripts`);
-    expect(v!.search).toContain("'prehrávania'");
+    expect(v!.search).toContain("'prehravania'");
 
     await db.delete(reportAttachments);
     expect(await db.select().from(reportJobs)).toEqual([]);

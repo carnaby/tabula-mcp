@@ -160,7 +160,7 @@ export type ReportStatusFilter = ReportStatus | 'open' | 'all';
 /** A report whose recordings' transcripts match a prefix query. */
 const transcriptMatches = (tsq: string) => sql`EXISTS (
   SELECT 1 FROM report_transcripts t JOIN report_attachments a ON a.id = t.attachment_id
-  WHERE a.report_id = ${reports.id} AND t.search @@ to_tsquery('simple', ${tsq}))`;
+  WHERE a.report_id = ${reports.id} AND t.search @@ to_tsquery('tabula', ${tsq}))`;
 
 export async function pageReports(
   db: Db,

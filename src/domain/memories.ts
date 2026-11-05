@@ -2,7 +2,7 @@ import { and, asc, count, desc, eq, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { memories } from '../db/schema.js';
 import { badRequest, conflict, notFound } from './errors.js';
-import { matchesPrefix, type Page, type PageQuery, pageWindow, prefixTsQuery } from './paging.js';
+import { matchesPrefix, type Page, type PageQuery, pageWindow, prefixTsQuery, searchTsQuery } from './paging.js';
 import { requireProject } from './projects.js';
 import { type MemoryKind, normalizeTags, validateMemoryText } from './validation.js';
 
@@ -141,7 +141,7 @@ export async function listMemories(
         f.projectId ? eq(memories.projectId, f.projectId) : undefined,
         f.kind ? eq(memories.kind, f.kind) : undefined,
         status !== 'all' ? eq(memories.status, status) : undefined,
-        q ? sql`${memories.search} @@ websearch_to_tsquery('simple', ${q})` : undefined,
+        q ? sql`${memories.search} @@ ${searchTsQuery(q)}` : undefined,
       ),
     )
     .orderBy(desc(memories.createdAt))

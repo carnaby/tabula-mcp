@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { api } from '../api';
 import { useQuery } from '../hooks/data';
 import { formatSize } from '../format';
@@ -36,6 +36,7 @@ const columns: Column<Row, never>[] = [
 export function FilesPanel({ project }: { project: string }) {
   const [showDeleted, setShowDeleted] = useState(false);
   const [filter, setFilter] = useState('');
+  const uid = useId();
   // Groups whose open state differs from their default (work folder collapsed, the rest open).
   const [toggled, setToggled] = useState<ReadonlySet<string>>(new Set());
   const files = useQuery((s) => api.files(project, showDeleted, s), [project, showDeleted], { topics: ['files'] });
@@ -65,39 +66,40 @@ export function FilesPanel({ project }: { project: string }) {
       )}
       {groups && groups.length > 0 && (
         <div className="file-groups" style={{ opacity: files.loading ? 0.6 : 1 }}>
-          {groups.map((g) => {
+          {groups.map((g, i) => {
             const expanded = open(g);
-            const id = `files-${g.key}`;
+            const id = `${uid}-group-${i}`;
             const label = g.key === ROOT_GROUP ? 'Root' : `${g.key}/`;
+            const head = (
+              <>
+                <Icon name="chevronDown" className="t-icon file-group__chevron" />
+                <Icon name="folder" />
+                <span className="file-group__path t-mono">{g.key === ROOT_GROUP ? '/' : `${g.key}/`}</span>
+                <span className="file-group__count">{g.files.length}</span>
+                <span className="file-group__latest"><TimeAgo iso={g.latest} /></span>
+              </>
+            );
             return (
               <section key={g.key} className="file-group" aria-label={`Files in ${label}`}>
-                <button
-                  type="button"
-                  className="file-group__head"
-                  aria-expanded={expanded}
-                  aria-controls={id}
-                  disabled={!!needle}
-                  onClick={() => toggle(g.key)}
-                >
-                  <Icon name="chevronDown" className="t-icon file-group__chevron" />
-                  <Icon name="folder" />
-                  <span className="file-group__path t-mono">{g.key === ROOT_GROUP ? '/' : `${g.key}/`}</span>
-                  <span className="file-group__count">{g.files.length}</span>
-                  <span className="file-group__latest"><TimeAgo iso={g.latest} /></span>
-                </button>
-                {expanded && (
-                  <div id={id}>
-                    <DataTable
-                      label={`Files in ${label}`}
-                      headless
-                      columns={columns}
-                      rows={g.files}
-                      rowKey={(f) => f.file.path}
-                      onRowClick={openFile}
-                      rowMuted={(f) => !!f.file.deletedAt}
-                    />
-                  </div>
+                {/* While the path filter has text every group is open, so the header is not a toggle. */}
+                {needle ? (
+                  <div className="file-group__head">{head}</div>
+                ) : (
+                  <button type="button" className="file-group__head" aria-expanded={expanded} aria-controls={id} onClick={() => toggle(g.key)}>
+                    {head}
+                  </button>
                 )}
+                <div id={id} hidden={!expanded}>
+                  <DataTable
+                    label={`Files in ${label}`}
+                    headless
+                    columns={columns}
+                    rows={g.files}
+                    rowKey={(f) => f.file.path}
+                    onRowClick={openFile}
+                    rowMuted={(f) => !!f.file.deletedAt}
+                  />
+                </div>
               </section>
             );
           })}

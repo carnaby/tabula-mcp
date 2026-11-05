@@ -16,6 +16,11 @@ describe('fileGroupKey', () => {
     expect(fileGroupKey('.superpowers/a.md')).toBe('.superpowers');
     expect(fileGroupKey('.superpowersx/a.md')).toBe('.superpowersx');
   });
+
+  it('treats only a top-level .superpowers folder as the work folder', () => {
+    expect(fileGroupKey('docs/.superpowers/x.md')).toBe('docs/.superpowers');
+    expect(fileGroupKey('.superpowers')).toBe('/');
+  });
 });
 
 describe('groupFiles', () => {
@@ -37,6 +42,24 @@ describe('groupFiles', () => {
     ]);
     expect(groups.map((g) => g.work)).toEqual([false, false, false, false, true]);
     expect(groups[1]!.latest).toBe('2026-11-03T08:00:00.000Z');
+  });
+
+  it('names root files by their full path and the work folder only for a top-level .superpowers', () => {
+    const groups = groupFiles([f('.superpowers', '2026-11-05T00:00:00.000Z'), f('docs/.superpowers/x.md', '2026-11-04T00:00:00.000Z')]);
+    expect(groups.map((g) => [g.key, g.work, g.files.map((x) => x.name)])).toEqual([
+      ['/', false, ['.superpowers']],
+      ['docs/.superpowers', false, ['x.md']],
+    ]);
+  });
+
+  it('breaks ties on equal timestamps by name (files) and by folder (groups)', () => {
+    const t = '2026-11-05T10:00:00.000Z';
+    const groups = groupFiles([f('docs/b/z.md', t), f('docs/b/a.md', t), f('docs/a/m.md', t), f('root.md', t)]);
+    expect(groups.map((g) => [g.key, g.files.map((x) => x.name)])).toEqual([
+      ['/', ['root.md']],
+      ['docs/a', ['m.md']],
+      ['docs/b', ['a.md', 'z.md']],
+    ]);
   });
 
   it('returns no groups for no files', () => {

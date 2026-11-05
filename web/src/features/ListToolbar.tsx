@@ -42,7 +42,7 @@ export function ListToolbar({
       {folded && (
         <div id={id} className="toolbar__filters" data-open={open}>
           {filters}
-          {sort}
+          {sort && <div className="toolbar__sort">{sort}</div>}
         </div>
       )}
       {action && <div className="toolbar__action">{action}</div>}

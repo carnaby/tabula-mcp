@@ -1,11 +1,11 @@
-import { useId, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { Button, Chip } from '../ui';
 
 const MAX_ROWS = 4;
 
 /**
- * Tag filter chips, collapsed to 4 rows with a "Show all (N)" toggle. The selected tag sits right after "All", so it
- * stays visible while collapsed (also when it no longer has any items).
+ * Tag filter chips in the server's order, collapsed to 4 rows with a "Show all (N)" toggle. A selected tag the list
+ * no longer has is appended so it can still be cleared. When the selected chip would be cut, the cloud opens once.
  */
 export function TagChips({
   tags, value, onChange,
@@ -15,10 +15,12 @@ export function TagChips({
   const [expanded, setExpanded] = useState(false);
   // Index of the first chip below the 4th row (-1: everything fits).
   const [cut, setCut] = useState(-1);
+  // The selection already made visible (or visible anyway), so "Show less" afterwards sticks.
+  const revealed = useRef('');
 
-  const selected = value ? (tags.find((t) => t.tag === value) ?? { tag: value, count: undefined }) : undefined;
-  const ordered = [...(selected ? [selected] : []), ...tags.filter((t) => t.tag !== value)];
-  const signature = ordered.map((t) => t.tag).join('\n');
+  const missing = !!value && !tags.some((t) => t.tag === value);
+  const ordered: readonly { tag: string; count?: number }[] = missing ? [...tags, { tag: value }] : tags;
+  const signature = ordered.map((t) => `${t.tag}:${t.count ?? ''}`).join('|');
 
   useLayoutEffect(() => {
     const el = row.current;
@@ -35,9 +37,23 @@ export function TagChips({
     return () => ro.disconnect();
   }, [signature]);
 
+  // Chip 0 is "All"; tag i is chip i + 1.
+  const selectedChip = value ? ordered.findIndex((t) => t.tag === value) + 1 : 0;
+
+  useEffect(() => {
+    // Nothing to collapse any more: forget an earlier "Show all".
+    if (cut < 0) {
+      setExpanded(false);
+      return;
+    }
+    if (!value) revealed.current = '';
+    if (!value || revealed.current === value) return;
+    revealed.current = value;
+    if (selectedChip >= cut) setExpanded(true);
+  }, [value, cut, selectedChip]);
+
   const collapsible = cut >= 0;
   const collapsed = collapsible && !expanded;
-  // Chip 0 is "All"; tag i is chip i + 1.
   const isCut = (chip: number) => collapsed && chip >= cut;
 
   return (
@@ -58,7 +74,7 @@ export function TagChips({
       </div>
       {collapsible && (
         <Button variant="ghost" size="sm" className="tag-chips__toggle" aria-expanded={expanded} aria-controls={id} onClick={() => setExpanded(!expanded)}>
-          {expanded ? 'Show less' : `Show all (${tags.length})`}
+          {expanded ? 'Show less' : `Show all (${ordered.length})`}
         </Button>
       )}
     </div>

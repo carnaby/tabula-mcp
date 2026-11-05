@@ -107,7 +107,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
     {
       description: D.search,
       inputSchema: z.object({
-        query: z.string().min(1).describe('Words to look for; supports "quoted phrases", OR and -exclusion.'),
+        query: z.string().min(1).describe('Words to look for (prefix match, diacritics ignored); supports "quoted phrases", OR and -exclusion.'),
         project: projectParam.optional().describe('Search this project\'s files (global rules are always included). Omit to search the files of every project.'),
         kind: kindParam.optional().describe('Only global memories of this kind (excludes files).'),
         include_deprecated: z.boolean().default(false),

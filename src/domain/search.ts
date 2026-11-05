@@ -2,7 +2,7 @@ import { type SQL, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { badRequest } from './errors.js';
 import { requireProject } from './projects.js';
-import { prefixTsQuery } from './paging.js';
+import { prefixTsQuery, searchTsQuery } from './paging.js';
 import type { MemoryKind } from './validation.js';
 
 export type SearchParams = {
@@ -65,9 +65,9 @@ export async function search(db: Db, p: SearchParams): Promise<SearchHit[]> {
   const parts: SQL = p.kind ? memoryPart : sql`${memoryPart} UNION ALL ${filePart}`;
 
   const rows = await db.execute<Row>(sql`
-    WITH q AS (SELECT websearch_to_tsquery('simple', ${query}) AS tsq)
+    WITH q AS (SELECT ${searchTsQuery(query)} AS tsq)
     SELECT id, type, project, kind, title,
-      ts_headline('simple', doc, (SELECT tsq FROM q), ${HEADLINE}) AS snippet, status, updated_at
+      ts_headline('tabula', doc, (SELECT tsq FROM q), ${HEADLINE}) AS snippet, status, updated_at
     FROM (
       -- Rank and limit first; the expensive headline runs only for the rows that survive.
       SELECT * FROM (${parts}) hits ORDER BY rank DESC, updated_at DESC LIMIT ${limit}
@@ -104,9 +104,9 @@ export async function quickSearch(db: Db, p: { q: string; limit?: number }): Pro
   if (!tsq) return [];
   const limit = Math.min(Math.max(Math.trunc(p.limit ?? 20), 1), 50);
   const rows = await db.execute<Omit<QuickHit, 'updated_at'> & { updated_at: Date | string }>(sql`
-    WITH q AS (SELECT to_tsquery('simple', ${tsq}) AS tsq)
+    WITH q AS (SELECT to_tsquery('tabula', ${tsq}) AS tsq)
     SELECT id, type, project, kind, title,
-      ts_headline('simple', doc, (SELECT tsq FROM q), ${HEADLINE}) AS snippet, status, updated_at
+      ts_headline('tabula', doc, (SELECT tsq FROM q), ${HEADLINE}) AS snippet, status, updated_at
     FROM (
       -- Rank and limit first; the expensive headline runs only for the rows that survive.
       SELECT id, type, project, kind, title, doc, status, updated_at, rank FROM (

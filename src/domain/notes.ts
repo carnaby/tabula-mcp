@@ -91,7 +91,7 @@ export async function listNotes(db: Db, f: { projectId?: string; q?: string }): 
     .where(
       and(
         f.projectId ? eq(notes.projectId, f.projectId) : undefined,
-        q ? sql`${notes.search} @@ websearch_to_tsquery('simple', ${q})` : undefined,
+        q ? sql`${notes.search} @@ websearch_to_tsquery('tabula', ${q})` : undefined,
       ),
     )
     .orderBy(desc(notes.pinned), desc(notes.updatedAt));
@@ -137,7 +137,7 @@ export async function findNotes(db: Db, p: { query?: string; tag?: string; limit
   const limit = Math.min(Math.max(Math.trunc(p.limit ?? 10), 1), 50);
   const tsq = prefixTsQuery(p.query);
   const snippet = tsq
-    ? sql<string>`ts_headline('simple', ${notes.summary} || ' ' || ${notes.body}, to_tsquery('simple', ${tsq}), 'MaxWords=30, MinWords=10, MaxFragments=1, StartSel=**, StopSel=**')`
+    ? sql<string>`ts_headline('tabula', ${notes.summary} || ' ' || ${notes.body}, to_tsquery('tabula', ${tsq}), 'MaxWords=30, MinWords=10, MaxFragments=1, StartSel=**, StopSel=**')`
     : sql<string>`left(${notes.body}, 200)`;
   const rows = await db
     .select({ id: notes.id, title: notes.title, tags: notes.tags, snippet, projectId: notes.projectId, updatedAt: notes.updatedAt })
@@ -148,7 +148,7 @@ export async function findNotes(db: Db, p: { query?: string; tag?: string; limit
         p.tag ? sql`${p.tag.trim().toLowerCase()} = ANY(${notes.tags})` : undefined,
       ),
     )
-    .orderBy(...(tsq ? [desc(sql`ts_rank(${notes.search}, to_tsquery('simple', ${tsq}))`)] : []), desc(notes.updatedAt))
+    .orderBy(...(tsq ? [desc(sql`ts_rank(${notes.search}, to_tsquery('tabula', ${tsq}))`)] : []), desc(notes.updatedAt))
     .limit(limit);
   return rows.map((r) => ({
     id: r.id, title: r.title, tags: r.tags, snippet: r.snippet, project: r.projectId, updated_at: r.updatedAt.toISOString(),

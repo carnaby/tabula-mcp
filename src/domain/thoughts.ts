@@ -205,7 +205,7 @@ export async function findThoughts(db: Db, p: { query?: string; tag?: string; li
   const tsq = prefixTsQuery(p.query);
   const where = thoughtWhere({ q: p.query, tag: p.tag });
   const snippet = tsq
-    ? sql<string>`ts_headline('simple', ${thoughts.body}, to_tsquery('simple', ${tsq}), 'MaxWords=30, MinWords=10, MaxFragments=1, StartSel=**, StopSel=**')`
+    ? sql<string>`ts_headline('tabula', ${thoughts.body}, to_tsquery('tabula', ${tsq}), 'MaxWords=30, MinWords=10, MaxFragments=1, StartSel=**, StopSel=**')`
     : sql<string>`left(${thoughts.body}, 200)`;
   const rows = await db
     .select({
@@ -215,7 +215,7 @@ export async function findThoughts(db: Db, p: { query?: string; tag?: string; li
     .from(thoughts)
     .where(where)
     .orderBy(
-      ...(tsq ? [desc(sql`ts_rank(${thoughts.search}, to_tsquery('simple', ${tsq}))`)] : []),
+      ...(tsq ? [desc(sql`ts_rank(${thoughts.search}, to_tsquery('tabula', ${tsq}))`)] : []),
       desc(thoughts.updatedAt),
     )
     .limit(limit);

@@ -170,7 +170,7 @@ The **Tabula tray** app (Windows; Ubuntu builds too) puts the worker next to the
 Install:
 
 1. Set up the worker first (`tabula worker setup`, `tabula worker doctor`, above). The tray needs `tabula` 1.3.0 or newer: `tabula update` (it also refreshes `transcribe.py`, which reports the progress).
-2. Download the installer from the repository's Releases (tags `tray-v…`): the `.msi` for Windows, the `.deb` or the `.AppImage` for Ubuntu. The installers are not signed: the first time Windows SmartScreen says "Windows protected your PC" — choose *More info* → *Run anyway*.
+2. Download the installer from the repository's Releases (tags `tray-v…`): the `.msi` for Windows, the `.deb` or the `.AppImage` for Ubuntu. The installers are not signed: the first time Windows SmartScreen says "Windows protected your PC" — choose *More info* → *Run anyway*. A tray started by the installer restarts itself once, because it would inherit the installer's Redirection Guard, under which programs behind folder links, such as scoop's, do not start.
 
 | Icon | Means |
 |---|---|

@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use tabula_tray_lib::config::Paths;
 use tabula_tray_lib::controller::{Controller, Timing};
+use tabula_tray_lib::relaunch::{self, Start};
 use tabula_tray_lib::state::{is_web_url, Input, Snapshot};
 use tabula_tray_lib::tray::{show_window, TrayUi};
 use tauri::{AppHandle, Manager, RunEvent, State, WindowEvent};
@@ -54,6 +55,13 @@ fn open_log_folder(app: AppHandle, paths: State<'_, Paths>) -> Result<(), String
 
 fn main() {
     let paths = Paths::from_env();
+    // First, before the single-instance plugin registers: a tray started by the installer starts itself again without
+    // the installer's Redirection Guard (see relaunch.rs).
+    let guarded = match relaunch::check(&paths.data) {
+        Start::Relaunched => std::process::exit(0),
+        Start::Guarded => true,
+        Start::Normal => false,
+    };
     tauri::Builder::default()
         // First: a second start of the tray only opens the window of the running one.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_window(app)))
@@ -73,7 +81,11 @@ fn main() {
                 }
             })?;
             let ui = Arc::new(TrayUi::build(&handle)?);
-            app.manage(Controller::start(paths, ui, Timing::default()));
+            let controller = Controller::start(paths, ui, Timing::default());
+            if guarded {
+                controller.send(Input::Warning(relaunch::WARNING.to_string()));
+            }
+            app.manage(controller);
             if !std::env::args().any(|a| a == BACKGROUND) {
                 show_window(&handle);
             }

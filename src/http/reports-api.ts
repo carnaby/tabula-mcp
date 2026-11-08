@@ -6,7 +6,8 @@ import {
   addAttachment, type Attachment, CLOSED_REPORT, createReport, deleteAttachment, deleteReport, frameAt, listAttachments, openReportCounts,
   pageReports, parseTimestamp, REPORT_SORTS, REPORT_STATUSES, requireAttachment, requireReport, setFrameNote, updateReport,
 } from '../domain/reports.js';
-import { isRecording, retryTranscription, transcriptionStatus, transcriptStates } from '../domain/jobs.js';
+import { isRecording, retryTranscription, transcribeAgain, transcriptionStatus, transcriptStates } from '../domain/jobs.js';
+import { setSpeakerNames, speakerNameSuggestions } from '../domain/speakers.js';
 import { MAX_PAGE_SIZE } from '../domain/paging.js';
 import { badRequest, conflict, notFound } from '../domain/errors.js';
 import { signMediaPath, verifyMediaSignature } from '../media/sign.js';
@@ -126,6 +127,26 @@ export const reportRoutes: FastifyPluginAsync<MediaDeps> = async (app, { db, con
   app.post('/attachments/:id/transcript/retry', async (req) => {
     const { id } = parse(idParams, req.params);
     await retryTranscription(db, id);
+    return (await transcriptStates(db, [id])).get(id) ?? { status: 'none' };
+  });
+
+  /** The user's names of a transcript's speakers: { "S1": "Eva", "S2": "" } (an empty name clears one). */
+  app.put('/attachments/:id/speakers', async (req) => {
+    const { id } = parse(idParams, req.params);
+    // Values are checked by the domain layer, so a bad name has one error message.
+    const names = parse(z.record(z.string().max(10), z.unknown()).refine((v) => Object.keys(v).length <= 99, 'at most 99 speakers'), req.body);
+    await requireAttachment(db, id);
+    await setSpeakerNames(db, id, names as Record<string, string>);
+    return (await transcriptStates(db, [id])).get(id);
+  });
+
+  /** Names for the naming popover: this report's first, then the project's. */
+  app.get('/reports/:id/speaker-names', async (req) => ({ names: await speakerNameSuggestions(db, parse(idParams, req.params).id) }));
+
+  /** "Transcribe again": a new job for a transcribed (or failed) recording; the transcript stays until the new one is in. */
+  app.post('/attachments/:id/transcribe', async (req) => {
+    const { id } = parse(idParams, req.params);
+    await transcribeAgain(db, id);
     return (await transcriptStates(db, [id])).get(id) ?? { status: 'none' };
   });
 

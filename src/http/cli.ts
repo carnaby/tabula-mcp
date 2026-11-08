@@ -8,6 +8,9 @@ export const CLI_FILE = fileURLToPath(new URL('../../cli/tabula.mjs', import.met
 /** The transcriber that tabula worker setup installs next to its Python environment. */
 export const TRANSCRIBE_FILE = fileURLToPath(new URL('../../cli/transcribe.py', import.meta.url));
 
+/** Speaker recognition, which tabula worker setup --diarize installs next to its own Python environment. */
+export const DIARIZE_FILE = fileURLToPath(new URL('../../cli/diarize.py', import.meta.url));
+
 /** The single source of the CLI version is its VERSION line, so the served file and /cli/version cannot drift. */
 export function readCliVersion(source: string): string {
   const m = /^export const VERSION = '([^']+)';\r?$/m.exec(source);
@@ -16,7 +19,7 @@ export function readCliVersion(source: string): string {
 }
 
 /** The CLI is public code from the repository, so it is served without the token. */
-export function registerCliRoutes(app: FastifyInstance, file = CLI_FILE, transcriber = TRANSCRIBE_FILE): void {
+export function registerCliRoutes(app: FastifyInstance, file = CLI_FILE, transcriber = TRANSCRIBE_FILE, diarizer = DIARIZE_FILE): void {
   if (!existsSync(file)) {
     app.log.warn({ file }, 'CLI file not found; /cli is not served');
     return;
@@ -27,10 +30,9 @@ export function registerCliRoutes(app: FastifyInstance, file = CLI_FILE, transcr
     reply.type('text/javascript; charset=utf-8').header('cache-control', 'no-cache').send(source),
   );
   app.get('/cli/version', () => ({ version }));
-  if (existsSync(transcriber)) {
-    const script = readFileSync(transcriber, 'utf8');
-    app.get('/cli/transcribe.py', (_req, reply) =>
-      reply.type('text/x-python; charset=utf-8').header('cache-control', 'no-cache').send(script),
-    );
+  for (const [name, path] of [['transcribe.py', transcriber], ['diarize.py', diarizer]] as const) {
+    if (!existsSync(path)) continue;
+    const script = readFileSync(path, 'utf8');
+    app.get(`/cli/${name}`, (_req, reply) => reply.type('text/x-python; charset=utf-8').header('cache-control', 'no-cache').send(script));
   }
 }

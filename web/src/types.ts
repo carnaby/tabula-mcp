@@ -114,11 +114,19 @@ export const REPORT_STATUS_INFO: Record<ReportStatus, { label: string; hint: str
   done: { label: 'Done', hint: 'Fixed and closed' },
 };
 export type AttachmentKind = 'image' | 'video' | 'audio' | 'frame';
-export type TranscriptSegment = { start_ms: number; end_ms: number; text: string };
+export type TranscriptSegment = { start_ms: number; end_ms: number; text: string; speaker?: string };
+/** How the speakers were recognized: the model and how many speak, or why it failed. */
+export type Diarization = { model: string; speakers: number } | { error: string };
+export type SpeakerName = { name: string; by: 'user' | 'agent'; at: string };
+/** A recording transcribed again: its job's state while the old transcript stays on show. */
+export type TranscribingAgain = { status: 'queued' | 'running' | 'failed'; error: string | null; retryAt: string | null };
 export type TranscriptState =
   | { status: 'none' }
   | { status: 'queued' | 'running' | 'failed'; attempts: number; error: string | null; retryAt: string | null }
-  | { status: 'done'; language: string | null; model: string; segments: TranscriptSegment[]; createdAt: string };
+  | {
+      status: 'done'; language: string | null; model: string; segments: TranscriptSegment[]; createdAt: string;
+      diarization: Diarization | null; speakers: Record<string, SpeakerName>; again: TranscribingAgain | null;
+    };
 /** The transcription worker as the server last saw it; job counts are of open reports. */
 export type WorkerStatus = {
   /** False when the server has no TABULA_WORKER_TOKEN: jobs queue, but no worker can connect. */

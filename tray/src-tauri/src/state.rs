@@ -22,13 +22,29 @@ pub const OLD_CLI_SIGNS: [&str; 4] = ["does not take --json", "does not take --e
 
 // ------------------------------------------------------------------ events of tabula worker --events
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "snake_case")]
+/// A step of a job. `Other` is a step a newer CLI may add: shown by its name, never an error.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(from = "String")]
 pub enum JobPhase {
     Download,
     Extract,
     Transcribe,
+    Diarize,
     Upload,
+    Other(String),
+}
+
+impl From<String> for JobPhase {
+    fn from(name: String) -> Self {
+        match name.as_str() {
+            "download" => Self::Download,
+            "extract" => Self::Extract,
+            "transcribe" => Self::Transcribe,
+            "diarize" => Self::Diarize,
+            "upload" => Self::Upload,
+            _ => Self::Other(name),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -384,9 +400,11 @@ impl Model {
                 }
             }
             WorkerEvent::Phase { id, phase } => {
-                if let WorkerState::Busy { job, phase: current, .. } = &mut self.worker {
+                if let WorkerState::Busy { job, phase: current, progress } = &mut self.worker {
                     if job.id == id {
                         *current = Some(phase);
+                        // Each step counts from 0 %: the transcription's 100 % must not show while speakers are recognized.
+                        *progress = None;
                     }
                 }
             }
@@ -594,7 +612,7 @@ impl Model {
         let text = match &self.worker {
             WorkerState::Error { message, .. } => message.clone(),
             WorkerState::Busy { job, phase, progress } => {
-                format!("{} – {}: {}", busy_words(*phase, *progress), job.report.project, job.report.title)
+                format!("{} – {}: {}", busy_words(phase.as_ref(), *progress), job.report.project, job.report.title)
             }
             WorkerState::Starting => "Starting the worker…".to_string(),
             WorkerState::Idle => "Waiting for jobs".to_string(),
@@ -621,7 +639,7 @@ impl Model {
             WorkerState::Stopped => "worker stopped".to_string(),
             WorkerState::Starting => "worker starting".to_string(),
             WorkerState::Idle => "waiting for jobs".to_string(),
-            WorkerState::Busy { phase, progress, .. } => busy_words(*phase, *progress).to_lowercase(),
+            WorkerState::Busy { phase, progress, .. } => busy_words(phase.as_ref(), *progress).to_lowercase(),
             WorkerState::Stopping => "worker stopping".to_string(),
             WorkerState::External => "running outside the tray".to_string(),
             WorkerState::Error { .. } => "worker error".to_string(),
@@ -634,7 +652,7 @@ impl Model {
             WorkerState::Stopped => "Worker stopped".to_string(),
             WorkerState::Starting => "Starting the worker…".to_string(),
             WorkerState::Idle => "Waiting for jobs".to_string(),
-            WorkerState::Busy { phase, progress, .. } => busy_words(*phase, *progress),
+            WorkerState::Busy { phase, progress, .. } => busy_words(phase.as_ref(), *progress),
             WorkerState::Stopping => "Stopping the worker…".to_string(),
             WorkerState::External => "Running outside the tray".to_string(),
             WorkerState::Error { message, .. } => format!("Stopped with an error: {message}"),
@@ -668,8 +686,8 @@ impl Model {
                     title: job.report.title.clone(),
                     report_url: job.report_url.clone(),
                     recording: recording(&job.attachment),
-                    step: phase_words(*phase).to_string(),
-                    percent: if *phase == Some(JobPhase::Transcribe) { percent(*progress) } else { None },
+                    step: phase_words(phase.as_ref()),
+                    percent: if shows_percent(phase.as_ref()) { percent(*progress) } else { None },
                 }),
                 _ => None,
             },
@@ -708,14 +726,21 @@ fn waiting(n: u32) -> String {
     if n == 1 { "1 recording waiting".to_string() } else { format!("{n} recordings waiting") }
 }
 
-fn phase_words(phase: Option<JobPhase>) -> &'static str {
+fn phase_words(phase: Option<&JobPhase>) -> String {
     match phase {
-        None => "Starting the job",
-        Some(JobPhase::Download) => "Downloading",
-        Some(JobPhase::Extract) => "Extracting the audio",
-        Some(JobPhase::Transcribe) => "Transcribing",
-        Some(JobPhase::Upload) => "Uploading the transcript",
+        None => "Starting the job".to_string(),
+        Some(JobPhase::Download) => "Downloading".to_string(),
+        Some(JobPhase::Extract) => "Extracting the audio".to_string(),
+        Some(JobPhase::Transcribe) => "Transcribing".to_string(),
+        Some(JobPhase::Diarize) => "Recognizing speakers".to_string(),
+        Some(JobPhase::Upload) => "Uploading the transcript".to_string(),
+        Some(JobPhase::Other(name)) => capitalized(name),
     }
+}
+
+/// The steps that report how far they got.
+fn shows_percent(phase: Option<&JobPhase>) -> bool {
+    matches!(phase, Some(JobPhase::Transcribe | JobPhase::Diarize))
 }
 
 fn percent(progress: Option<Progress>) -> Option<u8> {
@@ -724,11 +749,19 @@ fn percent(progress: Option<Progress>) -> Option<u8> {
     Some((p.done_ms.saturating_mul(100) / total).min(100) as u8)
 }
 
-/// "Transcribing 42 %", or the phase alone while the percentage is unknown.
-fn busy_words(phase: Option<JobPhase>, progress: Option<Progress>) -> String {
-    match (phase, percent(progress)) {
-        (Some(JobPhase::Transcribe), Some(p)) => format!("Transcribing {p} %"),
-        _ => phase_words(phase).to_string(),
+/// "Transcribing 42 %", "Recognizing speakers 50 %", or the step alone while the percentage is unknown.
+fn busy_words(phase: Option<&JobPhase>, progress: Option<Progress>) -> String {
+    match percent(progress) {
+        Some(p) if shows_percent(phase) => format!("{} {p} %", phase_words(phase)),
+        _ => phase_words(phase),
+    }
+}
+
+fn capitalized(name: &str) -> String {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => "Working".to_string(),
     }
 }
 
@@ -914,6 +947,37 @@ mod tests {
         assert_eq!(m.apply(ev(WorkerEvent::Done { id: "j1".into(), segments: 2 }), T), vec![Effect::CheckQueue]);
         assert_eq!(m.icon(), Icon::Idle);
         assert!(texts(&m).contains(&"Transcribed demo: Player freezes (2 segments)".to_string()));
+    }
+
+    #[test]
+    fn speakers_are_recognized_with_their_own_progress() {
+        let mut m = running();
+        m.apply(ev(job("j1", "Player freezes")), T);
+        m.apply(ev(WorkerEvent::Phase { id: "j1".into(), phase: JobPhase::Transcribe }), T);
+        m.apply(ev(WorkerEvent::Progress { id: "j1".into(), done_ms: 161_000, total_ms: Some(161_000) }), T);
+        m.apply(ev(WorkerEvent::Phase { id: "j1".into(), phase: JobPhase::Diarize }), T);
+        // The transcription's 100 % does not carry over.
+        assert_eq!(m.tooltip(), "Recognizing speakers – demo: Player freezes");
+        m.apply(ev(WorkerEvent::Progress { id: "j1".into(), done_ms: 80_500, total_ms: Some(161_000) }), T);
+        assert_eq!(m.tooltip(), "Recognizing speakers 50 % – demo: Player freezes");
+        assert_eq!(m.status_line(), "checking the queue · recognizing speakers 50 %");
+        let view = m.snapshot().job.expect("a job");
+        assert_eq!((view.step.as_str(), view.percent), ("Recognizing speakers", Some(50)));
+    }
+
+    #[test]
+    fn a_phase_of_a_newer_cli_is_shown_by_its_name() {
+        let phase: JobPhase = serde_json::from_str(r#""summarize""#).unwrap();
+        assert_eq!(phase, JobPhase::Other("summarize".into()));
+        assert_eq!(serde_json::from_str::<JobPhase>(r#""diarize""#).unwrap(), JobPhase::Diarize);
+        let mut m = running();
+        m.apply(ev(job("j1", "Player freezes")), T);
+        m.apply(ev(WorkerEvent::Phase { id: "j1".into(), phase }), T);
+        m.apply(ev(WorkerEvent::Progress { id: "j1".into(), done_ms: 1, total_ms: Some(2) }), T);
+        assert_eq!(m.tooltip(), "Summarize – demo: Player freezes");
+        let view = m.snapshot().job.expect("a job");
+        assert_eq!((view.step.as_str(), view.percent), ("Summarize", None));
+        assert!(m.snapshot().log.iter().all(|l| !l.error));
     }
 
     #[test]

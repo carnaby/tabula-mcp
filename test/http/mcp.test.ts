@@ -36,12 +36,12 @@ type Content = Array<{ type: string; text: string }>;
 const textOf = (r: { content?: unknown }) => (r.content as Content)[0]!.text;
 
 describe('MCP endpoint', () => {
-  it('exposes exactly the twenty-two tools', async () => {
+  it('exposes exactly the twenty-three tools', async () => {
     const client = await connect('/mcp', bearer);
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
       'create_report', 'delete_file', 'deprecate', 'find_notes', 'find_thoughts', 'get', 'get_frame', 'get_report', 'get_transcript', 'list_files',
-      'list_projects', 'list_reports', 'read_file', 'recall', 'remember', 'save_thought', 'search', 'setup_project',
+      'list_projects', 'list_reports', 'name_speakers', 'read_file', 'recall', 'remember', 'save_thought', 'search', 'setup_project',
       'update_report', 'update_thought', 'view_attachment', 'write_file',
     ]);
     expect(tools.find((t) => t.name === 'recall')!.description).toMatch(/^Call at the start of a session/);
@@ -56,6 +56,7 @@ describe('MCP endpoint', () => {
     expect(ins).toContain('run `tabula status` before the first `tabula push`');
     expect(ins).toContain('find_notes');
     expect(ins).toContain('get_transcript');
+    expect(ins).toContain('name them with name_speakers and mention it in the triage');
     expect(ins).toMatch(/`tabula` command is not available.*write_file/s);
     expect(ins).toContain('tabula:d86d86e7');
     expect(ins).toContain("When the user's message contains one, call get with it (and read_file to continue a long file) before you answer");

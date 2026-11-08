@@ -7,6 +7,7 @@ import { createMemory, deprecateMemory, type Memory } from '../domain/memories.j
 import { findNotes, type Note, type NoteHit } from '../domain/notes.js';
 import { listProjects, type ProjectSummary } from '../domain/projects.js';
 import { recall } from '../domain/recall.js';
+import { nameSpeakersAsAgent, speakerView } from '../domain/speakers.js';
 import { parseIdRef } from '../domain/ids.js';
 import { refTarget, type ResolvedRecord, resolveRecord } from '../domain/records.js';
 import { search, type SearchHit, type SearchParams } from '../domain/search.js';
@@ -400,13 +401,16 @@ function pendingText(s: TranscriptState | undefined, lastSeen: Date | null, work
 function transcriptForAgent(a: Attachment, s: TranscriptState | undefined, lastSeen: Date | null, workerEnabled: boolean) {
   if (!isRecording(a)) return {};
   if (s?.status !== 'done') return { transcript: { status: s?.status ?? 'none', note: pendingText(s, lastSeen, workerEnabled) } };
-  const lines = transcriptLines(s.segments);
-  if (!lines) return { transcript: { status: 'done', language: s.language, text: '', note: 'no speech in the recording' } };
+  const view = speakerView(s.segments, s.diarization, s.speakers);
+  const speakers = view.header ? { speakers: view.header } : {};
+  const lines = transcriptLines(s.segments, view.labels);
+  if (!lines) return { transcript: { status: 'done', language: s.language, ...speakers, text: '', note: 'no speech in the recording' } };
   const part = sliceLines(lines, 0, REPORT_TRANSCRIPT_CHARS);
   return {
     transcript: {
       status: 'done',
       language: s.language,
+      ...speakers,
       text: part.text,
       ...(part.next !== null
         ? { more: `the transcript continues (${lines.length} characters): call get_transcript with attachment_id "${refOf(a.id)}" and offset ${part.next}` }
@@ -528,7 +532,8 @@ export async function agentGetTranscript(ctx: AgentContext, input: { attachment_
   if (!isRecording(a)) throw badRequest(`attachment ${id} is ${a.kind === 'image' ? 'a photo' : 'a frame'}; only video and audio are transcribed`);
   const s = (await transcriptStates(ctx.db, [id])).get(id);
   if (s?.status !== 'done') throw notFound(`attachment ${id} has no transcript yet: ${pendingText(s, await lastWorkerSeen(ctx.db), ctx.workerEnabled !== false)}`);
-  const lines = transcriptLines(s.segments);
+  const view = speakerView(s.segments, s.diarization, s.speakers);
+  const lines = transcriptLines(s.segments, view.labels);
   const offset = Math.max(0, Math.trunc(input.offset ?? 0));
   if (offset > 0 && offset >= lines.length) return `[offset ${offset} is past the end of the transcript (${lines.length} characters)]`;
   const part = sliceLines(lines, offset, TRANSCRIPT_CHUNK);
@@ -539,5 +544,17 @@ export async function agentGetTranscript(ctx: AgentContext, input: { attachment_
     `${lines.length} characters${offset ? ` · from character ${offset}` : ''}`,
   ].join(' · ');
   const footer = part.next !== null ? [`[… part ends at character ${part.next} of ${lines.length} — call get_transcript again with offset: ${part.next}]`] : [];
-  return [`[${head}]`, part.text || '(no speech in the recording)', ...footer].join('\n');
+  return [`[${head}]`, ...(view.header ? [view.header] : []), part.text || '(no speech in the recording)', ...footer].join('\n');
+}
+
+/** name_speakers: an agent names S1, S2 ... when the transcript makes clear who is who; the user's names stay. */
+export async function agentNameSpeakers(ctx: AgentContext, input: { attachment_id: string; names: Record<string, string> }) {
+  const id = await resolveAttachmentId(ctx, input.attachment_id);
+  const a = await requireAttachment(ctx.db, id);
+  if (!isRecording(a)) throw badRequest(`attachment ${id} is ${a.kind === 'image' ? 'a photo' : 'a frame'}; only video and audio have speakers`);
+  if (!Object.keys(input.names).length) throw badRequest('names is empty; pass e.g. {"S2": "Tomáš"}');
+  const r = await nameSpeakersAsAgent(ctx.db, id, input.names);
+  const s = (await transcriptStates(ctx.db, [id])).get(id);
+  const header = s?.status === 'done' ? speakerView(s.segments, s.diarization, s.speakers).header : null;
+  return { attachment: refOf(id), written: r.written, skipped: r.skipped, ...(header ? { speakers: header } : {}) };
 }

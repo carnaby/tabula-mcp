@@ -17,7 +17,7 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 
-export const VERSION = '1.3.0';
+export const VERSION = '1.4.0';
 /** 1 MiB, the server's limit for one file. */
 export const MAX_BYTES = 1048576;
 export const DEFAULT_STATE = ['docs/handoff/*.md', '**/docs/handoff/*.md'];
@@ -167,7 +167,9 @@ export const workerBackoffMs = (failures) => Math.min(60000, 2000 * 2 ** Math.ma
 export function shortError(text, max = 300) {
   const line = String(text ?? '').replace(/\s+/g, ' ').trim();
   if (!line) return 'no details';
-  return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+  // Cut by code points: a cut inside a surrogate pair would leave a lone surrogate, which Postgres refuses in jsonb.
+  const chars = [...line];
+  return chars.length > max ? `${chars.slice(0, max - 1).join('')}…` : line;
 }
 
 /** The end of a program's stderr as one line: a traceback or earlier warnings come first, the real message last. */
@@ -210,7 +212,22 @@ export function errorKind(e) {
   return null;
 }
 
-/** What transcribe.py printed, as the server expects it: whole milliseconds, one-line texts, no empty ones, in time order. */
+/** Whisper's word times as assignSpeakers needs them: whole milliseconds, trimmed texts, no empty ones, in time order. */
+function normalizeWords(raw) {
+  const words = [];
+  for (const w of raw) {
+    const start = Math.max(0, Math.round(Number(w?.start_ms)));
+    const end = Math.max(start, Math.round(Number(w?.end_ms)));
+    const text = String(w?.text ?? '').replace(/\s+/g, ' ').trim();
+    if (Number.isFinite(start) && Number.isFinite(end) && text) words.push({ start_ms: start, end_ms: end, text });
+  }
+  return words.sort((a, b) => a.start_ms - b.start_ms);
+}
+
+/**
+ * What transcribe.py printed, as the server expects it: whole milliseconds, one-line texts, no empty ones, in time
+ * order. Segments keep their words (for assignSpeakers); withoutWords drops them before the upload.
+ */
 export function normalizeTranscript(raw) {
   if (!raw || typeof raw !== 'object' || !Array.isArray(raw.segments)) throw new CliError('the transcriber printed no segments');
   const segments = [];
@@ -218,7 +235,8 @@ export function normalizeTranscript(raw) {
     const start = Math.max(0, Math.round(Number(s?.start_ms)));
     const end = Math.max(start, Math.round(Number(s?.end_ms)));
     const text = String(s?.text ?? '').replace(/\s+/g, ' ').trim();
-    if (Number.isFinite(start) && Number.isFinite(end) && text) segments.push({ start_ms: start, end_ms: end, text });
+    if (!Number.isFinite(start) || !Number.isFinite(end) || !text) continue;
+    segments.push({ start_ms: start, end_ms: end, text, ...(Array.isArray(s.words) ? { words: normalizeWords(s.words) } : {}) });
   }
   segments.sort((a, b) => a.start_ms - b.start_ms);
   const duration = Math.round(Number(raw.duration_ms));
@@ -227,6 +245,101 @@ export function normalizeTranscript(raw) {
     duration_ms: Number.isFinite(duration) && duration > 0 ? duration : null,
     segments,
   };
+}
+
+/** Segments as the server takes them: no word times. */
+export const withoutWords = (segments) =>
+  segments.map(({ start_ms, end_ms, text, speaker }) => ({ start_ms, end_ms, text, ...(speaker ? { speaker } : {}) }));
+
+export const DIARIZE_MODEL = 'pyannote/speaker-diarization-community-1';
+/** A word outside every turn takes the nearest turn's speaker only this close; further away it continues the previous word's. */
+export const NEAREST_TURN_MS = 1000;
+
+/**
+ * Whisper's segments joined with pyannote's turns (who speaks when). Every word gets the speaker it overlaps most; a
+ * word in no turn the nearest turn's speaker when that is within NEAREST_TURN_MS, else the previous word's (the first
+ * word: the nearest turn's). A segment is split where the speaker changes: the parts get their words' times and texts;
+ * a segment spoken by one speaker keeps Whisper's own text and times; a segment without words gets the speaker who
+ * overlaps it most. Speakers are renamed S1, S2 … by their first line, so one who got no words leaves no gap.
+ * Equal overlaps and distances go to the earlier turn. No turns: the segments come back without speakers.
+ */
+export function assignSpeakers(segments, turns) {
+  if (!turns.length) return { segments: withoutWords(segments), speakers: 0 };
+  const sorted = [...turns].sort((a, b) => a.start_ms - b.start_ms || a.end_ms - b.end_ms);
+  let previous = null;
+  const speakerFor = (start, end) => {
+    const overlap = new Map();
+    let nearest = null;
+    let distance = Infinity;
+    for (const t of sorted) {
+      // Sorted by start: every later turn is at least this far away.
+      if (t.start_ms - end > distance) break;
+      const o = Math.min(end, t.end_ms) - Math.max(start, t.start_ms);
+      if (o > 0) overlap.set(t.speaker, (overlap.get(t.speaker) ?? 0) + o);
+      const d = Math.max(t.start_ms - end, start - t.end_ms, 0);
+      if (d < distance) {
+        distance = d;
+        nearest = t.speaker;
+      }
+    }
+    let best = null;
+    let most = 0;
+    for (const [speaker, o] of overlap) {
+      if (o > most) {
+        best = speaker;
+        most = o;
+      }
+    }
+    if (best === null) best = distance <= NEAREST_TURN_MS || previous === null ? nearest : previous;
+    previous = best;
+    return best;
+  };
+  const out = [];
+  for (const s of segments) {
+    const words = s.words ?? [];
+    if (!words.length) {
+      out.push({ start_ms: s.start_ms, end_ms: s.end_ms, text: s.text, speaker: speakerFor(s.start_ms, s.end_ms) });
+      continue;
+    }
+    const parts = [];
+    for (const w of words) {
+      const speaker = speakerFor(w.start_ms, w.end_ms);
+      const last = parts.at(-1);
+      if (last?.speaker === speaker) last.words.push(w);
+      else parts.push({ speaker, words: [w] });
+    }
+    if (parts.length === 1) {
+      out.push({ start_ms: s.start_ms, end_ms: s.end_ms, text: s.text, speaker: parts[0].speaker });
+      continue;
+    }
+    for (const p of parts) {
+      out.push({ start_ms: p.words[0].start_ms, end_ms: p.words.at(-1).end_ms, text: p.words.map((w) => w.text).join(' '), speaker: p.speaker });
+    }
+  }
+  const names = new Map();
+  for (const s of out) if (!names.has(s.speaker)) names.set(s.speaker, `S${names.size + 1}`);
+  if (names.size > 99) throw new Error('more than 99 speakers');
+  return { segments: out.map((s) => ({ ...s, speaker: names.get(s.speaker) })), speakers: names.size };
+}
+
+/** What diarize.py printed: whole milliseconds, turns with a length and a speaker; the model's name. */
+export function normalizeDiarization(raw) {
+  if (!raw || typeof raw !== 'object' || !Array.isArray(raw.turns)) throw new Error('the diarizer printed no turns');
+  const turns = [];
+  for (const t of raw.turns) {
+    const start = Math.max(0, Math.round(Number(t?.start_ms)));
+    const end = Math.round(Number(t?.end_ms));
+    const speaker = typeof t?.speaker === 'string' ? t.speaker : '';
+    if (Number.isFinite(start) && Number.isFinite(end) && end > start && speaker) turns.push({ start_ms: start, end_ms: end, speaker });
+  }
+  const model = typeof raw.model === 'string' && /^[\x20-\x7e]{1,200}$/.test(raw.model) ? raw.model : DIARIZE_MODEL;
+  return { model, turns };
+}
+
+/** Whisper's initial_prompt: the setting, then the report's project, so it spells the project's words right. */
+export function whisperPrompt(setting, project) {
+  const prompt = [typeof setting === 'string' ? setting.trim() : '', String(project ?? '').trim()].filter(Boolean).join(' ');
+  return prompt || null;
 }
 
 // ------------------------------------------------------------------ configuration and repository
@@ -285,6 +398,10 @@ export function dataHome(env = process.env, platform = process.platform, home = 
 /** The Python inside a virtual environment. */
 export const venvPython = (venv, platform = process.platform) =>
   platform === 'win32' ? join(venv, 'Scripts', 'python.exe') : join(venv, 'bin', 'python');
+
+/** A program of a virtual environment, e.g. hf (Hugging Face's command line). */
+export const venvProgram = (venv, name, platform = process.platform) =>
+  platform === 'win32' ? join(venv, 'Scripts', `${name}.exe`) : join(venv, 'bin', name);
 
 /** A program from the worker settings: a path, or a list ["program", "first argument", …] (e.g. a script run by node). */
 export function commandLine(value, what) {
@@ -472,7 +589,17 @@ function readWorkerConfig() {
     python: merged.python ?? '',
     script: String(merged.script || join(dataHome(), 'whisper', 'transcribe.py')),
     beam_size: Number.isInteger(merged.beam_size) && merged.beam_size > 0 ? merged.beam_size : WORKER_DEFAULTS.beam_size,
+    diarize: merged.diarize ?? null,
   };
+}
+
+/** worker.diarize (written by tabula worker setup --diarize): the diarizer's Python and script; null when not set up. */
+export function diarizeSettings(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'object' || Array.isArray(value) || typeof value.script !== 'string' || !value.script || value.python === undefined) {
+    throw new CliError(`worker.diarize in ${configFile()} must be { "python": "<program>", "script": "<path of diarize.py>" }; tabula worker setup --diarize writes it`);
+  }
+  return { python: commandLine(value.python, 'diarize.python'), script: value.script };
 }
 
 // ------------------------------------------------------------------ server
@@ -1006,24 +1133,29 @@ async function update(conn) {
   writeFileSync(`${self}.tmp`, source);
   renameSync(`${self}.tmp`, self);
   out(m[1] === VERSION ? `tabula ${VERSION} is current; reinstalled it` : `updated tabula ${VERSION} → ${m[1]}`);
-  await refreshTranscriber(conn.url);
+  await refreshScripts(conn.url);
   return 0;
 }
 
-/** After an update: a transcribe.py that tabula worker setup put in the data folder is replaced with the server's. */
-async function refreshTranscriber(url) {
-  let script;
+/** After an update: the scripts tabula worker setup put in the data folder are replaced with the server's. */
+async function refreshScripts(url) {
+  let cfg;
   try {
-    script = resolve(readWorkerConfig().script);
+    cfg = readWorkerConfig();
   } catch {
     return; // no usable configuration: nothing to refresh
   }
-  if (!existsSync(script) || !isWithin(script, resolve(dataHome()))) return;
-  try {
-    await fetchTranscriber(url, script, { preferLocal: false });
-    out(`updated ${script}`);
-  } catch (e) {
-    err(`warning: ${script} was not updated: ${e.message}`);
+  const scripts = [['transcribe.py', cfg.script]];
+  if (cfg.diarize && typeof cfg.diarize === 'object' && typeof cfg.diarize.script === 'string' && cfg.diarize.script) scripts.push(['diarize.py', cfg.diarize.script]);
+  for (const [name, path] of scripts) {
+    const script = resolve(path);
+    if (!existsSync(script) || !isWithin(script, resolve(dataHome()))) continue;
+    try {
+      await fetchScript(url, name, script, { preferLocal: false });
+      out(`updated ${script}`);
+    } catch (e) {
+      err(`warning: ${script} was not updated: ${e.message}`);
+    }
   }
 }
 
@@ -1055,6 +1187,9 @@ const STOP_GRACE_MS = 1000;
 
 /** tabula worker --events reports a job's progress at most this often. */
 const PROGRESS_EVERY_MS = 1000;
+
+/** The longest a diarization may take; TABULA_WORKER_DIARIZE_TIMEOUT_MS exists for the tests and can only shorten it. */
+const DIARIZE_TIMEOUT_MS = Math.min(3600000, Number(process.env.TABULA_WORKER_DIARIZE_TIMEOUT_MS) || 3600000);
 
 /** The host name as an HTTP header value (ASCII only); the server lower-cases and checks it. */
 const workerId = () => hostname().replace(/[^\x21-\x7e]/g, '').slice(0, 63) || 'worker';
@@ -1104,15 +1239,16 @@ const sleep = (ms, signal) =>
  * Run a program without a shell, so paths with spaces need no quoting. Resolves { code, stdout, stderr } (stderr's
  * last 8 KB); kills it (with what it started) when `signal` aborts or after `timeoutMs`. A program that cannot be
  * started rejects with `cannotStart: true` (and `missing: true` when it does not exist); a stop with `aborted: true`.
- * `onLine` sees every whole line of stderr; a line it returns true for is consumed and stays out of `stderr`.
+ * `onLine` sees every whole line of stderr; a line it returns true for is consumed and stays out of `stderr`. `env`
+ * adds variables to the child's environment.
  */
-function runProcess(command, args, { input, signal, timeoutMs = 600000, onLine } = {}) {
+function runProcess(command, args, { input, signal, timeoutMs = 600000, onLine, env = {} } = {}) {
   const [cmd, ...pre] = command;
   return new Promise((resolveRun, reject) => {
     if (signal?.aborted) return reject(Object.assign(new Error('stopped'), { aborted: true }));
     let child;
     try {
-      child = spawn(cmd, [...pre, ...args], { env: childEnv(), windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+      child = spawn(cmd, [...pre, ...args], { env: { ...childEnv(), ...env }, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     } catch (e) {
       reject(cannotStart(cmd, e)); // e.g. EINVAL for a .cmd or .bat file, which needs a shell
       return;
@@ -1159,7 +1295,10 @@ function runProcess(command, args, { input, signal, timeoutMs = 600000, onLine }
       if (partial && !onLine(partial.replace(/\r$/, ''))) keep(partial);
       partial = '';
       if (signal?.aborted) return reject(Object.assign(new Error('stopped'), { aborted: true }));
-      if (timedOut) return reject(new Error(`${basename(cmd)} did not finish within ${Math.round(timeoutMs / 60000)} min`));
+      if (timedOut) {
+        const limit = timeoutMs < 120000 ? `${Math.round(timeoutMs / 1000)} s` : `${Math.round(timeoutMs / 60000)} min`;
+        return reject(new Error(`${basename(cmd)} did not finish within ${limit}`));
+      }
       resolveRun({ code, stdout: Buffer.concat(stdout).toString('utf8'), stderr });
     });
     child.stdin.end(input ?? '');
@@ -1259,7 +1398,7 @@ async function extractAudio(cfg, input, wav, signal) {
 }
 
 /** One Python process per recording: the model leaves the GPU's memory when the process ends. */
-async function transcribe(cfg, wav, signal, onProgress = () => {}) {
+async function transcribe(cfg, wav, signal, { onProgress = () => {}, initialPrompt = cfg.initial_prompt || null } = {}) {
   if (!cfg.python || (Array.isArray(cfg.python) && !cfg.python.length)) throw environmentError('no Python environment for transcription: run tabula worker setup');
   if (!existsSync(cfg.script)) throw environmentError(`transcribe.py is missing at ${cfg.script}: run tabula worker setup`);
   const options = {
@@ -1268,7 +1407,7 @@ async function transcribe(cfg, wav, signal, onProgress = () => {}) {
     language: cfg.language && cfg.language !== 'auto' ? cfg.language : null,
     device: cfg.device,
     compute_type: cfg.compute_type,
-    initial_prompt: cfg.initial_prompt || null,
+    initial_prompt: initialPrompt,
     beam_size: cfg.beam_size,
   };
   let r;
@@ -1295,6 +1434,39 @@ async function transcribe(cfg, wav, signal, onProgress = () => {}) {
     return normalizeTranscript(JSON.parse(r.stdout));
   } catch (e) {
     throw exitError(e instanceof SyntaxError ? 'the transcriber did not print JSON' : e.message);
+  }
+}
+
+/**
+ * Who speaks when, from diarize.py in its own Python environment. It runs after Whisper's process has ended, so the
+ * two models are never in the GPU's memory at once.
+ */
+async function diarize(cfg, wav, signal, onProgress = () => {}) {
+  const settings = diarizeSettings(cfg.diarize);
+  if (!settings) throw environmentError('speaker recognition is not set up: run tabula worker setup --diarize');
+  if (!existsSync(settings.script)) throw environmentError(`diarize.py is missing at ${settings.script}: run tabula worker setup --diarize`);
+  let r;
+  try {
+    r = await runProcess(settings.python, [settings.script], {
+      input: JSON.stringify({ wav }),
+      signal,
+      timeoutMs: DIARIZE_TIMEOUT_MS,
+      onLine: (line) => {
+        const ms = progressMs(line);
+        if (ms === null) return false;
+        onProgress(ms);
+        return true;
+      },
+    });
+  } catch (e) {
+    if (e.cannotStart || e instanceof CliError) throw environmentError(`${e.message}: run tabula worker setup --diarize`);
+    throw e;
+  }
+  if (r.code !== 0) throw exitError(`speaker recognition failed (exit ${r.code}): ${lastLines(r.stderr)}`);
+  try {
+    return normalizeDiarization(JSON.parse(r.stdout));
+  } catch (e) {
+    throw exitError(e instanceof SyntaxError ? 'the diarizer did not print JSON' : e.message);
   }
 }
 
@@ -1391,16 +1563,41 @@ export async function runJob(cfg, job, { log, stop, emit = () => {} }) {
     phase('extract');
     const hasAudio = await extractAudio(cfg, input, wav, work.signal);
     let result = { language: null, duration_ms: null, segments: [] };
-    if (hasAudio) {
-      phase('transcribe');
-      // What Whisper hears; the recording's own length when the WAV cannot be measured.
-      const total = wavDurationMs(fileSize(wav)) || a.duration_ms || null;
+    // What Whisper and pyannote hear; the recording's own length when the WAV cannot be measured.
+    const total = hasAudio ? wavDurationMs(fileSize(wav)) || a.duration_ms || null : null;
+    // One throttle per phase: the first progress of a phase always shows.
+    const progress = () => {
       let shown = 0;
-      result = await transcribe(cfg, wav, work.signal, (ms) => {
+      return (ms) => {
         if (Date.now() - shown < PROGRESS_EVERY_MS) return;
         shown = Date.now();
         emit('progress', { id: job.id, done_ms: ms, total_ms: total });
-      });
+      };
+    };
+    if (hasAudio) {
+      phase('transcribe');
+      result = await transcribe(cfg, wav, work.signal, { onProgress: progress(), initialPrompt: whisperPrompt(cfg.initial_prompt, job.report.project) });
+    }
+    let segments = withoutWords(result.segments);
+    let diarization = null;
+    if (hasAudio && cfg.diarize && result.segments.length) {
+      phase('diarize');
+      const began = Date.now();
+      try {
+        const d = await diarize(cfg, wav, work.signal, progress());
+        const merged = assignSpeakers(result.segments, d.turns);
+        segments = merged.segments;
+        diarization = { model: d.model, speakers: merged.speakers };
+        log(`${tag}: ${merged.speakers} speaker(s) recognized in ${((Date.now() - began) / 1000).toFixed(1)} s`);
+      } catch (e) {
+        // A stop (also a Ctrl+C that reached the diarizer first) and a job the server took away end the job as in any
+        // phase. Anything else costs only the speakers: the transcript goes in without them.
+        if (e.exited && !stop.aborted) await sleep(STOP_GRACE_MS, stop);
+        if (work.signal.aborted || e.aborted) throw e;
+        const message = shortError(e.message);
+        log(`${tag}: speakers not recognized: ${message}; the transcript goes without them`);
+        diarization = { error: message };
+      }
     }
     phase('upload');
     // The transcript is the expensive part: a restarting server must not lose it. The heartbeat timer keeps running
@@ -1409,7 +1606,9 @@ export async function runJob(cfg, job, { log, stop, emit = () => {} }) {
     for (let attempt = 1; ; attempt++) {
       let problem;
       try {
-        r = await report('complete', { model: cfg.model, ...result });
+        r = await report('complete', {
+          model: cfg.model, language: result.language, duration_ms: result.duration_ms, segments, ...(diarization ? { diarization } : {}),
+        });
         if (!isProxyOutage(r.status)) break;
         problem = `HTTP ${r.status}`;
       } catch (e) {
@@ -1433,8 +1632,8 @@ export async function runJob(cfg, job, { log, stop, emit = () => {} }) {
     if (r.status !== 200) throw new Error(`the server refused the transcript: HTTP ${r.status}${r.data?.message ? ` — ${r.data.message}` : ''}`);
     const took = ((Date.now() - started) / 1000).toFixed(1);
     const audio = result.duration_ms ? ` from ${formatClock(result.duration_ms)} of audio` : '';
-    log(`${tag}: done in ${took} s, ${result.segments.length} segments${audio}${hasAudio ? '' : ' (no sound track)'}`);
-    emit('done', { id: job.id, segments: result.segments.length });
+    log(`${tag}: done in ${took} s, ${segments.length} segments${audio}${hasAudio ? '' : ' (no sound track)'}`);
+    emit('done', { id: job.id, segments: segments.length });
     return 'done';
   } catch (e) {
     // While stopping, whatever ffmpeg or the transcriber exited with gives the attempt back. A terminal Ctrl+C reaches
@@ -1512,6 +1711,7 @@ async function workerLoop(once, { log, emit, counts, commands }) {
     commandLine(cfg.ffmpeg, 'ffmpeg');
     if (!cfg.python) throw new CliError('no Python environment for transcription: run tabula worker setup');
     commandLine(cfg.python, 'python');
+    diarizeSettings(cfg.diarize);
   } catch (e) {
     throw e instanceof CliError ? Object.assign(e, { config: true }) : e;
   }
@@ -1596,8 +1796,31 @@ async function workerLoop(once, { log, emit, counts, commands }) {
  */
 export const WHISPER_PACKAGES = ['faster-whisper>=1.2.1,<2', 'ctranslate2>=4.8.4,<5', 'nvidia-cublas-cu12>=12.9,<13', 'nvidia-cudnn-cu12>=9,<10'];
 
-/** Python 3.9+ to create the environment with: the py launcher first on Windows, python3 elsewhere. */
-function findPython() {
+/**
+ * Speaker recognition's packages. PyTorch is pinned to the version whose CUDA 12.8 build replaces it afterwards
+ * (pip installs the CPU build from PyPI with pyannote), so torchaudio and torchcodec match it.
+ */
+export const DIARIZE_PACKAGES = ['pyannote.audio>=4.0.7,<5', 'torch==2.11.0', 'torchaudio==2.11.0', 'torchcodec==0.17.0'];
+export const TORCH_CUDA_PACKAGES = ['torch==2.11.0', 'torchaudio==2.11.0'];
+export const TORCH_CUDA_INDEX = 'https://download.pytorch.org/whl/cu128';
+/** diarize.py's exit code when the model is not available (not downloaded, its conditions not accepted, no token). */
+export const DIARIZER_MODEL_EXIT = 4;
+
+/** What to do on Hugging Face before the gated model downloads; the token stays in Hugging Face's own cache. */
+export function huggingFaceSteps(hf, platform = process.platform) {
+  const login = platform === 'win32' ? `& "${hf}" auth login` : `"${hf}" auth login`;
+  return [
+    `Speaker recognition uses ${DIARIZE_MODEL}; Hugging Face hands it out after you accept its conditions once:`,
+    '  1. Sign in at https://huggingface.co (a free account is enough).',
+    `  2. Open https://huggingface.co/${DIARIZE_MODEL} and accept the conditions.`,
+    '  3. Create a token at https://huggingface.co/settings/tokens: type "Read" (or "Fine-grained" with "Read access to contents of all public gated repos you can access").',
+    `  4. Save it in the Hugging Face cache (Tabula never reads it): ${login}`,
+    '  5. Run tabula worker setup --diarize again.',
+  ];
+}
+
+/** Python 3.<minMinor>+ to create an environment with: the py launcher first on Windows, python3 elsewhere. */
+function findPython(minMinor = 9) {
   const candidates = process.platform === 'win32' ? [['py', '-3'], ['python']] : [['python3'], ['python']];
   for (const c of candidates) {
     const r = spawnSync(c[0], [...c.slice(1), '-c', 'import sys; print(sys.version.split()[0])'], {
@@ -1605,10 +1828,10 @@ function findPython() {
     });
     const version = r.status === 0 ? r.stdout.trim() : '';
     const [major, minor] = version.split('.').map(Number);
-    if (major === 3 && minor >= 9) return { command: c, version };
+    if (major === 3 && minor >= minMinor) return { command: c, version };
   }
   const tried = candidates.map((c) => c.join(' ')).join(', ');
-  throw new CliError(`Python 3.9 or newer was not found (tried ${tried}); install it from python.org (on Windows with the "py" launcher) and run tabula worker setup again`);
+  throw new CliError(`Python 3.${minMinor} or newer was not found (tried ${tried}); install it from python.org (on Windows with the "py" launcher) and run tabula worker setup again`);
 }
 
 /** Run a step of the setup with its output on this console (pip shows its progress). */
@@ -1619,21 +1842,21 @@ function runVisible(command, args, what) {
 }
 
 /**
- * cli/transcribe.py into `dest`: copied from next to this file when it is there (a repository checkout) and
- * `preferLocal`, otherwise downloaded from the server.
+ * A script of cli/ (transcribe.py, diarize.py) into `dest`: copied from next to this file when it is there (a
+ * repository checkout) and `preferLocal`, otherwise downloaded from the server.
  */
-async function fetchTranscriber(url, dest, { preferLocal = true } = {}) {
-  const sibling = join(dirname(realpathSync(fileURLToPath(import.meta.url))), 'transcribe.py');
+async function fetchScript(url, name, dest, { preferLocal = true } = {}) {
+  const sibling = join(dirname(realpathSync(fileURLToPath(import.meta.url))), name);
   let source;
   if (preferLocal && existsSync(sibling)) source = readFileSync(sibling);
   else {
     let res;
     try {
-      res = await fetch(`${url}/cli/transcribe.py`, { signal: AbortSignal.timeout(30000) });
+      res = await fetch(`${url}/cli/${name}`, { signal: AbortSignal.timeout(30000) });
     } catch (e) {
       throw new CliError(`cannot reach ${url}: ${e.cause?.code ?? e.message}`);
     }
-    if (!res.ok) throw new CliError(`downloading transcribe.py failed: HTTP ${res.status}`);
+    if (!res.ok) throw new CliError(`downloading ${name} failed: HTTP ${res.status}`);
     source = Buffer.from(await res.arrayBuffer());
   }
   mkdirSync(dirname(dest), { recursive: true });
@@ -1641,7 +1864,7 @@ async function fetchTranscriber(url, dest, { preferLocal = true } = {}) {
   renameSync(`${dest}.tmp`, dest);
 }
 
-/** tabula worker setup [<url>] [--token-stdin]: token first (nothing is installed with a wrong one), then Python. */
+/** tabula worker setup [<url>] [--token-stdin] [--diarize]: token first (nothing is installed with a wrong one), then Python. */
 async function workerSetup(urlArg, flags) {
   const current = readWorkerConfig();
   const url = String(urlArg ?? current.url).replace(/\/+$/, '');
@@ -1680,7 +1903,7 @@ async function workerSetup(urlArg, flags) {
   out(`Installing ${WHISPER_PACKAGES.join(', ')} (several hundred MB the first time)…`);
   runVisible([python], ['-m', 'pip', 'install', '--upgrade', '--disable-pip-version-check', ...WHISPER_PACKAGES], 'pip install');
   const script = join(whisper, 'transcribe.py');
-  await fetchTranscriber(url, script);
+  await fetchScript(url, 'transcribe.py', script);
 
   const saved = readConfigFile();
   const previous = saved.worker && typeof saved.worker === 'object' && !Array.isArray(saved.worker) ? saved.worker : {};
@@ -1689,8 +1912,162 @@ async function workerSetup(urlArg, flags) {
   out(`Saved the worker settings in the "worker" section of ${file}:`);
   out(`  model ${worker.model}, language ${worker.language} ("auto" detects it), device ${worker.device}, compute_type ${worker.compute_type}`);
   out('  Put the names of your projects and technical words into initial_prompt, so Whisper spells them right.');
-  out('Next: tabula worker doctor (checks ffmpeg, CUDA and the GPU, then transcribes a 5 s sample)');
+  if (!flags.has('--diarize')) {
+    out('Next: tabula worker doctor (checks ffmpeg, CUDA and the GPU, then transcribes a 5 s sample)');
+    out('Speaker recognition (who says what) is optional: tabula worker setup --diarize');
+    return 0;
+  }
+  await setupDiarize(url);
+  out('Next: tabula worker doctor (checks the whole chain, then transcribes and recognizes speakers in a 5 s sample)');
   return 0;
+}
+
+/** diarize.py --check: its JSON as `info` (null when it does not run or prints no JSON) and its stderr. */
+async function diarizerCheck(python, script) {
+  const r = await runProcess(python, [script, '--check'], { timeoutMs: 300000 }).catch((e) => ({ code: -1, stdout: '', stderr: e.message }));
+  try {
+    return { info: r.code === 0 ? JSON.parse(r.stdout) : null, stderr: r.stderr };
+  } catch {
+    return { info: null, stderr: r.stderr };
+  }
+}
+
+/**
+ * diarize.py --load for setup. A model in the cache is loaded from there, without asking Hugging Face (and without a
+ * token), like a job does; one that is not is downloaded, also when the user's environment says HF_HUB_OFFLINE=1. A
+ * cache that holds only part of the model (an interrupted download) fails offline: with a token it is downloaded
+ * again once. When Hugging Face does not hand the model out, `steps` say what to do there.
+ */
+export async function loadDiarizerModel(python, script, info, steps, log = out) {
+  const load = (offline) =>
+    runProcess(python, [script, '--load'], { timeoutMs: 1800000, env: { HF_HUB_OFFLINE: offline ? '1' : '0' } })
+      .catch((e) => ({ code: -1, stdout: '', stderr: e.message }));
+  log(info.model_cached
+    ? `Loading ${DIARIZE_MODEL} from the cache on the GPU…`
+    : `Downloading and loading ${DIARIZE_MODEL} on the GPU (the first time takes a minute)…`);
+  let loaded = await load(info.model_cached);
+  if (info.model_cached && loaded.code === DIARIZER_MODEL_EXIT && info.token) {
+    log(`The cached copy of ${DIARIZE_MODEL} is incomplete; downloading it again…`);
+    loaded = await load(false);
+  }
+  if (loaded.code === DIARIZER_MODEL_EXIT) {
+    for (const line of steps) log(line);
+    throw new CliError(`Hugging Face does not hand out ${DIARIZE_MODEL} yet: ${lastLines(loaded.stderr)}`);
+  }
+  if (loaded.code !== 0) throw new CliError(`loading the speaker recognition model failed (exit ${loaded.code}): ${lastLines(loaded.stderr)}`);
+}
+
+/**
+ * tabula worker setup --diarize: a second Python environment with pyannote and the CUDA build of PyTorch, diarize.py,
+ * and the model (gated on Hugging Face). worker.diarize is saved only once the model runs on the GPU.
+ */
+async function setupDiarize(url) {
+  const folder = join(dataHome(), 'diarize');
+  const venv = join(folder, 'venv');
+  const python = venvPython(venv);
+  if (!existsSync(python)) {
+    const found = findPython(10);
+    out(`Creating the speaker recognition environment in ${venv} with Python ${found.version}…`);
+    mkdirSync(folder, { recursive: true });
+    runVisible(found.command, ['-m', 'venv', venv], 'creating the speaker recognition environment');
+  }
+  // No --upgrade: it could swap the CUDA build of PyTorch installed below for the CPU one again.
+  out(`Installing ${DIARIZE_PACKAGES.join(', ')} (about 2 GB the first time)…`);
+  runVisible([python], ['-m', 'pip', 'install', '--disable-pip-version-check', ...DIARIZE_PACKAGES], 'pip install (speaker recognition)');
+  const cudaBuild = spawnSync(python, ['-c', 'import sys, torch; sys.exit(0 if torch.version.cuda else 1)'], { windowsHide: true, env: childEnv(), timeout: 120000 });
+  if (cudaBuild.status !== 0) {
+    // Last, over what pip brought: pyannote's dependencies pull the CPU build from PyPI.
+    out(`Installing the CUDA build of PyTorch (${TORCH_CUDA_PACKAGES.join(', ')} from ${TORCH_CUDA_INDEX}, about 3 GB)…`);
+    runVisible(
+      [python],
+      ['-m', 'pip', 'install', '--disable-pip-version-check', '--force-reinstall', '--no-deps', '--index-url', TORCH_CUDA_INDEX, ...TORCH_CUDA_PACKAGES],
+      'installing PyTorch with CUDA',
+    );
+  }
+  const script = join(folder, 'diarize.py');
+  await fetchScript(url, 'diarize.py', script);
+
+  const { info, stderr } = await diarizerCheck([python], script);
+  if (!info) throw new CliError(`the speaker recognition environment does not work: ${lastLines(stderr)}; run tabula worker setup --diarize again`);
+  if (!info.cuda) {
+    throw new CliError(`PyTorch ${info.torch} sees no CUDA device${info.cuda_error ? ` (${shortError(info.cuda_error, 160)})` : ''}: install or update the NVIDIA driver (RTX 50xx cards need one with CUDA 12.8 or newer), then run tabula worker setup --diarize again`);
+  }
+  out(`PyTorch ${info.torch} uses ${info.gpu}; pyannote.audio ${info.pyannote}.`);
+  const steps = huggingFaceSteps(venvProgram(venv, 'hf'));
+  if (!info.model_cached && !info.token) {
+    for (const line of steps) out(line);
+    throw new CliError('speaker recognition is not set up yet: no Hugging Face token is saved (steps above)');
+  }
+  await loadDiarizerModel([python], script, info, steps);
+
+  const saved = readConfigFile();
+  const previous = saved.worker && typeof saved.worker === 'object' && !Array.isArray(saved.worker) ? saved.worker : {};
+  const file = writeConfigFile({ ...saved, worker: { ...previous, diarize: { python, script } } });
+  out(`Speaker recognition is on: saved "diarize" in the "worker" section of ${file}.`);
+}
+
+/** A 5 s test tone as the 16 kHz mono WAV the worker makes, for doctor's test runs. */
+async function sampleWav(ffmpeg, dir) {
+  const wav = join(dir, 'sample.wav');
+  const made = await runProcess(
+    ffmpeg,
+    ['-nostdin', '-v', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=5', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', '-y', wav],
+    { timeoutMs: 60000 },
+  );
+  if (made.code !== 0) throw new Error(`ffmpeg could not make the sample: ${shortError(made.stderr)}`);
+  return wav;
+}
+
+/** doctor's speaker recognition lines; one line when it is not set up. */
+async function doctorDiarize(cfg, ffmpeg, ffmpegWorks, line) {
+  if (cfg.diarize === null || cfg.diarize === undefined) {
+    line('skip', 'speaker recognition is off: tabula worker setup --diarize turns it on');
+    return;
+  }
+  let settings;
+  try {
+    settings = diarizeSettings(cfg.diarize);
+  } catch (e) {
+    line('FAIL', e.message, 'run tabula worker setup --diarize');
+    return;
+  }
+  if (!existsSync(settings.script)) {
+    line('FAIL', `diarize.py is missing at ${settings.script}`, 'run tabula worker setup --diarize');
+    return;
+  }
+  const { info, stderr } = await diarizerCheck(settings.python, settings.script);
+  if (!info) {
+    line('FAIL', `the speaker recognition environment does not work: ${lastLines(stderr)}`, 'run tabula worker setup --diarize again');
+    return;
+  }
+  line('ok', `speaker recognition: Python ${info.python}, pyannote.audio ${info.pyannote}, PyTorch ${info.torch}`);
+  let ready = true;
+  if (info.cuda) line('ok', `PyTorch uses the GPU: ${info.gpu}`);
+  else {
+    ready = false;
+    line('FAIL', `PyTorch sees no CUDA device${info.cuda_error ? `: ${shortError(info.cuda_error, 160)}` : ''}`, 'run tabula worker setup --diarize again (it installs the CUDA build of PyTorch); RTX 50xx cards need a driver with CUDA 12.8 or newer');
+  }
+  if (!info.model_cached) {
+    ready = false;
+    line('FAIL', `the model ${DIARIZE_MODEL} is not downloaded yet`, 'run tabula worker setup --diarize; it says what to do on Hugging Face');
+  } else if (!info.token) {
+    line('warn', `no Hugging Face token is saved; ${DIARIZE_MODEL} is in the cache, so jobs work`, 'a new download of the model needs one: tabula worker setup --diarize says how');
+  } else line('ok', `Hugging Face token saved, ${DIARIZE_MODEL} in the cache`);
+  if (!ready || !ffmpegWorks) {
+    line('skip', 'test speaker recognition (fix the problems above first)');
+    return;
+  }
+  const dir = mkdtempSync(join(tmpdir(), 'tabula-doctor-'));
+  try {
+    const wav = await sampleWav(ffmpeg, dir);
+    const started = Date.now();
+    await diarize(cfg, wav, new AbortController().signal);
+    line('ok', `test speaker recognition: ${((Date.now() - started) / 1000).toFixed(1)} s`);
+  } catch (e) {
+    line('FAIL', `test speaker recognition: ${shortError(e.message)}`, e.environment ? 'run tabula worker setup --diarize again' : undefined);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 /** tabula worker doctor: every link of the chain, with what to do about a broken one. Exit 1 when something fails. */
@@ -1759,13 +2136,7 @@ async function workerDoctor() {
   if (gpuReady && ff?.code === 0) {
     const dir = mkdtempSync(join(tmpdir(), 'tabula-doctor-'));
     try {
-      const wav = join(dir, 'sample.wav');
-      const made = await runProcess(
-        ffmpeg,
-        ['-nostdin', '-v', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=5', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', '-y', wav],
-        { timeoutMs: 60000 },
-      );
-      if (made.code !== 0) throw new Error(`ffmpeg could not make the sample: ${shortError(made.stderr)}`);
+      const wav = await sampleWav(ffmpeg, dir);
       out(`      transcribing a 5 s sample with ${cfg.model} (the first run downloads the model, about 3 GB)…`);
       const started = Date.now();
       await transcribe(cfg, wav, new AbortController().signal);
@@ -1777,6 +2148,7 @@ async function workerDoctor() {
     }
   } else line('skip', 'test transcription (fix the problems above first)');
 
+  await doctorDiarize(cfg, ffmpeg, ff?.code === 0, line);
   out(problems ? `${problems} problem(s) found.` : 'Everything works: start the worker with tabula worker (or tabula worker --once).');
   return problems ? 1 : 0;
 }
@@ -1827,7 +2199,7 @@ async function workerQueue(flags) {
 }
 
 /** Options of each worker subcommand ("run" is plain tabula worker). */
-const WORKER_FLAGS = { run: ['--once', '--log', '--events'], setup: ['--token-stdin'], doctor: [], queue: ['--json'] };
+const WORKER_FLAGS = { run: ['--once', '--log', '--events'], setup: ['--token-stdin', '--diarize'], doctor: [], queue: ['--json'] };
 
 async function workerCommand(args, flags) {
   const sub = args.length ? args[0] : 'run';
@@ -1868,9 +2240,11 @@ Usage:
   tabula worker [--once] [--log]       transcribe bug-report recordings until Ctrl+C (--once: what is queued, then exit;
                                        --log: write to worker.log in the data folder instead of the console)
   tabula worker [--once] --events      the same for the tray app: JSON events on stdout, "stop" on stdin, log in worker.log
-  tabula worker setup [<url>] [--token-stdin]
-                                       create the Python environment for transcription and save the worker token
-  tabula worker doctor                 check ffmpeg, Python, CUDA and the GPU, then transcribe a 5 s sample
+  tabula worker setup [<url>] [--token-stdin] [--diarize]
+                                       create the Python environment for transcription and save the worker token;
+                                       --diarize also sets up speaker recognition (pyannote, a second environment)
+  tabula worker doctor                 check ffmpeg, Python, CUDA and the GPU, then transcribe a 5 s sample (and
+                                       recognize its speakers when speaker recognition is set up)
   tabula worker queue [--json]         how many recordings wait on the server (does not count as the worker being seen)
 
 .tabula.json in the repository root: { "project"?: slug, "sync": [globs], "state"?: [globs] }
@@ -1889,7 +2263,7 @@ function fail(e) {
 /** Options each command accepts (pull --hook is handled before this check). */
 const FLAGS = {
   help: [], version: [], login: ['--token-stdin'], status: [], push: ['--force'], pull: ['--force'], rm: [], install: [], update: [],
-  worker: ['--once', '--log', '--events', '--token-stdin', '--json'],
+  worker: ['--once', '--log', '--events', '--token-stdin', '--json', '--diarize'],
 };
 
 export async function main(argv) {

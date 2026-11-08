@@ -19,6 +19,10 @@ describe('CLI download', () => {
       expect(script.statusCode).toBe(200);
       expect(script.headers['content-type']).toMatch(/^text\/x-python/);
       expect(script.body).toBe(readFileSync(new URL('../../cli/transcribe.py', import.meta.url), 'utf8'));
+      const diarizer = await app.inject({ method: 'GET', url: '/cli/diarize.py' });
+      expect(diarizer.statusCode).toBe(200);
+      expect(diarizer.headers['content-type']).toMatch(/^text\/x-python/);
+      expect(diarizer.body).toBe(readFileSync(new URL('../../cli/diarize.py', import.meta.url), 'utf8'));
       const cli = (await import(CLI_URL.href)) as { VERSION: string };
       expect((await app.inject({ method: 'GET', url: '/cli/version' })).json()).toEqual({ version: cli.VERSION });
     } finally {

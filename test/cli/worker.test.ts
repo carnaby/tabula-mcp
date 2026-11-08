@@ -17,6 +17,10 @@ type Job = { id: string; lease: string };
 type CliWorker = {
   WORKER_DEFAULTS: Record<string, unknown>;
   WHISPER_PACKAGES: string[];
+  DIARIZE_PACKAGES: string[];
+  TORCH_CUDA_PACKAGES: string[];
+  TORCH_CUDA_INDEX: string;
+  loadDiarizerModel(python: string[], script: string, info: { token: boolean; model_cached: boolean }, steps: string[], log: (line: string) => void): Promise<void>;
   runJob(cfg: Record<string, unknown>, job: Job, opts: { log: (line: string) => void; stop: AbortSignal }): Promise<string>;
 };
 // A non-literal specifier keeps TypeScript from looking for type declarations of the plain .mjs file.
@@ -29,20 +33,24 @@ const server = useServer(
 );
 const FAKE_FFMPEG = fileURLToPath(new URL('./fixtures/fake-ffmpeg.mjs', import.meta.url));
 const FAKE_TRANSCRIBE = fileURLToPath(new URL('./fixtures/fake-transcribe.mjs', import.meta.url));
+const FAKE_DIARIZE = fileURLToPath(new URL('./fixtures/fake-diarize.mjs', import.meta.url));
 beforeEach(() => seedProject(db, 'demo'));
 
 /** Inside the worker's home: holds the transcriber script and the temporary folder (recording and WAV). */
 const oddFolder = (home: string) => join(home, 'dir with space é');
 
 /**
- * A config.json for the worker in a folder with a space in its name; node runs the fake ffmpeg and transcriber. The
- * transcriber script and the temporary folder sit in a folder whose name has a space and a diacritic.
+ * A config.json for the worker in a folder with a space in its name; node runs the fake ffmpeg, transcriber and
+ * diarizer. The scripts and the temporary folder sit in a folder whose name has a space and a diacritic.
+ * `diarize`: speaker recognition is set up.
  */
-function workerHome(worker: Record<string, unknown> = {}): string {
+function workerHome(worker: Record<string, unknown> = {}, { diarize = false } = {}): string {
   const home = tempDir('tabula home ');
   mkdirSync(join(oddFolder(home), 'tmp'), { recursive: true });
   const script = join(oddFolder(home), 'transcribe.mjs');
   copyFileSync(FAKE_TRANSCRIBE, script);
+  const diarizer = join(oddFolder(home), 'diarize.mjs');
+  copyFileSync(FAKE_DIARIZE, diarizer);
   writeFileSync(
     join(home, 'config.json'),
     JSON.stringify({
@@ -50,7 +58,7 @@ function workerHome(worker: Record<string, unknown> = {}): string {
       token: TEST_TOKEN,
       worker: {
         token: TEST_WORKER_TOKEN, python: process.execPath, script, ffmpeg: [process.execPath, FAKE_FFMPEG],
-        initial_prompt: 'Tabula, prehrávač', ...worker,
+        initial_prompt: 'Tabula, prehrávač', ...(diarize ? { diarize: { python: process.execPath, script: diarizer } } : {}), ...worker,
       },
     }),
   );
@@ -63,7 +71,7 @@ const runWorker = (home: string, args: string[] = ['--once'], env: Record<string
     cwd: home,
     env: {
       TABULA_HOME: home, TABULA_DATA_DIR: join(home, 'data'), TABULA_URL: undefined, TABULA_TOKEN: undefined,
-      TABULA_WORKER_TOKEN: undefined, FAKE_TRANSCRIBE_LOG: join(home, 'transcriber.log'), TEMP: tmp, TMP: tmp, TMPDIR: tmp, ...env,
+      TABULA_WORKER_TOKEN: undefined, FAKE_TRANSCRIBE_LOG: join(home, 'transcriber.log'), FAKE_DIARIZE_LOG: join(home, 'diarizer.log'), TEMP: tmp, TMP: tmp, TMPDIR: tmp, ...env,
     },
   });
 };
@@ -107,9 +115,12 @@ describe('tabula worker', () => {
       status: 'done', language: 'sk', model: 'large-v3',
       segments: [{ start_ms: 0, end_ms: 1500, text: 'Ahoj, toto je test.' }, { start_ms: 161000, end_ms: 163000, text: 'Tu sa tlačidlo zasekne.' }],
     });
+    expect(t).toMatchObject({ diarization: null, speakers: {} });
+    expect(t.segments[0]).not.toHaveProperty('words');
+    expect(existsSync(join(home, 'diarizer.log'))).toBe(false); // no speaker recognition without worker.diarize
     const options = JSON.parse(readFileSync(join(home, 'transcriber.log'), 'utf8').trim());
     expect(options).toMatchObject({
-      model: 'large-v3', language: 'sk', device: 'cuda', compute_type: 'float16', initial_prompt: 'Tabula, prehrávač', beam_size: 5, wavExists: true,
+      model: 'large-v3', language: 'sk', device: 'cuda', compute_type: 'float16', initial_prompt: 'Tabula, prehrávač demo', beam_size: 5, wavExists: true,
     });
     // The WAV path (space and diacritic) reached the transcriber intact.
     expect(options.wav.startsWith(join(oddFolder(home), 'tmp'))).toBe(true);
@@ -122,7 +133,7 @@ describe('tabula worker', () => {
     const r = await runWorker(home, ['--once', '--log']);
     expect(r.code).toBe(0);
     expect(r.stdout).toBe('');
-    expect(readFileSync(join(home, 'data', 'worker.log'), 'utf8')).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d tabula worker 1\.3\.0/);
+    expect(readFileSync(join(home, 'data', 'worker.log'), 'utf8')).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d tabula worker 1\.4\.0/);
     expect(JSON.parse(readFileSync(join(home, 'transcriber.log'), 'utf8').trim()).language).toBeNull();
   });
 
@@ -288,6 +299,61 @@ describe('tabula worker', () => {
     expect((await runCli(['worker', 'frobnicate'], { cwd: home, env: { TABULA_HOME: home } })).stderr).toMatch(/unknown worker command "frobnicate"/);
     expect((await runCli(['worker', '--force'], { cwd: home, env: { TABULA_HOME: home } })).stderr).toMatch(/does not take --force/);
     expect((await runCli(['worker', 'setup', '--events'], { cwd: home, env: { TABULA_HOME: home } })).stderr).toMatch(/tabula worker setup does not take --events/);
+  });
+
+  it('tells Whisper the project, also without an initial_prompt setting', async () => {
+    await recording();
+    const home = workerHome({ initial_prompt: '' });
+    expect((await runWorker(home)).code).toBe(0);
+    expect(JSON.parse(readFileSync(join(home, 'transcriber.log'), 'utf8').trim()).initial_prompt).toBe('demo');
+  });
+
+  it('recognizes the speakers after the transcription and splits a line where they change', async () => {
+    const { report } = await recording();
+    const home = workerHome({}, { diarize: true });
+    const r = await runWorker(home);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toMatch(/2 speaker\(s\) recognized in [\d.]+ s/);
+    expect(r.stdout).toMatch(/done in [\d.]+ s, 3 segments/);
+    for (const secret of ['Ahoj', 'tlačidlo']) expect(r.stdout + r.stderr).not.toContain(secret);
+    const t = (await reportOf(report.id)).attachments[0].transcript;
+    expect(t.diarization).toEqual({ model: 'pyannote/speaker-diarization-community-1', speakers: 2 });
+    expect(t.segments).toEqual([
+      { start_ms: 0, end_ms: 700, text: 'Ahoj, toto', speaker: 'S1' },
+      { start_ms: 700, end_ms: 1500, text: 'je test.', speaker: 'S2' },
+      { start_ms: 161000, end_ms: 163000, text: 'Tu sa tlačidlo zasekne.', speaker: 'S1' },
+    ]);
+    const options = JSON.parse(readFileSync(join(home, 'diarizer.log'), 'utf8').trim());
+    expect(options).toMatchObject({ wavExists: true });
+    expect(options.wav.startsWith(join(oddFolder(home), 'tmp'))).toBe(true);
+  });
+
+  it.each([
+    ['fails', { FAKE_DIARIZE: 'fail' }, /speaker recognition failed \(exit 1\): .*RuntimeError: diarization broke/],
+    ['finds no CUDA', { FAKE_DIARIZE: 'env' }, /CUDA is not available to PyTorch/],
+    ['prints no JSON', { FAKE_DIARIZE: 'garbage' }, /the diarizer did not print JSON/],
+    ['takes too long', { FAKE_DIARIZE: 'slow', TABULA_WORKER_DIARIZE_TIMEOUT_MS: '1000' }, /did not finish within 1 s/],
+  ])('hands the transcript in without speakers when speaker recognition %s, and goes on', async (_what, env, why) => {
+    const first = await recording();
+    const second = await recording();
+    const r = await runWorker(workerHome({}, { diarize: true }), ['--once'], env);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toMatch(/speakers not recognized: .*; the transcript goes without them/);
+    expect(r.stdout).toMatch(/worker stopped: 2 transcribed, 0 failed/);
+    for (const { report } of [first, second]) {
+      const t = (await reportOf(report.id)).attachments[0].transcript;
+      expect(t.status).toBe('done');
+      expect(t.diarization.error).toMatch(why);
+      expect(t.segments.map((s: { speaker?: string }) => s.speaker)).toEqual([undefined, undefined]);
+    }
+  });
+
+  it('refuses a malformed speaker recognition setting before it takes a job', async () => {
+    const { audio } = await recording();
+    const r = await runWorker(workerHome({ diarize: 'yes' }));
+    expect(r.code).toBe(1);
+    expect(r.stderr).toMatch(/worker\.diarize in .* must be/);
+    expect(await jobOf(audio.id)).toMatchObject({ status: 'queued', attempts: 0 });
   });
 });
 
@@ -476,6 +542,101 @@ describe('tabula worker doctor and setup', () => {
     expect(cli.WHISPER_PACKAGES).toEqual(['faster-whisper>=1.2.1,<2', 'ctranslate2>=4.8.4,<5', 'nvidia-cublas-cu12>=12.9,<13', 'nvidia-cudnn-cu12>=9,<10']);
   });
 
+  it('doctor checks speaker recognition and runs a test', async () => {
+    const r = await run(workerHome({}, { diarize: true }), ['doctor']);
+    expect(r.stdout).toMatch(/^ok\s+speaker recognition: Python 3\.14\.0, pyannote\.audio 4\.0\.7, PyTorch 2\.11\.0\+cu128/m);
+    expect(r.stdout).toMatch(/^ok\s+PyTorch uses the GPU: Fake GPU/m);
+    expect(r.stdout).toMatch(/^ok\s+Hugging Face token saved, pyannote\/speaker-diarization-community-1 in the cache/m);
+    expect(r.stdout).toMatch(/^ok\s+test speaker recognition: [\d.]+ s/m);
+    expect(r.code).toBe(0);
+  });
+
+  it('doctor names a CPU-only PyTorch and a model that is not downloaded', async () => {
+    const r = await run(workerHome({}, { diarize: true }), ['doctor'], { FAKE_DIARIZE_CUDA: '0', FAKE_DIARIZE_CACHED: '0' });
+    expect(r.code).toBe(1);
+    expect(r.stdout).toMatch(/^FAIL\s+PyTorch sees no CUDA device\n\s+run tabula worker setup --diarize again/m);
+    expect(r.stdout).toMatch(/^FAIL\s+the model pyannote\/speaker-diarization-community-1 is not downloaded yet\n\s+run tabula worker setup --diarize/m);
+    expect(r.stdout).toMatch(/^skip\s+test speaker recognition/m);
+  });
+
+  it('doctor only warns about a missing token while the model is in the cache', async () => {
+    const r = await run(workerHome({}, { diarize: true }), ['doctor'], { FAKE_DIARIZE_TOKEN: '0' });
+    expect(r.stdout).toMatch(/^warn\s+no Hugging Face token is saved/m);
+    expect(r.stdout).toMatch(/^ok\s+test speaker recognition/m);
+    expect(r.code).toBe(0);
+  });
+
+  it('doctor says in one line how to turn speaker recognition on, and fails a broken setting', async () => {
+    const off = await run(workerHome(), ['doctor']);
+    expect(off.stdout).toMatch(/^skip\s+speaker recognition is off: tabula worker setup --diarize turns it on$/m);
+    expect(off.code).toBe(0);
+    const broken = await run(workerHome({ diarize: { python: process.execPath, script: join(tempDir('tabula-none-'), 'diarize.py') } }), ['doctor']);
+    expect(broken.stdout).toMatch(/^FAIL\s+diarize\.py is missing at /m);
+    expect(broken.code).toBe(1);
+  });
+
+  it('setup --diarize checks the worker token before it installs anything, and only setup takes --diarize', async () => {
+    const home = tempDir('tabula home ');
+    const r = await run(home, ['setup', server.url, '--token-stdin', '--diarize'], {}, TEST_TOKEN);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toMatch(/rejected the worker token/);
+    expect(existsSync(join(home, 'data', 'diarize'))).toBe(false);
+    expect((await run(workerHome(), ['--diarize'])).stderr).toMatch(/tabula worker does not take --diarize/);
+  });
+
+  describe('setup --diarize loading the model', () => {
+    const saved = { ...process.env };
+    /** The fake diarizer's --load runs (offline or not), what was printed, and the error, if any. */
+    async function load(info: { token: boolean; model_cached: boolean }, env: Record<string, string>) {
+      const logFile = join(tempDir('tabula-load-'), 'diarizer.log');
+      Object.assign(process.env, { FAKE_DIARIZE_LOG: logFile, ...env });
+      const lines: string[] = [];
+      try {
+        const error = await cli.loadDiarizerModel([process.execPath], FAKE_DIARIZE, info, ['STEP 1'], (l) => lines.push(l)).then(() => null, (e: Error) => e);
+        const runs = readFileSync(logFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l).offline as boolean);
+        return { runs, lines, error };
+      } finally {
+        for (const k of ['FAKE_DIARIZE_LOG', 'FAKE_DIARIZE_COMPLETE', 'FAKE_DIARIZE_TOKEN', 'HF_HUB_OFFLINE']) {
+          if (saved[k] === undefined) delete process.env[k];
+          else process.env[k] = saved[k];
+        }
+      }
+    }
+
+    it('loads a cached model offline', async () => {
+      const r = await load({ token: false, model_cached: true }, {});
+      expect(r.error).toBeNull();
+      expect(r.runs).toEqual([true]);
+    });
+
+    it('downloads again once when the cached copy is incomplete and a token is saved', async () => {
+      const r = await load({ token: true, model_cached: true }, { FAKE_DIARIZE_COMPLETE: '0' });
+      expect(r.error).toBeNull();
+      expect(r.runs).toEqual([true, false]);
+      expect(r.lines.join('\n')).toMatch(/incomplete.*downloading it again/);
+      expect(r.lines).not.toContain('STEP 1');
+    });
+
+    it('shows the Hugging Face steps for an incomplete cache without a token', async () => {
+      const r = await load({ token: false, model_cached: true }, { FAKE_DIARIZE_COMPLETE: '0' });
+      expect(r.error?.message).toMatch(/Hugging Face does not hand out pyannote\/speaker-diarization-community-1 yet/);
+      expect(r.runs).toEqual([true]);
+      expect(r.lines).toContain('STEP 1');
+    });
+
+    it('downloads online even when the environment says offline', async () => {
+      const r = await load({ token: true, model_cached: false }, { HF_HUB_OFFLINE: '1' });
+      expect(r.error).toBeNull();
+      expect(r.runs).toEqual([false]);
+    });
+  });
+
+  it('pins the versions of the speaker recognition packages', () => {
+    expect(cli.DIARIZE_PACKAGES).toEqual(['pyannote.audio>=4.0.7,<5', 'torch==2.11.0', 'torchaudio==2.11.0', 'torchcodec==0.17.0']);
+    expect(cli.TORCH_CUDA_PACKAGES).toEqual(['torch==2.11.0', 'torchaudio==2.11.0']);
+    expect(cli.TORCH_CUDA_INDEX).toBe('https://download.pytorch.org/whl/cu128');
+  });
+
   it('refuses --token-stdin on a plain worker run', async () => {
     const r = await run(workerHome(), ['--token-stdin']);
     expect(r.code).toBe(1);
@@ -559,7 +720,7 @@ function startEvents(home: string, args: string[], env: Record<string, string> =
   const tmp = join(oddFolder(home), 'tmp');
   const childEnv: Record<string, string | undefined> = {
     ...process.env, TABULA_HOME: home, TABULA_DATA_DIR: join(home, 'data'), TABULA_URL: undefined, TABULA_TOKEN: undefined,
-    TABULA_WORKER_TOKEN: undefined, FAKE_TRANSCRIBE_LOG: join(home, 'transcriber.log'), TEMP: tmp, TMP: tmp, TMPDIR: tmp, ...env,
+    TABULA_WORKER_TOKEN: undefined, FAKE_TRANSCRIBE_LOG: join(home, 'transcriber.log'), FAKE_DIARIZE_LOG: join(home, 'diarizer.log'), TEMP: tmp, TMP: tmp, TMPDIR: tmp, ...env,
   };
   for (const [k, v] of Object.entries(childEnv)) if (v === undefined) delete childEnv[k];
   const child = spawn(process.execPath, [CLI, 'worker', ...args], { cwd: home, env: childEnv, windowsHide: true });
@@ -636,7 +797,7 @@ describe('tabula worker --events', () => {
     for (const e of events) expect(e.time).toMatch(ISO);
     expect(run.types()).toEqual(['started', 'idle', 'job', 'phase', 'phase', 'phase', 'progress', 'phase', 'done', 'idle', 'stopped']);
     const of = (type: string) => events.filter((e) => e.type === type);
-    expect(of('started')[0]).toMatchObject({ version: '1.3.0', once: true, server: server.url });
+    expect(of('started')[0]).toMatchObject({ version: '1.4.0', once: true, server: server.url });
     expect(of('job')[0]).toMatchObject({
       attempt: 1,
       attachment: { kind: 'audio', size: 32044, file_name: 'voice.wav' },
@@ -751,5 +912,29 @@ describe('tabula worker --events', () => {
     expect(r.code).toBe(0);
     expect(await jobOf(audio.id)).toMatchObject({ status: 'done', attempts: 1 });
     expect(readFileSync(join(home, 'data', 'worker.log'), 'utf8')).toMatch(/worker stopped: 1 transcribed, 0 failed/);
+  });
+
+  it('reports the diarize phase and its progress', async () => {
+    await recording();
+    const run = startEvents(workerHome({}, { diarize: true }), ['--once', '--events']);
+    expect((await run.done).code).toBe(0);
+    expect(run.types()).toEqual(['started', 'idle', 'job', 'phase', 'phase', 'phase', 'progress', 'phase', 'progress', 'phase', 'done', 'idle', 'stopped']);
+    const events = run.events();
+    expect(events.filter((e) => e.type === 'phase').map((e) => e.phase)).toEqual(['download', 'extract', 'transcribe', 'diarize', 'upload']);
+    // The fake diarizer reports 500 and 900 ms within one second: only the first becomes an event.
+    expect(events.filter((e) => e.type === 'progress').map((e) => [e.done_ms, e.total_ms])).toEqual([[400, 1000], [500, 1000]]);
+    expect(events.find((e) => e.type === 'done')).toMatchObject({ segments: 3 });
+  });
+
+  it('gives the job back when stopped while recognizing speakers', async () => {
+    const { audio } = await recording();
+    const run = startEvents(workerHome({}, { diarize: true }), ['--events'], { FAKE_DIARIZE: 'slow' });
+    await run.waitFor((e) => e.type === 'phase' && e.phase === 'diarize');
+    run.send('stop');
+    expect((await run.done).code).toBe(0);
+    expect(run.types()).toContain('released');
+    expect(run.types()).not.toContain('done');
+    expect(await jobOf(audio.id)).toMatchObject({ status: 'queued', attempts: 0 });
+    expect((await reportOf(audio.reportId)).attachments[0].transcript.status).toBe('queued');
   });
 });

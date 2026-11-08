@@ -5,7 +5,8 @@ Options arrive as JSON (UTF-8) on stdin:
   {"wav": "<path>", "model": "large-v3", "language": "sk" or null, "device": "cuda",
    "compute_type": "float16", "initial_prompt": "<text>" or null, "beam_size": 5}
 The result goes to stdout as JSON (ASCII-escaped):
-  {"language": "sk", "duration_ms": 4200, "segments": [{"start_ms": 0, "end_ms": 1500, "text": "..."}]}
+  {"language": "sk", "duration_ms": 4200, "segments": [{"start_ms": 0, "end_ms": 1500, "text": "...",
+   "words": [{"start_ms": 0, "end_ms": 400, "text": "..."}]}]}
 While it works, stderr gets "PROGRESS <end_ms>" after a segment, at most once a second; the worker shows the
 progress and keeps these lines out of its error messages.
 `transcribe.py --check` prints the Python, faster-whisper and CTranslate2 versions and the CUDA devices instead.
@@ -99,11 +100,16 @@ def load_wav(path):
 
 
 def collect(pieces, clock=time.monotonic):
-    """The segments as the worker expects them, with a PROGRESS line on stderr at most once a second."""
+    """The segments and their words' times as the worker expects them, with a PROGRESS line on stderr at most once a second."""
     segments = []
     last = None
     for s in pieces:
-        segments.append({"start_ms": round(s.start * 1000), "end_ms": round(s.end * 1000), "text": s.text.strip()})
+        words = [
+            {"start_ms": round(w.start * 1000), "end_ms": round(w.end * 1000), "text": w.word.strip()}
+            for w in (s.words or [])
+            if w.word.strip()
+        ]
+        segments.append({"start_ms": round(s.start * 1000), "end_ms": round(s.end * 1000), "text": s.text.strip(), "words": words})
         now = clock()
         if last is None or now - last >= PROGRESS_EVERY_S:
             last = now
@@ -127,6 +133,7 @@ def transcribe(opts):
             language=opts.get("language") or None,
             beam_size=int(opts.get("beam_size") or 5),
             vad_filter=True,
+            word_timestamps=True,
             initial_prompt=opts.get("initial_prompt") or None,
         )
         # Segments are produced lazily: the work happens while iterating.

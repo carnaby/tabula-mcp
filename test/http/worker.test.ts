@@ -4,11 +4,11 @@ import { join } from 'node:path';
 import { eq, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { reportJobs, workers } from '../../src/db/schema.js';
+import { reportAttachments, reportJobs, reports, workers } from '../../src/db/schema.js';
 import { buildApp } from '../../src/http/app.js';
 import { MediaStore } from '../../src/media/store.js';
 import { seedProject, TEST_TOKEN, TEST_WORKER_TOKEN, testConfig, useTestDb } from '../helpers.js';
-import { silentWav } from '../media-fixtures.js';
+import { PNG, silentWav } from '../media-fixtures.js';
 
 const db = useTestDb();
 const mediaDir = mkdtempSync(join(tmpdir(), 'tabula-worker-media-'));
@@ -24,7 +24,7 @@ const main = { authorization: `Bearer ${TEST_TOKEN}` };
 const worker = { authorization: `Bearer ${TEST_WORKER_TOKEN}`, 'x-tabula-worker': 'Studio-PC', 'x-tabula-version': '1.2.0' };
 const asWorker = (method: 'GET' | 'POST', url: string, payload?: object) =>
   app.inject({ method, url: `/api/worker${url}`, headers: worker, ...(payload && { payload }) });
-const asUser = (method: 'GET' | 'POST', url: string, payload?: object) =>
+const asUser = (method: 'GET' | 'POST' | 'PUT', url: string, payload?: object) =>
   app.inject({ method, url: `/api${url}`, headers: main, ...(payload && { payload }) });
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -308,5 +308,116 @@ describe('worker API', () => {
     const s = (await asUser('GET', '/transcription/status')).json();
     expect(s.workers[0]).toMatchObject({ name: 'studio-pc', version: '1.2.0' });
     expect(Date.now() - Date.parse(s.lastSeenAt)).toBeLessThan(10_000);
+  });
+});
+
+describe('speakers and transcribing again', () => {
+  const PYANNOTE = { model: 'pyannote/speaker-diarization-community-1', speakers: 2 };
+  const SPOKEN = [
+    { start_ms: 0, end_ms: 900, text: 'Kde je tlačidlo?', speaker: 'S1' },
+    { start_ms: 1000, end_ms: 1900, text: 'Vpravo hore.', speaker: 'S2' },
+  ];
+  const complete = (job: { id: string; lease: string }, body: object) =>
+    asWorker('POST', `/jobs/${job.id}/complete`, { lease: job.lease, language: 'sk', model: 'large-v3', duration_ms: 2000, ...body });
+  const transcriptOf = async (reportId: string) => (await asUser('GET', `/reports/${reportId}`)).json().attachments[0].transcript;
+
+  async function spoken() {
+    const { report, audio } = await recordedReport();
+    expect((await complete(await claim(), { segments: SPOKEN, diarization: PYANNOTE })).statusCode).toBe(200);
+    return { report, audio };
+  }
+
+  it('takes speakers and the diarization from the worker, and works without them as before', async () => {
+    const { report } = await spoken();
+    expect(await transcriptOf(report.id)).toMatchObject({ status: 'done', segments: SPOKEN, diarization: PYANNOTE, speakers: {}, again: null });
+
+    const plain = await recordedReport();
+    await complete(await claim(), { segments: [{ start_ms: 0, end_ms: 900, text: 'Ahoj.' }] });
+    expect(await transcriptOf(plain.report.id)).toMatchObject({ status: 'done', segments: [{ text: 'Ahoj.' }], diarization: null, speakers: {} });
+
+    const failed = await recordedReport();
+    await complete(await claim(), { segments: [{ start_ms: 0, end_ms: 900, text: 'Ahoj.' }], diarization: { error: 'CUDA is not available' } });
+    expect(await transcriptOf(failed.report.id)).toMatchObject({ diarization: { error: 'CUDA is not available' } });
+  });
+
+  it('takes a null speaker as no label', async () => {
+    const { report } = await recordedReport();
+    const res = await complete(await claim(), { segments: [{ start_ms: 0, end_ms: 900, text: 'Ahoj.', speaker: null }] });
+    expect(res.statusCode).toBe(200);
+    const t = await transcriptOf(report.id);
+    expect(t).toMatchObject({ status: 'done', segments: [{ text: 'Ahoj.' }] });
+    expect(t.segments[0]).not.toHaveProperty('speaker');
+  });
+
+  it('refuses a malformed speaker or diarization', async () => {
+    await recordedReport();
+    const job = await claim();
+    const bad = [
+      { segments: [{ start_ms: 0, end_ms: 900, text: 'x', speaker: 'Eva' }] },
+      { segments: [{ start_ms: 0, end_ms: 900, text: 'x', speaker: 1 }] },
+      { segments: [], diarization: { error: 'x'.repeat(2001) } },
+      { segments: [], diarization: { model: 'm', speakers: 100 } },
+      { segments: [], diarization: { model: 'm', speakers: 2, error: 'both' } },
+    ];
+    for (const body of bad) expect((await complete(job, body)).statusCode, JSON.stringify(body).slice(0, 80)).toBe(400);
+    expect((await complete(job, { segments: [], diarization: null })).statusCode).toBe(200);
+  });
+
+  it('sets and clears names, and refuses an unknown speaker or a recording without a transcript', async () => {
+    const { report, audio } = await spoken();
+    const set = await asUser('PUT', `/attachments/${audio.id}/speakers`, { S1: '  Eva ', S2: 'Tomáš' });
+    expect(set.statusCode).toBe(200);
+    expect(set.json()).toMatchObject({ status: 'done', speakers: { S1: { name: 'Eva', by: 'user' }, S2: { name: 'Tomáš', by: 'user' } } });
+    expect((await asUser('PUT', `/attachments/${audio.id}/speakers`, { S2: '' })).json().speakers).not.toHaveProperty('S2');
+    expect((await asUser('PUT', `/attachments/${audio.id}/speakers`, { S3: 'Peter' })).statusCode).toBe(400);
+    expect((await asUser('PUT', `/attachments/${audio.id}/speakers`, { S1: 'x'.repeat(61) })).statusCode).toBe(400);
+    expect((await asUser('PUT', `/attachments/${audio.id}/speakers`, { S1: 1 })).statusCode).toBe(400);
+    const waiting = await recordedReport();
+    expect((await asUser('PUT', `/attachments/${waiting.audio.id}/speakers`, { S1: 'Eva' })).statusCode).toBe(404);
+    expect((await asUser('PUT', '/attachments/00000000-0000-4000-8000-000000000000/speakers', { S1: 'Eva' })).statusCode).toBe(404);
+    expect((await asUser('GET', `/reports/${report.id}/speaker-names`)).json()).toEqual({ names: ['Eva'] });
+    expect((await asUser('GET', '/reports/00000000-0000-4000-8000-000000000000/speaker-names')).statusCode).toBe(404);
+  });
+
+  it('transcribes a recording again and clears the names when the new transcript comes in', async () => {
+    const queued = await recordedReport();
+    expect((await asUser('POST', `/attachments/${queued.audio.id}/transcribe`)).statusCode).toBe(409); // still waiting
+    await complete(await claim(), { segments: [] });
+
+    const { report, audio } = await spoken();
+    await asUser('PUT', `/attachments/${audio.id}/speakers`, { S1: 'Eva' });
+    const again = await asUser('POST', `/attachments/${audio.id}/transcribe`);
+    expect(again.statusCode).toBe(200);
+    expect(again.json()).toMatchObject({ status: 'done', speakers: { S1: { name: 'Eva' } }, again: { status: 'queued' } });
+    expect((await asUser('POST', `/attachments/${audio.id}/transcribe`)).statusCode).toBe(409); // queued
+    const job = await claim();
+    expect((await asUser('POST', `/attachments/${audio.id}/transcribe`)).statusCode).toBe(409); // running
+    await complete(job, { segments: SPOKEN, diarization: PYANNOTE });
+    expect(await transcriptOf(report.id)).toMatchObject({ status: 'done', speakers: {}, again: null });
+  });
+
+  it('a transcript without speakers replaces one with them, names and diarization included (an older worker)', async () => {
+    const { report, audio } = await spoken();
+    await asUser('PUT', `/attachments/${audio.id}/speakers`, { S1: 'Eva' });
+    await asUser('POST', `/attachments/${audio.id}/transcribe`);
+    await complete(await claim(), { segments: [{ start_ms: 0, end_ms: 1900, text: 'Kde je tlačidlo? Vpravo hore.' }] });
+    const t = await transcriptOf(report.id);
+    expect(t).toMatchObject({ diarization: null, speakers: {}, segments: [{ text: 'Kde je tlačidlo? Vpravo hore.' }] });
+    expect(t.segments[0]).not.toHaveProperty('speaker');
+  });
+
+  it('does not transcribe again for a closed report, a deleted recording or a photo', async () => {
+    const { report, audio } = await spoken();
+    await db.update(reports).set({ status: 'done', closedAt: new Date() }).where(eq(reports.id, report.id));
+    const closed = await asUser('POST', `/attachments/${audio.id}/transcribe`);
+    expect(closed.statusCode).toBe(409);
+    expect(closed.json().message).toMatch(/the report is closed/);
+    await db.update(reports).set({ status: 'new', closedAt: null }).where(eq(reports.id, report.id));
+    await db.update(reportAttachments).set({ purgedAt: new Date() }).where(eq(reportAttachments.id, audio.id));
+    expect((await asUser('POST', `/attachments/${audio.id}/transcribe`)).statusCode).toBe(409);
+    const photo = await app.inject({
+      method: 'POST', url: `/api/reports/${report.id}/attachments`, payload: PNG, headers: { ...main, 'content-type': 'image/png', 'x-file-name': 'p.png' },
+    });
+    expect((await asUser('POST', `/attachments/${photo.json().id}/transcribe`)).statusCode).toBe(400);
   });
 });

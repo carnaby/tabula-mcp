@@ -59,3 +59,29 @@ describe('upgrade to diacritics-free search (migrations 0011, 0012)', () => {
     }
   });
 });
+
+describe('upgrade to speaker recognition (migration 0013)', () => {
+  it('leaves transcripts that existed before without diarization and without names', async () => {
+    const name = 'tabula_upgrade_speakers';
+    await admin.unsafe(`DROP DATABASE IF EXISTS ${name}`);
+    await admin.unsafe(`CREATE DATABASE ${name}`);
+    const url = new URL(upgradeUrl);
+    url.pathname = `/${name}`;
+    const c = postgres(url.href, { max: 1, onnotice: () => {} });
+    try {
+      for (const m of migrations.filter((x) => x.file < '0013')) for (const s of m.statements) await c.unsafe(s);
+      await c`INSERT INTO projects (id, name) VALUES ('demo', 'demo')`;
+      const [r] = await c`INSERT INTO reports (project_id, title, source, edited_by) VALUES ('demo', 'Old report', 'human', 'human') RETURNING id`;
+      const [a] = await c`
+        INSERT INTO report_attachments (report_id, kind, mime, size, sha256, file_name, storage_key, created_by)
+        VALUES (${r!.id}, 'audio', 'audio/wav', 10, 'x', 'voice.wav', 'k', 'human') RETURNING id`;
+      await c`INSERT INTO report_transcripts (attachment_id, model, text, segments) VALUES (${a!.id}, 'large-v3', 'Ahoj.', ${c.json([{ start_ms: 0, end_ms: 900, text: 'Ahoj.' }])})`;
+      for (const m of migrations.filter((x) => x.file >= '0013')) for (const s of m.statements) await c.unsafe(s);
+      const rows = await c`SELECT diarization, speakers FROM report_transcripts`;
+      expect([...rows]).toEqual([{ diarization: null, speakers: {} }]);
+    } finally {
+      await c.end();
+      await admin.unsafe(`DROP DATABASE IF EXISTS ${name}`);
+    }
+  });
+});

@@ -284,8 +284,15 @@ export const reportAttachments = pgTable(
 export const jobStatus = pgEnum('job_status', ['queued', 'running', 'done', 'failed']);
 export const jobKind = pgEnum('job_kind', ['transcribe']);
 
-/** One line of a transcript; times in milliseconds from the start of the recording. */
-export type TranscriptSegment = { start_ms: number; end_ms: number; text: string };
+/** One line of a transcript; times in milliseconds from the start of the recording; `speaker` "S1"… when diarized. */
+export type TranscriptSegment = { start_ms: number; end_ms: number; text: string; speaker?: string };
+
+/** How the speakers were recognized: the model and how many speak, or why it failed. */
+export type Diarization = { model: string; speakers: number } | { error: string };
+
+/** A speaker's name, given by the user or by an agent, and when (for "most recently used" suggestions). */
+export type SpeakerName = { name: string; by: 'user' | 'agent'; at: string };
+export type SpeakerNames = Record<string, SpeakerName>;
 
 /**
  * Work for the transcription worker, a PC that pulls jobs over HTTPS (Tabula never connects to it). A worker holds a
@@ -332,6 +339,10 @@ export const reportTranscripts = pgTable(
     /** The segments' text, one per line: what full-text search reads. */
     text: text('text').notNull(),
     segments: jsonb('segments').$type<TranscriptSegment[]>().notNull(),
+    /** null: the worker has no speaker recognition (or the transcript came before it). */
+    diarization: jsonb('diarization').$type<Diarization>(),
+    /** Names of S1, S2 …; a new transcript clears them (a new run may number the speakers differently). */
+    speakers: jsonb('speakers').$type<SpeakerNames>().notNull().default({}),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     search: tsvector('search').generatedAlwaysAs(sql`to_tsvector('tabula'::regconfig, left("text", 100000))`),
   },

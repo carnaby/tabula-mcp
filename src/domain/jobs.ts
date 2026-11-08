@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { and, asc, count, desc, eq, inArray, isNull, lt, lte, ne, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
-import { reportAttachments, reportJobs, reports, reportTranscripts, type TranscriptSegment, workers } from '../db/schema.js';
+import {
+  type Diarization, reportAttachments, reportJobs, reports, reportTranscripts, type SpeakerNames, type TranscriptSegment, workers,
+} from '../db/schema.js';
 import { badRequest, conflict, notFound } from './errors.js';
-import { cleanSegments, TRANSCRIPT_LIMITS, transcriptText } from './transcripts.js';
+import { cleanDiarization } from './speakers.js';
+import { cleanSegments, type IncomingSegment, TRANSCRIPT_LIMITS, transcriptText } from './transcripts.js';
 
 /** A worker holds a job this long without a heartbeat. */
 export const LEASE_MS = 10 * 60 * 1000;
@@ -142,7 +145,11 @@ export async function heartbeatJob(db: Db, id: string, lease: string, now = new 
 const LANGUAGE = /^[a-z]{2,3}(-[a-z0-9]{2,8})?$/i;
 const MODEL = /^[\x20-\x7e]{1,200}$/;
 
-export type TranscriptInput = { language: string | null; model: string; durationMs: number | null; segments: TranscriptSegment[] };
+export type TranscriptInput = {
+  language: string | null; model: string; durationMs: number | null; segments: IncomingSegment[];
+  /** Absent or null: the worker has no speaker recognition. */
+  diarization?: Diarization | null;
+};
 
 /**
  * Store the transcript and finish the job. The recording's duration is filled in when the upload had none (live
@@ -155,10 +162,12 @@ export async function completeJob(db: Db, id: string, lease: string, input: Tran
     throw badRequest('duration_ms must be a whole number of milliseconds up to 24 hours, or null');
   }
   const segments = cleanSegments(input.segments);
+  const diarization = cleanDiarization(input.diarization);
   const language = input.language?.toLowerCase() ?? null;
   return db.transaction(async (tx) => {
     const job = await ownedJob(tx, id, lease);
-    const values = { language, model: input.model, text: transcriptText(segments), segments, createdAt: now };
+    // A new transcript drops the names: a new run may number the same voices differently.
+    const values = { language, model: input.model, text: transcriptText(segments), segments, diarization, speakers: {}, createdAt: now };
     await tx
       .insert(reportTranscripts)
       .values({ attachmentId: job.attachmentId, ...values })
@@ -243,6 +252,36 @@ export async function retryTranscription(db: Db, attachmentId: string, now = new
   return job;
 }
 
+export const CLOSED_FOR_TRANSCRIPTION = 'the report is closed; reopen it to transcribe the recording again';
+
+/**
+ * The UI's "Transcribe again": a done or failed job starts over. The old transcript stays until the new one comes in;
+ * completeJob then replaces it and clears the speaker names.
+ */
+export async function transcribeAgain(db: Db, attachmentId: string, now = new Date()): Promise<Job> {
+  const [row] = await db
+    .select({ a: reportAttachments, reportStatus: reports.status })
+    .from(reportAttachments)
+    .innerJoin(reports, eq(reports.id, reportAttachments.reportId))
+    .where(eq(reportAttachments.id, attachmentId));
+  if (!row) throw notFound(`attachment ${attachmentId} does not exist`);
+  if (!isRecording(row.a)) throw badRequest('only video and audio are transcribed');
+  if (row.a.purgedAt) throw conflict('the recording was deleted after the report was closed; it can no longer be transcribed');
+  if (row.reportStatus === 'done') throw conflict(CLOSED_FOR_TRANSCRIPTION);
+  const [job] = await db
+    .insert(reportJobs)
+    .values({ attachmentId, kind: 'transcribe', runAfter: now })
+    .onConflictDoUpdate({
+      target: [reportJobs.attachmentId, reportJobs.kind],
+      set: { status: 'queued', attempts: 0, error: null, leaseId: null, leaseUntil: null, runAfter: now, finishedAt: null, updatedAt: now },
+      setWhere: inArray(reportJobs.status, ['done', 'failed']),
+    })
+    .returning();
+  if (!job) throw conflict('the recording is already waiting for the worker or being transcribed');
+  jobSignal.wake();
+  return job;
+}
+
 /** Recordings deleted before the worker got to them: their jobs fail with the reason instead of waiting forever. */
 export async function failPendingJobs(db: Db, attachmentIds: string[], now = new Date()): Promise<void> {
   if (!attachmentIds.length) return;
@@ -322,10 +361,18 @@ export async function transcriptionStatus(db: Db): Promise<WorkerStatus> {
   };
 }
 
+/** A recording transcribed again: the job's state while the old transcript stays on show. */
+export type TranscribingAgain = { status: 'queued' | 'running' | 'failed'; error: string | null; retryAt: string | null };
+
 export type TranscriptState =
   | { status: 'none' }
   | { status: 'queued' | 'running' | 'failed'; attempts: number; error: string | null; retryAt: string | null }
-  | { status: 'done'; language: string | null; model: string; segments: TranscriptSegment[]; createdAt: string };
+  | {
+      status: 'done'; language: string | null; model: string; segments: TranscriptSegment[]; createdAt: string;
+      diarization: Diarization | null; speakers: SpeakerNames;
+      /** Set while the recording is transcribed again, or when that failed; this transcript stays until a new one is in. */
+      again: TranscribingAgain | null;
+    };
 
 /** The transcript, or the state of its job, for each recording that has either; recordings without both are absent. */
 export async function transcriptStates(db: Db, attachmentIds: readonly string[], now = new Date()): Promise<Map<string, TranscriptState>> {
@@ -341,20 +388,24 @@ export async function transcriptStates(db: Db, attachmentIds: readonly string[],
       .select({
         attachmentId: reportTranscripts.attachmentId, language: reportTranscripts.language, model: reportTranscripts.model,
         segments: reportTranscripts.segments, createdAt: reportTranscripts.createdAt,
+        diarization: reportTranscripts.diarization, speakers: reportTranscripts.speakers,
       })
       .from(reportTranscripts)
       .where(inArray(reportTranscripts.attachmentId, ids)),
   ]);
+  const pending = new Map<string, TranscribingAgain>();
   for (const j of jobs) {
     if (j.status === 'done') continue;
-    states.set(j.attachmentId, {
-      status: j.status, attempts: j.attempts, error: j.error,
-      retryAt: j.status === 'queued' && j.runAfter > now ? j.runAfter.toISOString() : null,
-    });
+    const retryAt = j.status === 'queued' && j.runAfter > now ? j.runAfter.toISOString() : null;
+    pending.set(j.attachmentId, { status: j.status, error: j.error, retryAt });
+    states.set(j.attachmentId, { status: j.status, attempts: j.attempts, error: j.error, retryAt });
   }
   // A transcript wins over its job's state: it is what the user wants to see.
   for (const t of done) {
-    states.set(t.attachmentId, { status: 'done', language: t.language, model: t.model, segments: t.segments, createdAt: t.createdAt.toISOString() });
+    states.set(t.attachmentId, {
+      status: 'done', language: t.language, model: t.model, segments: t.segments, createdAt: t.createdAt.toISOString(),
+      diarization: t.diarization, speakers: t.speakers, again: pending.get(t.attachmentId) ?? null,
+    });
   }
   return states;
 }

@@ -93,8 +93,9 @@ function FrameNote({ frame, onSaved }: { frame: Attachment; onSaved: (f: Attachm
 }
 
 function VideoCard({
-  a, frames, worker, focus, onFrame, onTranscript, onDelete, onDeleteFrame, onNote,
+  a, frames, worker, focus, closed, onFrame, onTranscript, onDelete, onDeleteFrame, onNote,
 }: {
+  closed?: boolean;
   a: Attachment;
   frames: Attachment[];
   worker: WorkerStatus | undefined;
@@ -195,14 +196,14 @@ function VideoCard({
         </div>
       )}
       {selected && <FrameNote key={selected.id} frame={selected} onSaved={onNote} />}
-      <Transcript a={a} worker={worker} onSeek={a.url ? onSeek : undefined} onChange={onTranscript} currentMs={t * 1000} playing={playing} />
+      <Transcript a={a} worker={worker} onSeek={a.url ? onSeek : undefined} onChange={onTranscript} currentMs={t * 1000} playing={playing} closed={closed} />
     </figure>
   );
 }
 
 function AudioCard({
-  a, worker, focus, onTranscript, onDelete,
-}: { a: Attachment; worker: WorkerStatus | undefined; focus?: string; onTranscript: (t: TranscriptState) => void; onDelete: () => void }) {
+  a, worker, focus, closed, onTranscript, onDelete,
+}: { a: Attachment; worker: WorkerStatus | undefined; focus?: string; closed?: boolean; onTranscript: (t: TranscriptState) => void; onDelete: () => void }) {
   const ref = useRef<HTMLAudioElement>(null);
   const [t, setT] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -222,13 +223,13 @@ function AudioCard({
         <CopyRefButton id={a.id} size="sm" />
         <IconButton size="sm" icon="trash" label="Delete voice note" onClick={onDelete} />
       </figcaption>
-      <Transcript a={a} worker={worker} onSeek={a.url ? onSeek : undefined} onChange={onTranscript} currentMs={t * 1000} playing={playing} />
+      <Transcript a={a} worker={worker} onSeek={a.url ? onSeek : undefined} onChange={onTranscript} currentMs={t * 1000} playing={playing} closed={closed} />
     </figure>
   );
 }
 
 export function Attachments({
-  attachments, uploads, worker, onChanged, onDismissUpload, focus,
+  attachments, uploads, worker, onChanged, onDismissUpload, focus, closed,
 }: {
   attachments: Attachment[];
   uploads: Upload[];
@@ -238,6 +239,8 @@ export function Attachments({
   onDismissUpload: (key: string) => void;
   /** The attachment the page was opened on. */
   focus?: string;
+  /** The report is closed: recordings cannot be transcribed again. */
+  closed?: boolean;
 }) {
   // Opened on one attachment: bring it into view once, when the page opens.
   useEffect(() => {
@@ -285,6 +288,7 @@ export function Attachments({
           a={v}
           worker={worker}
           focus={focus}
+          closed={closed}
           frames={attachments.filter((f) => f.kind === 'frame' && f.sourceId === v.id).sort((x, y) => (x.atMs ?? 0) - (y.atMs ?? 0))}
           onFrame={(f) => onChanged((list) => (list.some((x) => x.id === f.id) ? list : [...list, f]))}
           onTranscript={(t) => setTranscript(v.id, t)}
@@ -294,7 +298,7 @@ export function Attachments({
         />
       ))}
       {audios.map((x) => (
-        <AudioCard key={x.id} a={x} worker={worker} focus={focus} onTranscript={(t) => setTranscript(x.id, t)} onDelete={() => void remove(x)} />
+        <AudioCard key={x.id} a={x} worker={worker} focus={focus} closed={closed} onTranscript={(t) => setTranscript(x.id, t)} onDelete={() => void remove(x)} />
       ))}
       {loose.length > 0 && (
         <div className="att-grid">

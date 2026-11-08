@@ -6,7 +6,7 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { reportAttachments } from '../../src/db/schema.js';
+import { type Diarization, reportAttachments } from '../../src/db/schema.js';
 import { claimJob, completeJob } from '../../src/domain/jobs.js';
 import { buildApp } from '../../src/http/app.js';
 import { MediaStore } from '../../src/media/store.js';
@@ -78,6 +78,72 @@ describe('bug reports over MCP', () => {
     expect((await tool('create_report', { project: 'global', title: 'x' })).isError).toBe(true);
   });
 
+  /** A voice note whose transcript has two speakers (or what `diarization` says). */
+  async function conversation(diarization: Diarization | null = { model: 'pyannote/speaker-diarization-community-1', speakers: 2 }) {
+    const created = json((await tool('create_report', { project: 'demo', title: 'Where is the button' })).content);
+    const audio = await uploadFile(created.id, silentWav(1), 'audio/wav', 'voice.wav');
+    const claimed = (await claimJob(db, 'pc'))!;
+    await completeJob(db, claimed.job.id, claimed.job.leaseId!, {
+      language: 'sk', model: 'large-v3', durationMs: 20_000, diarization,
+      segments: [
+        { start_ms: 12_000, end_ms: 15_000, text: 'Kde je tlačidlo uložiť?', speaker: 'S1' },
+        { start_ms: 16_000, end_ms: 17_000, text: 'Vpravo hore.', speaker: 'S2' },
+      ],
+    });
+    return { report: created, audio };
+  }
+  const putNames = (id: string, names: object) =>
+    fetch(`${base}/api/attachments/${id}/speakers`, {
+      method: 'PUT', headers: { Authorization: `Bearer ${TEST_TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify(names),
+    });
+
+  it('shows who says what, with names, in get_report and get_transcript', async () => {
+    const { report, audio } = await conversation();
+    let t = json((await tool('get_report', { id: report.id })).content).attachments[0].transcript;
+    expect(t.speakers).toBe('Speakers: S1 = not named, S2 = not named');
+    expect(t.text).toBe('[0:12] S1: Kde je tlačidlo uložiť?\n[0:16] S2: Vpravo hore.');
+
+    await putNames(audio.id, { S1: 'Eva' });
+    t = json((await tool('get_report', { id: report.id })).content).attachments[0].transcript;
+    expect(t.speakers).toBe('Speakers: S1 = Eva (named by user), S2 = not named');
+    expect(t.text).toBe('[0:12] Eva: Kde je tlačidlo uložiť?\n[0:16] S2: Vpravo hore.');
+
+    const page = text((await tool('get_transcript', { attachment_id: `tabula:${audio.id.slice(0, 8)}` })).content).split('\n');
+    expect(page[0]).toMatch(/^\[transcript of voice\.wav · /);
+    expect(page.slice(1)).toEqual(['Speakers: S1 = Eva (named by user), S2 = not named', '[0:12] Eva: Kde je tlačidlo uložiť?', '[0:16] S2: Vpravo hore.']);
+  });
+
+  it('shows lines as before with one speaker, and says why speakers were not recognized', async () => {
+    const one = await conversation({ model: 'pyannote/speaker-diarization-community-1', speakers: 1 });
+    const t1 = json((await tool('get_report', { id: one.report.id })).content).attachments[0].transcript;
+    expect(t1).not.toHaveProperty('speakers');
+    expect(t1.text).toBe('[0:12] Kde je tlačidlo uložiť?\n[0:16] Vpravo hore.');
+
+    const broken = await conversation({ error: 'CUDA is not available to PyTorch' });
+    const t2 = json((await tool('get_report', { id: broken.report.id })).content).attachments[0].transcript;
+    expect(t2.speakers).toBe('Speakers not recognized: CUDA is not available to PyTorch');
+    expect(t2.text).toBe('[0:12] Kde je tlačidlo uložiť?\n[0:16] Vpravo hore.');
+    expect(text((await tool('get_transcript', { attachment_id: broken.audio.id })).content).split('\n')[1]).toBe('Speakers not recognized: CUDA is not available to PyTorch');
+  });
+
+  it("names speakers for the agent, replaces an agent's names and never the user's", async () => {
+    const { report, audio } = await conversation();
+    const ref = `tabula:${audio.id.slice(0, 8)}`;
+    const first = json((await tool('name_speakers', { attachment_id: ref, names: { S2: 'Tomáš' } })).content);
+    expect(first).toEqual({ attachment: ref, written: { S2: 'Tomáš' }, skipped: [], speakers: 'Speakers: S1 = not named, S2 = Tomáš (named by Claude)' });
+    await putNames(audio.id, { S1: 'Eva' });
+    const second = json((await tool('name_speakers', { attachment_id: ref, names: { S1: 'Marek', S2: 'Tomi' } })).content);
+    expect(second.written).toEqual({ S2: 'Tomi' });
+    expect(second.skipped).toEqual([{ speaker: 'S1', reason: 'the user named S1 "Eva"; a name from the user is never replaced' }]);
+    expect(json((await tool('get_report', { id: report.id })).content).attachments[0].transcript.text).toBe('[0:12] Eva: Kde je tlačidlo uložiť?\n[0:16] Tomi: Vpravo hore.');
+
+    const unknown = await tool('name_speakers', { attachment_id: ref, names: { S7: 'Peter' } });
+    expect(unknown.isError).toBe(true);
+    expect(text(unknown.content)).toMatch(/^400: unknown speaker S7; the transcript has S1, S2/);
+    const waiting = await uploadFile(report.id, silentWav(1), 'audio/wav', 'later.wav');
+    expect(text((await tool('name_speakers', { attachment_id: waiting.id, names: { S1: 'Eva' } })).content)).toMatch(/^404: .*has no transcript yet/);
+  });
+
   it('closes a report only with expected_version: closing starts deleting its video and audio', async () => {
     const { id } = json((await tool('create_report', { project: 'demo', title: 'Crash on save' })).content);
     const blind = await tool('update_report', { id, status: 'done' });
@@ -109,6 +175,8 @@ describe('bug reports over MCP', () => {
       const { tools } = await client.listTools();
       expect(tools.find((t) => t.name === 'get')!.description).toMatch(/bug report/);
       expect(tools.find((t) => t.name === 'create_report')!.description).toMatch(/list_projects/);
+      expect(tools.find((t) => t.name === 'name_speakers')!.description).toMatch(/never replaces a name the user gave/);
+      expect(tools.find((t) => t.name === 'get_report')!.description).toMatch(/\[0:12\] Eva:/);
     } finally {
       await client.close();
     }

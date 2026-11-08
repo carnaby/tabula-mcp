@@ -1,9 +1,10 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../api';
 import { timeAgo } from '../../format';
-import type { Attachment, TranscriptSegment, TranscriptState, WorkerStatus } from '../../types';
-import { Alert, Button, Icon, Spinner, useToast } from '../../ui';
+import type { Attachment, SpeakerName, TranscriptSegment, TranscriptState, WorkerStatus } from '../../types';
+import { Alert, Button, Icon, Popover, Spinner, useConfirm, useToast } from '../../ui';
 import { clock } from './Recorder';
+import { SpeakerChip } from './Speakers';
 
 /** A worker that called in this recently is running: while it waits for work it calls every 30 s. */
 export const WORKER_ALIVE_MS = 2 * 60 * 1000;
@@ -28,8 +29,13 @@ export function activeLine(segments: { start_ms: number }[], ms: number): number
   return found;
 }
 
-/** One line; memoized so that only the lines whose active state changes re-render while the player ticks. */
-const Line = memo(function Line({ s, active, onSeek }: { s: TranscriptSegment; active: boolean; onSeek?: (ms: number) => void }) {
+/** What the lines need to show speakers; one object for all lines, so memoized lines stay memoized while the player ticks. */
+type Speakers = { attachmentId: string; reportId: string; names: Record<string, SpeakerName>; locked: boolean; onSaved: (t: TranscriptState) => void };
+
+/** One line; `chip`: the speaker changes here, so the line shows the speaker's label. */
+const Line = memo(function Line({
+  s, active, onSeek, speakers, chip,
+}: { s: TranscriptSegment; active: boolean; onSeek?: (ms: number) => void; speakers: Speakers | null; chip: boolean }) {
   return (
     <li className="transcript__line" data-active={active || undefined}>
       {onSeek ? (
@@ -39,14 +45,34 @@ const Line = memo(function Line({ s, active, onSeek }: { s: TranscriptSegment; a
       ) : (
         <span className="transcript__time">{clock(s.start_ms)}</span>
       )}
+      {speakers && (
+        <span className="transcript__speaker">
+          {chip && s.speaker && (
+            <SpeakerChip id={s.speaker} entry={speakers.names[s.speaker]} attachmentId={speakers.attachmentId} reportId={speakers.reportId} onSaved={speakers.onSaved} locked={speakers.locked} />
+          )}
+        </span>
+      )}
       <span className="transcript__text">{s.text}</span>
     </li>
   );
 });
 
-/** The transcript under a video or voice note: lines with clickable times, or what it is waiting for. */
+/** The "⋯" menu above a transcript. */
+function TranscriptMenu({ onAgain }: { onAgain: () => void }) {
+  return (
+    <Popover className="transcript__menu" triggerClassName="transcript__menu-trigger" triggerLabel="Transcript options" trigger={<Icon name="more" />}>
+      {(close) => (
+        <button type="button" className="t-popover__item" onClick={() => { close(); onAgain(); }}>
+          <Icon name="refresh" /> Transcribe again
+        </button>
+      )}
+    </Popover>
+  );
+}
+
+/** The transcript under a video or voice note: lines with clickable times (and speakers), or what it is waiting for. */
 export function Transcript({
-  a, worker, onSeek, onChange, currentMs, playing = false,
+  a, worker, onSeek, onChange, currentMs, playing = false, closed = false,
 }: {
   a: Attachment;
   worker: WorkerStatus | undefined;
@@ -57,16 +83,31 @@ export function Transcript({
   currentMs?: number;
   /** While true, the transcript scrolls to keep the active line in view. */
   playing?: boolean;
+  /** The report is closed: no "Transcribe again". */
+  closed?: boolean;
 }) {
   const notify = useToast();
+  const { confirm } = useConfirm();
   const [busy, setBusy] = useState(false);
   const listRef = useRef<HTMLOListElement>(null);
   const lastUserAction = useRef(0);
+  // The parent passes a new function on every render (the player ticks); the lines get one that never changes.
+  const changeRef = useRef(onChange);
+  changeRef.current = onChange;
+  const onSaved = useCallback((s: TranscriptState) => changeRef.current(s), []);
   const t = a.transcript;
-  const segments = t?.status === 'done' ? t.segments : null;
+  const done = t?.status === 'done' ? t : null;
+  const segments = done ? done.segments : null;
   const active = useMemo(
     () => (segments && currentMs !== undefined ? activeLine(segments, currentMs) : -1),
     [segments, currentMs],
+  );
+  const several = !!done?.diarization && 'speakers' in done.diarization && done.diarization.speakers > 1;
+  const names = done?.speakers;
+  const locked = t?.status === 'done' && (t.again?.status === 'queued' || t.again?.status === 'running');
+  const speakers = useMemo<Speakers | null>(
+    () => (several && names ? { attachmentId: a.id, reportId: a.reportId, names, locked, onSaved } : null),
+    [several, names, locked, a.id, a.reportId, onSaved],
   );
 
   // Follow playback inside the transcript's own scroll container (never scrollIntoView: it scrolls the page too).
@@ -95,21 +136,56 @@ export function Transcript({
     }
   };
 
+  const again = async () => {
+    const ok = await confirm({
+      title: 'Transcribe again?',
+      message: 'The worker transcribes the recording again and replaces this transcript when it is done. The speaker names are cleared, because a new run may number the speakers differently.',
+      confirmLabel: 'Transcribe again',
+    });
+    if (!ok) return;
+    try {
+      onChange(await api.transcribeAgain(a.id));
+    } catch (e) {
+      notify((e as Error).message, { tone: 'danger' });
+    }
+  };
+
   if (t.status === 'done') {
-    if (!t.segments.length) return <p className="transcript__note">No speech in the recording.</p>;
+    const pending = t.again;
+    const canAgain = !!a.url && !closed && pending?.status !== 'queued' && pending?.status !== 'running';
+    const notRecognized = t.diarization && 'error' in t.diarization ? t.diarization.error : null;
     return (
-      <ol
-        ref={listRef}
-        className="transcript"
-        aria-label="Transcript"
-        onWheel={() => { lastUserAction.current = Date.now(); }}
-        onTouchStart={() => { lastUserAction.current = Date.now(); }}
-        onPointerDown={() => { lastUserAction.current = Date.now(); }}
-      >
-        {t.segments.map((s, i) => (
-          <Line key={i} s={s} active={i === active} onSeek={onSeek} />
-        ))}
-      </ol>
+      <div className="transcript-block">
+        {canAgain && <div className="transcript__head"><TranscriptMenu onAgain={() => void again()} /></div>}
+        {t.segments.length ? (
+          <ol
+            ref={listRef}
+            className="transcript"
+            aria-label="Transcript"
+            data-speakers={speakers ? true : undefined}
+            onWheel={() => { lastUserAction.current = Date.now(); }}
+            onTouchStart={() => { lastUserAction.current = Date.now(); }}
+            onPointerDown={() => { lastUserAction.current = Date.now(); }}
+          >
+            {t.segments.map((s, i) => (
+              <Line key={i} s={s} active={i === active} onSeek={onSeek} speakers={speakers} chip={!!speakers && s.speaker !== t.segments[i - 1]?.speaker} />
+            ))}
+          </ol>
+        ) : (
+          <p className="transcript__note">No speech in the recording.</p>
+        )}
+        {notRecognized && <p className="transcript__note transcript__note--quiet">Speakers not recognized: {notRecognized}</p>}
+        {pending?.status === 'queued' && (
+          <p className="transcript__note"><Icon name="inbox" /> Waiting to transcribe again; this transcript stays until the new one is ready.</p>
+        )}
+        {pending?.status === 'running' && <p className="transcript__note"><Spinner /> Transcribing again…</p>}
+        {pending?.status === 'failed' && (
+          <div className="transcript__note">
+            <Alert tone="danger">Transcribing again failed{pending.error ? `: ${pending.error}` : ''}</Alert>
+            {a.url && <Button size="sm" icon="refresh" loading={busy} onClick={() => void retry()}>Try again</Button>}
+          </div>
+        )}
+      </div>
     );
   }
   if (t.status === 'running') {

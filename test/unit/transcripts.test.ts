@@ -59,4 +59,32 @@ describe('transcript helpers', () => {
     expect(sliceLines(text, 24, 20)).toEqual({ text: '[0:10] cccc', next: null });
     expect(sliceLines(text, 99, 20)).toEqual({ text: '', next: null });
   });
+
+  it('keeps the speaker of a segment and refuses one that is not S1 … S99', () => {
+    expect(cleanSegments([{ start_ms: 0, end_ms: 900, text: 'Kde je tlačidlo?', speaker: 'S1' }])).toEqual([
+      { start_ms: 0, end_ms: 900, text: 'Kde je tlačidlo?', speaker: 'S1' },
+    ]);
+    expect(() => cleanSegments([{ start_ms: 0, end_ms: 900, text: 'x', speaker: 'Speaker 1' }])).toThrow(/segment 0: speaker/);
+    for (const bad of [['S1'], 1, true, {}, '']) {
+      expect(() => cleanSegments([{ start_ms: 0, end_ms: 900, text: 'x', speaker: bad as never }])).toThrow(/segment 0: speaker/);
+    }
+  });
+
+  it('treats a null or missing speaker as no label', () => {
+    const out = cleanSegments([
+      { start_ms: 0, end_ms: 500, text: 'a', speaker: null as never },
+      { start_ms: 500, end_ms: 900, text: 'b', speaker: undefined },
+    ]);
+    expect(out).toEqual([{ start_ms: 0, end_ms: 500, text: 'a' }, { start_ms: 500, end_ms: 900, text: 'b' }]);
+    expect(out.every((s) => !('speaker' in s))).toBe(true);
+  });
+
+  it('writes the speaker before the text when labels are given', () => {
+    const segments = [
+      { start_ms: 12_000, end_ms: 15_000, text: 'Kde je tlačidlo?', speaker: 'S1' },
+      { start_ms: 16_000, end_ms: 17_000, text: 'Vpravo hore.', speaker: 'S2' },
+    ];
+    expect(transcriptLines(segments, { S1: 'Eva', S2: 'S2' })).toBe('[0:12] Eva: Kde je tlačidlo?\n[0:16] S2: Vpravo hore.');
+    expect(transcriptLines(segments)).toBe('[0:12] Kde je tlačidlo?\n[0:16] Vpravo hore.');
+  });
 });

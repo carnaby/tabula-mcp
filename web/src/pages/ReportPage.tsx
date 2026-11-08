@@ -88,8 +88,13 @@ function Editor({
   const up = useUploads(onUploaded);
   const worker = useQuery((s) => api.transcriptionStatus(s), [], { topics: ['reports'] });
 
-  // While a recording waits for the worker or is being transcribed, look for its transcript every 10 s.
-  const pending = attachments.some((a) => a.transcript?.status === 'queued' || a.transcript?.status === 'running');
+  // While a recording waits for the worker or is being transcribed (again), look for its transcript every 10 s.
+  const pending = attachments.some((a) => {
+    const t = a.transcript;
+    if (t?.status === 'queued' || t?.status === 'running') return true;
+    // A finished transcript being replaced: the page must pick up the new one.
+    return t?.status === 'done' && (t.again?.status === 'queued' || t.again?.status === 'running');
+  });
   const reloadWorker = worker.reload;
   useEffect(() => {
     if (!base || !pending) return;
@@ -349,7 +354,7 @@ function Editor({
           )}
           <input ref={camera} type="file" accept="image/*,video/*" capture="environment" hidden onChange={(e) => { void addFiles([...(e.target.files ?? [])]); e.target.value = ''; }} />
           <input ref={gallery} type="file" accept="image/*,video/*,audio/*" multiple hidden onChange={(e) => { void addFiles([...(e.target.files ?? [])]); e.target.value = ''; }} />
-          <Attachments attachments={attachments} uploads={up.uploads} worker={worker.data} onChanged={setAttachments} onDismissUpload={up.dismiss} focus={focus} />
+          <Attachments attachments={attachments} uploads={up.uploads} worker={worker.data} onChanged={setAttachments} onDismissUpload={up.dismiss} focus={focus} closed={closed} />
         </section>
 
         {base && (

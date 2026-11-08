@@ -1,5 +1,6 @@
 import type { TranscriptSegment } from '../db/schema.js';
 import { badRequest } from './errors.js';
+import { SPEAKER_ID } from './speakers.js';
 import { rejectNul } from './validation.js';
 
 export type { TranscriptSegment };
@@ -14,11 +15,14 @@ const cli = (await import(new URL('../../cli/tabula.mjs', import.meta.url).href)
 /** "0:05", "2:41", "1:02:03": the same form as the UI's clock. */
 export const clock: (ms: number) => string = cli.formatClock;
 
+/** A segment as the worker sends it: `speaker` null means no label. */
+export type IncomingSegment = Omit<TranscriptSegment, 'speaker'> & { speaker?: string | null };
+
 /**
  * Segments from a worker as they are stored: whole milliseconds, whitespace collapsed, empty ones dropped, in time
  * order. Anything out of range is a 400, so a broken worker can't store nonsense.
  */
-export function cleanSegments(raw: readonly TranscriptSegment[]): TranscriptSegment[] {
+export function cleanSegments(raw: readonly IncomingSegment[]): TranscriptSegment[] {
   if (raw.length > TRANSCRIPT_LIMITS.segments) {
     throw badRequest(`${raw.length} segments; the limit is ${TRANSCRIPT_LIMITS.segments}`);
   }
@@ -38,7 +42,12 @@ export function cleanSegments(raw: readonly TranscriptSegment[]): TranscriptSegm
     }
     total += text.length;
     if (total > TRANSCRIPT_LIMITS.totalChars) throw badRequest(`the transcript is longer than ${TRANSCRIPT_LIMITS.totalChars} characters`);
-    out.push({ start_ms: start, end_ms: end, text });
+    // null or absent: no label for this line.
+    const speaker: unknown = s.speaker ?? undefined;
+    if (speaker !== undefined && (typeof speaker !== 'string' || !SPEAKER_ID.test(speaker))) {
+      throw badRequest(`segment ${i}: speaker must be S1 … S99`);
+    }
+    out.push({ start_ms: start, end_ms: end, text, ...(speaker !== undefined ? { speaker } : {}) });
   }
   return out.sort((a, b) => a.start_ms - b.start_ms || a.end_ms - b.end_ms);
 }
@@ -46,9 +55,11 @@ export function cleanSegments(raw: readonly TranscriptSegment[]): TranscriptSegm
 /** The text stored for full-text search: one segment per line. */
 export const transcriptText = (segments: readonly TranscriptSegment[]): string => segments.map((s) => s.text).join('\n');
 
-/** The compact form agents read: "[2:41] text" per line. */
-export const transcriptLines = (segments: readonly TranscriptSegment[]): string =>
-  segments.map((s) => `[${clock(s.start_ms)}] ${s.text}`).join('\n');
+/** The compact form agents read: "[2:41] text" per line, "[2:41] Eva: text" when speakers are labelled. */
+export const transcriptLines = (segments: readonly TranscriptSegment[], labels?: Record<string, string> | null): string =>
+  segments
+    .map((s) => `[${clock(s.start_ms)}] ${labels && s.speaker ? `${labels[s.speaker] ?? s.speaker}: ` : ''}${s.text}`)
+    .join('\n');
 
 /**
  * At most `limit` characters of `text` from `offset`, ending at a line break when one is in reach, and the offset of

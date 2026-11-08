@@ -656,6 +656,48 @@ span.transcript__time { color: var(--text-subtle); }
   color: var(--text-muted);
   font-size: var(--text-sm);
 }
+.transcript__head { display: flex; justify-content: flex-end; padding: 0 10px; }
+.transcript__menu-trigger {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.transcript__menu-trigger:hover { background: var(--surface-hover); }
+.transcript__note--quiet { color: var(--text-subtle); }
+.transcript__speaker { flex: none; width: 7.5em; min-width: 0; }
+@media (max-width: 480px) { .transcript__speaker { width: 5.5em; } }
+.speaker__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-full);
+  font: 600 12px/1.6 var(--font-sans);
+  cursor: pointer;
+}
+.speaker__chip--static { cursor: default; }
+.speaker__chip .t-icon { flex: none; width: 12px; height: 12px; }
+.speaker__chip--1 { background: var(--kind-rule-soft); color: var(--kind-rule); }
+.speaker__chip--2 { background: var(--kind-fact-soft); color: var(--kind-fact); }
+.speaker__chip--3 { background: var(--kind-decision-soft); color: var(--kind-decision); }
+.speaker__chip--4 { background: var(--kind-gotcha-soft); color: var(--kind-gotcha); }
+.speaker__chip--5 { background: var(--info-soft); color: var(--info-soft-fg); }
+.speaker__chip--6 { background: var(--success-soft); color: var(--success-soft-fg); }
+/* Claude's name until the user confirms it. */
+.speaker__chip--agent { border-style: dashed; border-color: currentColor; }
+.speaker__form { display: grid; gap: 8px; width: min(260px, 80vw); padding: 4px; }
+.speaker__title { font-weight: 600; }
+.speaker__hint { display: flex; gap: 6px; align-items: center; margin: 0; color: var(--text-muted); font-size: var(--text-sm); }
+.speaker__suggestions { display: grid; max-height: 180px; overflow-y: auto; }
+.speaker__actions { display: flex; justify-content: flex-end; }
 
 .worker-line {
   display: flex;

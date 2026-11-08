@@ -48,8 +48,20 @@ process.stdout.write(JSON.stringify({
   language: 'sk',
   duration_ms: 4200,
   segments: [
-    { start_ms: 0, end_ms: 1500.4, text: '  Ahoj, toto je test. ' },
-    { start_ms: 161000, end_ms: 163000, text: 'Tu sa tlačidlo zasekne.' },
-    { start_ms: 170000, end_ms: 170500, text: '   ' },
+    {
+      start_ms: 0, end_ms: 1500.4, text: '  Ahoj, toto je test. ',
+      words: [
+        { start_ms: 0, end_ms: 400, text: 'Ahoj,' }, { start_ms: 400, end_ms: 700, text: 'toto' },
+        { start_ms: 700, end_ms: 900, text: 'je' }, { start_ms: 900, end_ms: 1500.4, text: 'test.' },
+      ],
+    },
+    {
+      start_ms: 161000, end_ms: 163000, text: 'Tu sa tlačidlo zasekne.',
+      words: [
+        { start_ms: 161000, end_ms: 161300, text: 'Tu' }, { start_ms: 161300, end_ms: 161500, text: 'sa' },
+        { start_ms: 161500, end_ms: 162200, text: 'tlačidlo' }, { start_ms: 162200, end_ms: 163000, text: 'zasekne.' },
+      ],
+    },
+    { start_ms: 170000, end_ms: 170500, text: '   ', words: [] },
   ],
 }));

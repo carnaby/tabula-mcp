@@ -134,11 +134,22 @@ export const workerRoutes: FastifyPluginAsync<{ db: Db; config: Config }> = asyn
         language: z.string().max(20).nullable(),
         model: z.string().min(1).max(200),
         duration_ms: z.number().int().min(0).nullable(),
-        segments: z.array(z.object({ start_ms: z.number(), end_ms: z.number(), text: z.string() })),
+        // The domain layer checks the speaker label (null or absent: no label).
+        segments: z.array(z.object({ start_ms: z.number(), end_ms: z.number(), text: z.string(), speaker: z.string().nullish() })),
+        // Absent from workers before 1.4.0 and from workers without speaker recognition.
+        diarization: z
+          .union([
+            z.strictObject({ model: z.string().min(1).max(200), speakers: z.number().int().min(0).max(99) }),
+            z.strictObject({ error: z.string().max(2000) }),
+          ])
+          .nullable()
+          .optional(),
       }),
       req.body,
     );
-    const r = await completeJob(db, id, b.lease, { language: b.language, model: b.model, durationMs: b.duration_ms, segments: b.segments });
+    const r = await completeJob(db, id, b.lease, {
+      language: b.language, model: b.model, durationMs: b.duration_ms, segments: b.segments, diarization: b.diarization ?? null,
+    });
     return { ok: true, segments: r.segments };
   });
 

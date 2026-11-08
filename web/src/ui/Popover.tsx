@@ -7,13 +7,17 @@ import { cx } from './Button';
  * because a dialog clips what overflows it.
  */
 export function Popover({
-  trigger, triggerLabel, triggerClassName, className, children,
+  trigger, triggerLabel, triggerTitle, triggerClassName, className, fixed, children,
 }: {
   trigger: ReactNode;
   /** The accessible name of the trigger button. */
   triggerLabel: string;
+  /** A tooltip for the trigger. */
+  triggerTitle?: string;
   triggerClassName?: string;
   className?: string;
+  /** Lay the panel out against the viewport, so a scrolling parent does not clip it; it follows the trigger when anything scrolls. */
+  fixed?: boolean;
   /** A function gets `close` and `labelId`: give the panel's heading that id to name the panel. */
   children: ReactNode | ((close: () => void, labelId: string) => ReactNode);
 }) {
@@ -59,12 +63,49 @@ export function Popover({
   useLayoutEffect(() => {
     const el = panel.current;
     if (!open || !el) return;
+    if (fixed && button.current) {
+      const btn = button.current;
+      const place = () => {
+        const at = btn.getBoundingClientRect();
+        // The trigger left the viewport entirely: nothing to anchor to.
+        if (at.bottom < 0 || at.top > window.innerHeight || at.right < 0 || at.left > document.documentElement.clientWidth) {
+          setOpen(false);
+          return;
+        }
+        const left = Math.max(8, Math.min(at.left, document.documentElement.clientWidth - el.offsetWidth - 8));
+        const below = at.bottom + 6;
+        // Not enough room below: open upwards.
+        const up = at.top - 6 - el.offsetHeight;
+        el.style.position = 'fixed';
+        el.style.left = `${left}px`;
+        el.style.top = `${below + el.offsetHeight > window.innerHeight - 8 && up >= 8 ? up : below}px`;
+      };
+      place();
+      // Follow the trigger when the page or any scroller moves, or the viewport changes (keyboard, browser bar);
+      // once per frame. The panel grows when its content arrives (suggestions): place it again then too.
+      let frame = 0;
+      const schedule = () => {
+        if (!frame) frame = requestAnimationFrame(() => { frame = 0; place(); });
+      };
+      const inPanel = (e: Event) => !!panel.current?.contains(e.target as Node);
+      const onScroll = (e: Event) => { if (!inPanel(e)) schedule(); };
+      window.addEventListener('scroll', onScroll, true);
+      window.addEventListener('resize', schedule);
+      const watch = new ResizeObserver(schedule);
+      watch.observe(el);
+      return () => {
+        cancelAnimationFrame(frame);
+        window.removeEventListener('scroll', onScroll, true);
+        window.removeEventListener('resize', schedule);
+        watch.disconnect();
+      };
+    }
     el.style.left = '0px';
     const box = el.getBoundingClientRect();
     const bounds = el.closest('dialog')?.getBoundingClientRect() ?? { left: 0, right: document.documentElement.clientWidth };
     const over = box.right - (bounds.right - 8);
     if (over > 0) el.style.left = `${-Math.max(0, Math.min(over, box.left - (bounds.left + 8)))}px`;
-  }, [open]);
+  }, [open, fixed]);
 
   return (
     <span
@@ -81,6 +122,7 @@ export function Popover({
         type="button"
         className={cx('t-popover__trigger', triggerClassName)}
         aria-label={triggerLabel}
+        title={triggerTitle}
         aria-expanded={open}
         aria-controls={open ? id : undefined}
         onClick={() => setOpen(!open)}

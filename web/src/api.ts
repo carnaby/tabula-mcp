@@ -117,6 +117,9 @@ export const api = {
   saveFrame: (videoId: string, atSeconds: number) => request<Attachment>('POST', `/attachments/${videoId}/frame`, { at: atSeconds }),
   setFrameNote: (id: string, note: string | null) => request<Attachment>('PATCH', `/attachments/${id}`, { note }),
   retryTranscript: (attachmentId: string) => request<TranscriptState>('POST', `/attachments/${attachmentId}/transcript/retry`),
+  setSpeakers: (attachmentId: string, names: Record<string, string>) => request<TranscriptState>('PUT', `/attachments/${attachmentId}/speakers`, names),
+  speakerNames: (reportId: string, signal?: S) => request<{ names: string[] }>('GET', `/reports/${reportId}/speaker-names`, undefined, signal),
+  transcribeAgain: (attachmentId: string) => request<TranscriptState>('POST', `/attachments/${attachmentId}/transcribe`),
   transcriptionStatus: (signal?: S) => request<WorkerStatus>('GET', '/transcription/status', undefined, signal),
 
   search: (q: string, signal?: S) => request<SearchHit[]>('GET', `/search${qs({ q, limit: 30 })}`, undefined, signal),

@@ -5,3 +5,4 @@ dist/
 web/dist/
 .env
 .env.compose
+cli/__pycache__/

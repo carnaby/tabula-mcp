@@ -92,6 +92,13 @@
       "when": 1793901464594,
       "tag": "0012_search_tabula_config",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1794158379603,
+      "tag": "0013_speakers",
+      "breakpoints": true
     }
   ]
 }

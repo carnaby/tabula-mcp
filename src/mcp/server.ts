@@ -3,7 +3,7 @@ import { z } from 'zod';
 import {
   type AgentContext, agentDeprecate, agentFindNotes, agentFindThoughts, agentGet, agentListFiles, agentListProjects,
   agentDeleteFile, agentReadFile, agentRecall, agentRemember, agentSaveThought, agentSearch, agentUpdateThought, agentWriteFile,
-  agentCreateReport, agentGetFrame, agentGetReport, agentGetTranscript, agentListReports, agentUpdateReport, agentViewAttachment, type AgentImage,
+  agentCreateReport, agentGetFrame, agentGetReport, agentGetTranscript, agentListReports, agentNameSpeakers, agentUpdateReport, agentViewAttachment, type AgentImage,
   type AgentBlock, type AgentFileRead,
 } from '../agent/operations.js';
 import { REPORT_STATUSES } from '../domain/reports.js';
@@ -361,6 +361,18 @@ export function buildMcpServer(ctx: McpContext): McpServer {
       }),
     },
     (a) => run(() => agentGetTranscript(ctx, a)),
+  );
+
+  server.registerTool(
+    'name_speakers',
+    {
+      description: D.name_speakers,
+      inputSchema: z.object({
+        attachment_id: attachmentId,
+        names: z.record(z.string(), z.string()).describe('Speaker → name, e.g. {"S2": "Tomáš"}; only the speakers whose names you know.'),
+      }),
+    },
+    (a) => run(() => agentNameSpeakers(ctx, a)),
   );
 
   return server;

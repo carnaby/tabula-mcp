@@ -106,7 +106,7 @@ Requirements on that computer: an NVIDIA GPU with a current driver (RTX 50xx car
 | `tabula worker --log` | logs to `%LOCALAPPDATA%\tabula\worker.log` instead of the console (for the Task Scheduler) |
 | `tabula worker [--once] --events` | for the tray app: JSON events on stdout (one per line), `stop` on stdin, logs to `worker.log` |
 | `tabula worker queue [--json]` | how many recordings wait on the server and when this computer's worker was last seen (asking does not count as being seen) |
-| `tabula worker setup [<url>] [--token-stdin]` | creates or updates the Python environment and saves the worker token |
+| `tabula worker setup [<url>] [--token-stdin] [--diarize]` | creates or updates the Python environment and saves the worker token; `--diarize` also sets up speaker recognition |
 | `tabula worker doctor` | checks the whole chain and says what to fix |
 
 Each job runs in its own Python process, which loads the model and exits, so a waiting worker holds no GPU memory and the GPU stays free for games and 3D work. There is no fallback to the CPU: without CUDA the worker gives the job back and stops, and `doctor` says why.
@@ -133,11 +133,33 @@ The settings in `~/.tabula/config.json` (`setup` writes them; edit what you want
 
 - `model`: `large-v3`, or `large-v3-turbo` (faster, nearly as good).
 - `language`: a language code, or `auto` to detect it for each recording.
-- `initial_prompt`: names of your projects and technical words, so Whisper spells them right.
+- `initial_prompt`: names of your projects and technical words, so Whisper spells them right; the worker adds the report's project to it on every job.
+- `diarize`: written by `setup --diarize`; remove it to turn speaker recognition off.
 - `ffmpeg`: the program to run, if it is not on `PATH` (a full path works).
 - `TABULA_WORKER_TOKEN` and `TABULA_URL` in the environment override the saved values; `TABULA_DATA_DIR` moves the data folder.
 
-The log shows job ids, sizes, lengths, times, project and report title — never tokens or what was said. A job that fails is offered again after 1 and after 4 minutes; after the third failure the report shows it as failed with *Try again*. If the computer sleeps or the worker stops in the middle of a job, its 10-minute lease runs out and the job goes back to the queue. Transcripts stay when the recording is deleted after the report is closed, and search finds their words.
+The log shows job ids, sizes, lengths, times, project and report title — never tokens or what was said. With speaker recognition it also logs how many speakers were found. A job that fails is offered again after 1 and after 4 minutes; after the third failure the report shows it as failed with *Try again*. If the computer sleeps or the worker stops in the middle of a job, its 10-minute lease runs out and the job goes back to the queue. Transcripts stay when the recording is deleted after the report is closed, and search finds their words.
+
+#### Speaker recognition (optional)
+
+When a recording catches a conversation — one person asks while another shows the app — the transcript can say who speaks on each line. A second model, [pyannote](https://github.com/pyannote/pyannote-audio) `speaker-diarization-community-1`, finds the voices (`S1`, `S2` … numbered by who speaks first; it works out how many there are by itself) and the worker joins its result with Whisper's word times. You give the speakers names in the app with a click, or Claude does when the content makes it clear (`name_speakers`). It runs on the GPU only, after Whisper has finished, in its own Python environment (about 5 GB, mostly PyTorch with CUDA).
+
+```powershell
+tabula worker setup https://tabula.example.com --diarize
+tabula worker doctor
+```
+
+`--diarize` does the usual setup first, then creates `%LOCALAPPDATA%\tabula\diarize\venv` (Python 3.10 or newer), installs `pyannote.audio>=4.0.7,<5` with `torch==2.11.0`, `torchaudio==2.11.0` and `torchcodec==0.17.0`, and then — last, because pyannote's dependencies bring the CPU build — the CUDA 12.8 build of PyTorch from `https://download.pytorch.org/whl/cu128`. It puts `diarize.py` next to the environment and saves `"diarize": { "python": …, "script": … }` in the `worker` section of `config.json` once the model runs on the GPU. Without that entry the worker transcribes as before.
+
+The model is free but gated: Hugging Face hands it out after you accept its conditions once. `setup` stops and says so when it cannot download it:
+
+1. Sign in at [huggingface.co](https://huggingface.co) (a free account is enough).
+2. Open [pyannote/speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1) and accept the conditions.
+3. Create a token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens): type *Read* (or *Fine-grained* with "Read access to contents of all public gated repos you can access").
+4. Save it with the `hf` command of the new environment, e.g. `& "$env:LOCALAPPDATA\tabula\diarize\venv\Scripts\hf.exe" auth login`. The token stays in the Hugging Face cache (`~/.cache/huggingface/token`); Tabula never reads, prints or stores it.
+5. Run `tabula worker setup --diarize` again.
+
+The model is downloaded once; jobs then run offline from the cache, and pyannote's usage metrics are turned off. `doctor` checks the environment, that PyTorch sees the GPU, the token and the cached model, then recognizes the speakers of a 5 s sample. If speaker recognition fails for a recording (no GPU memory, a broken environment), the transcript is still delivered and the report says "Speakers not recognized: …". No voice prints are kept: speakers are only told apart within one recording.
 
 #### Starting the worker automatically (Windows)
 
@@ -169,7 +191,7 @@ The **Tabula tray** app (Windows; Ubuntu builds too) puts the worker next to the
 
 Install:
 
-1. Set up the worker first (`tabula worker setup`, `tabula worker doctor`, above). The tray needs `tabula` 1.3.0 or newer: `tabula update` (it also refreshes `transcribe.py`, which reports the progress).
+1. Set up the worker first (`tabula worker setup`, `tabula worker doctor`, above). The tray needs `tabula` 1.3.0 or newer: `tabula update` (it also refreshes `transcribe.py` and `diarize.py`). With speaker recognition use a tray from this version on: it shows the step as *Recognizing speakers*; an older tray logs that step as an ignored line.
 2. Download the installer from the repository's Releases (tags `tray-v…`): the `.msi` for Windows, the `.deb` or the `.AppImage` for Ubuntu. The installers are not signed: the first time Windows SmartScreen says "Windows protected your PC" — choose *More info* → *Run anyway*. A tray started by the installer restarts itself once, because it would inherit the installer's Redirection Guard, under which programs behind folder links, such as scoop's, do not start.
 
 | Icon | Means |
@@ -237,7 +259,8 @@ docs/superpowers/ — specs/2026-10-20-mixer-design.md (10-20, 18.4 KB), plans/2
 | `find_notes(query?, tag?, limit?)` | Reads your Notes — only when you mention them or paste a reference. |
 | `save_thought` · `update_thought` · `find_thoughts` | The Thoughts notebook, on request; edits use `expected_version` and keep the previous version. |
 | `list_reports(project?, status?, query?)` · `get_report(id)` | Bug reports and their attachments (photos, videos, voice notes, saved frames; a frame may carry the user's note) with links valid for 24 hours; videos and voice notes carry their transcript (`[2:41] what was said`) or its status. `query` also matches transcripts. |
-| `get_transcript(attachment_id, offset?)` | The whole transcript of a video or voice note in parts of 50 000 characters, with the times to pick frames from. |
+| `get_transcript(attachment_id, offset?)` | The whole transcript of a video or voice note in parts of 50 000 characters, with the times to pick frames from. With several speakers the lines read `[0:12] Eva: …` and a `Speakers: S1 = Eva (named by user), S2 = not named` line follows the header (`get_report` has it as `speakers`). |
+| `name_speakers(attachment_id, names)` | Names speakers (`{"S2": "Tomáš"}`) when the transcript makes it clear who is who. Never replaces a name the user gave; replaces an agent's; says what it wrote and what it skipped. |
 | `create_report(project, title, description?)` · `update_report(id, triage? \| append_triage?, status?, expected_version?)` | Records a bug on request; writes the analysis and tasks (the triage) and the status. `expected_version` is required to replace the triage or the title and to close a report (closing deletes its video and audio after the grace period). |
 | `view_attachment(id)` · `get_frame(video_id, at)` | A photo or saved frame as an image (with the user's note, if any); a still from a video at a moment (`"2:41"`), saved to the report so it survives the video. |
 | `list_projects()` · `setup_project(id, name?, description?)` | Projects with file counts; onboarding on explicit request (returns the CLAUDE.md section, a `.tabula.json` and the next step: `tabula status` before the first push). |
@@ -278,7 +301,7 @@ A responsive React app with its own small UI kit (`web/src/ui`), light and dark 
 - **Thoughts** and **Notes** — card grids with search, tag chips, sort and pinning; a Markdown editor with Write / Split / Preview and Ctrl/⌘ S. Thoughts also keep a version history and warn when an agent changed the text while you were typing.
 - **Global** — the rules table (kind, author, status, prefix search; edit, retire, supersede) and the recall preview.
 - **Project** — **State** (the state files rendered as Markdown), **Files** (list, preview, the last 20 versions with restore, delete and restore), **Recall preview** (the exact digest with a budget meter) and **Setup** (the CLAUDE.md section, a `.tabula.json`, the install commands and the hook).
-- **Bug reports** — capture a bug on the phone while testing: pick the project, say what's wrong, add photos, screen recordings (from the gallery, or *Record screen* on a desktop) and voice notes. Uploads start at once and show their progress. While a video is paused, *Save frame* keeps that moment as a picture; select a saved frame to play from there, add a note ("what the video doesn't say") or delete it. The transcript follows playback. An agent writes the **triage** (cause and tasks) into the report; it shows up when you come back to the window. Also a tab on each project. Videos and voice notes get a transcript with clickable times once the transcription worker has processed them (see below); a line under *Bug reports* in the sidebar shows whether the worker is running.
+- **Bug reports** — capture a bug on the phone while testing: pick the project, say what's wrong, add photos, screen recordings (from the gallery, or *Record screen* on a desktop) and voice notes. Uploads start at once and show their progress. While a video is paused, *Save frame* keeps that moment as a picture; select a saved frame to play from there, add a note ("what the video doesn't say") or delete it. The transcript follows playback. An agent writes the **triage** (cause and tasks) into the report; it shows up when you come back to the window. Also a tab on each project. Videos and voice notes get a transcript with clickable times once the transcription worker has processed them (see below); a line under *Bug reports* in the sidebar shows whether the worker is running. With speaker recognition each change of speaker shows a coloured label (`S1`, or the name); click it to name the speaker, with the names used before in the report and the project as suggestions. A name Claude gave has a dashed outline and *suggested by Claude* until you confirm it. *⋯ → Transcribe again* sends an open report's recording to the worker once more (the names are cleared, since a new run may number the speakers differently).
 - **Search** (Ctrl/⌘ K) — global rules, project files, notes, thoughts and bug reports at once; words match as prefixes and diacritics are ignored. A pasted reference (`tabula:d86d86e7`) opens its record directly — a rule in its dialog, an attachment inside its report (a frame selected, the video at its moment); a shorter one (`tabula:d86d`) lists what it matches to pick from.
 - **References** — the Tabula icon in an editor's bar, a rule's dialog, a file and every attachment or frame copies the record's reference. Paste it into a chat with Claude and Claude opens exactly that record.
 

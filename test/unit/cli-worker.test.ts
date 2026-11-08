@@ -12,6 +12,8 @@ type CliWorker = {
   normalizeTranscript(raw: unknown): { language: string | null; duration_ms: number | null; segments: Segment[] };
   dataHome(env: Record<string, string | undefined>, platform: string, home: string): string;
   venvPython(venv: string, platform: string): string;
+  venvProgram(venv: string, name: string, platform: string): string;
+  huggingFaceSteps(hf: string, platform: string): string[];
   commandLine(value: unknown, what: string): string[];
   progressMs(line: string): number | null;
   wavDurationMs(bytes: number): number;
@@ -23,8 +25,8 @@ type CliWorker = {
 const cli = (await import(new URL('../../cli/tabula.mjs', import.meta.url).href)) as CliWorker;
 
 describe('worker helpers of the CLI', () => {
-  it('is version 1.3.0 and exits 3 for a broken transcription setup', () => {
-    expect(cli.VERSION).toBe('1.3.0');
+  it('is version 1.4.0 and exits 3 for a broken transcription setup', () => {
+    expect(cli.VERSION).toBe('1.4.0');
     expect(cli.TRANSCRIBER_ENVIRONMENT_EXIT).toBe(3);
   });
 
@@ -54,6 +56,9 @@ describe('worker helpers of the CLI', () => {
     expect(cli.shortError('a\n  b\tc')).toBe('a b c');
     expect(cli.shortError('x'.repeat(400))).toHaveLength(300);
     expect(cli.shortError('')).toBe('no details');
+    // An emoji at the cut boundary is kept whole or dropped whole, never split.
+    expect(cli.shortError(`${'x'.repeat(298)}😀tail`)).toBe(`${'x'.repeat(298)}😀…`);
+    expect(cli.shortError(`${'x'.repeat(299)}😀tail`)).toBe(`${'x'.repeat(299)}…`);
   });
 
   it("recognises ffmpeg's errors for a recording without sound", () => {
@@ -100,6 +105,22 @@ describe('worker helpers of the CLI', () => {
   it('finds the Python of a virtual environment', () => {
     expect(cli.venvPython('V', 'win32')).toBe(join('V', 'Scripts', 'python.exe'));
     expect(cli.venvPython('V', 'linux')).toBe(join('V', 'bin', 'python'));
+  });
+
+  it('finds the programs of a virtual environment', () => {
+    expect(cli.venvProgram(join('C:', 'data', 'venv'), 'hf', 'win32')).toBe(join('C:', 'data', 'venv', 'Scripts', 'hf.exe'));
+    expect(cli.venvProgram(join('/data', 'venv'), 'hf', 'linux')).toBe(join('/data', 'venv', 'bin', 'hf'));
+  });
+
+  it('says exactly what to do on Hugging Face, with the full path of hf', () => {
+    const win = cli.huggingFaceSteps('C:\\data\\venv\\Scripts\\hf.exe', 'win32').join('\n');
+    expect(win).toContain('https://huggingface.co/pyannote/speaker-diarization-community-1');
+    expect(win).toContain('https://huggingface.co/settings/tokens');
+    expect(win).toMatch(/type "Read"/);
+    expect(win).toMatch(/Fine-grained.*public gated repos/);
+    expect(win).toContain('& "C:\\data\\venv\\Scripts\\hf.exe" auth login');
+    expect(win).toContain('tabula worker setup --diarize');
+    expect(cli.huggingFaceSteps('/data/venv/bin/hf', 'linux').join('\n')).toContain('"/data/venv/bin/hf" auth login');
   });
 
   it('accepts a program as a path or as a list of strings', () => {

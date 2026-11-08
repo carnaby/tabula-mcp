@@ -364,6 +364,8 @@ mod tests {
                 report_url: "https://tabula.example.com/#/reports/r1?project=demo".into(),
             }),
             (r#"{"type":"phase","time":"t","id":"j1","phase":"transcribe"}"#, WorkerEvent::Phase { id: "j1".into(), phase: JobPhase::Transcribe }),
+            (r#"{"type":"phase","time":"t","id":"j1","phase":"diarize"}"#, WorkerEvent::Phase { id: "j1".into(), phase: JobPhase::Diarize }),
+            (r#"{"type":"phase","time":"t","id":"j1","phase":"summarize"}"#, WorkerEvent::Phase { id: "j1".into(), phase: JobPhase::Other("summarize".into()) }),
             (r#"{"type":"progress","time":"t","id":"j1","done_ms":400,"total_ms":null}"#, WorkerEvent::Progress { id: "j1".into(), done_ms: 400, total_ms: None }),
             (r#"{"type":"done","time":"t","id":"j1","segments":2}"#, WorkerEvent::Done { id: "j1".into(), segments: 2 }),
             (r#"{"type":"failed","time":"t","id":"j1","message":"boom","retry_at":null}"#, WorkerEvent::Failed { id: "j1".into(), message: "boom".into(), retry_at: None }),

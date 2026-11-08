@@ -6,6 +6,8 @@ Options arrive as JSON (UTF-8) on stdin:
    "compute_type": "float16", "initial_prompt": "<text>" or null, "beam_size": 5}
 The result goes to stdout as JSON (ASCII-escaped):
   {"language": "sk", "duration_ms": 4200, "segments": [{"start_ms": 0, "end_ms": 1500, "text": "..."}]}
+While it works, stderr gets "PROGRESS <end_ms>" after a segment, at most once a second; the worker shows the
+progress and keeps these lines out of its error messages.
 `transcribe.py --check` prints the Python, faster-whisper and CTranslate2 versions and the CUDA devices instead.
 
 Exit codes: 0 done; 1 this recording failed; 3 the environment is unusable (no CUDA device, missing packages or
@@ -21,6 +23,9 @@ import sys
 import time
 
 ENVIRONMENT = 3
+
+# How often stderr gets a PROGRESS line.
+PROGRESS_EVERY_S = 1.0
 
 # Running out of GPU memory (a game is running) is a failure of the moment, not of the setup: that job is retried later.
 OUT_OF_MEMORY = re.compile(r"out of memory|CUDA_ERROR_OUT_OF_MEMORY|ALLOC_FAILED", re.IGNORECASE)
@@ -93,6 +98,19 @@ def load_wav(path):
     return np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
 
 
+def collect(pieces, clock=time.monotonic):
+    """The segments as the worker expects them, with a PROGRESS line on stderr at most once a second."""
+    segments = []
+    last = None
+    for s in pieces:
+        segments.append({"start_ms": round(s.start * 1000), "end_ms": round(s.end * 1000), "text": s.text.strip()})
+        now = clock()
+        if last is None or now - last >= PROGRESS_EVERY_S:
+            last = now
+            print(f"PROGRESS {round(s.end * 1000)}", file=sys.stderr, flush=True)
+    return segments
+
+
 def transcribe(opts):
     ctranslate2, faster_whisper = import_whisper()
     device = opts.get("device") or "cuda"
@@ -112,7 +130,7 @@ def transcribe(opts):
             initial_prompt=opts.get("initial_prompt") or None,
         )
         # Segments are produced lazily: the work happens while iterating.
-        segments = [{"start_ms": round(s.start * 1000), "end_ms": round(s.end * 1000), "text": s.text.strip()} for s in pieces]
+        segments = collect(pieces)
     except Exception as e:  # also ImportError from a lazily loaded DLL; fail() exits with SystemExit and is not caught here
         fail(exit_code_for(str(e)), f"{type(e).__name__}: {e}")
     print(f"transcribed {len(audio) / 16000:.1f} s of audio in {time.time() - started:.1f} s", file=sys.stderr, flush=True)

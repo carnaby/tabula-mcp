@@ -69,7 +69,7 @@ A repository opts in with a `.tabula.json` in its root, committed:
 | `tabula rm <path>` | deletes a file on the server (restorable in the UI) |
 | `tabula pull --hook` | for the SessionStart hook: silent without `.tabula.json` or a login, at most 5 seconds (when time runs out it keeps what it restored and says how many files are missing), always exit 0 |
 | `tabula login <url>` · `install` · `update` | credentials (or `TABULA_URL` / `TABULA_TOKEN`), PATH shims and the hook snippet, self-update |
-| `tabula worker [--once] [--log]` · `worker setup` · `worker doctor` | transcribes bug-report recordings on a PC with an NVIDIA GPU — see [Transcription worker](#transcription-worker) |
+| `tabula worker [--once] [--log]` · `worker setup` · `worker doctor` · `worker queue [--json]` | transcribes bug-report recordings on a PC with an NVIDIA GPU — see [Transcription worker](#transcription-worker); `--events` and `worker queue --json` are for the [tray app](#tray-app) |
 
 Each clone keeps the hash it last synced for every file in `<git-dir>/tabula-sync.json` (per worktree, never committed). The server accepts a change only if it is based on the server's current version, so two machines editing the same file produce a **conflict** instead of a silent overwrite: merge by hand, or take one side with `--force`. Exit codes: 0 OK, 1 error, 2 finished with conflicts.
 
@@ -104,6 +104,8 @@ Requirements on that computer: an NVIDIA GPU with a current driver (RTX 50xx car
 | `tabula worker` | waits for jobs and transcribes them until Ctrl+C (a job in progress goes back to the queue) |
 | `tabula worker --once` | transcribes what is queued, then exits |
 | `tabula worker --log` | logs to `%LOCALAPPDATA%\tabula\worker.log` instead of the console (for the Task Scheduler) |
+| `tabula worker [--once] --events` | for the tray app: JSON events on stdout (one per line), `stop` on stdin, logs to `worker.log` |
+| `tabula worker queue [--json]` | how many recordings wait on the server and when this computer's worker was last seen (asking does not count as being seen) |
 | `tabula worker setup [<url>] [--token-stdin]` | creates or updates the Python environment and saves the worker token |
 | `tabula worker doctor` | checks the whole chain and says what to fix |
 
@@ -139,6 +141,8 @@ The log shows job ids, sizes, lengths, times, project and report title — never
 
 #### Starting the worker automatically (Windows)
 
+The [tray app](#tray-app) does this with a click and shows what the worker does; the Task Scheduler below remains an alternative without it.
+
 Usually you start the worker when you need it — `tabula worker --once` — and the report page reminds you when a recording waits and shows when the worker was last seen. To run it in the background whenever you sign in, create a task in PowerShell (creating a task that starts at sign-in needs a PowerShell opened with *Run as administrator*; the task still runs as you):
 
 ```powershell
@@ -158,6 +162,33 @@ At sign-in a console window may flash briefly; the worker itself then runs witho
 | watch the log | `Get-Content "$env:LOCALAPPDATA\tabula\worker.log" -Tail 20 -Wait` |
 
 The Task Scheduler stops a task after 3 days by default; to keep the worker running longer, open *Task Scheduler → Tabula worker → Settings* and clear *Stop the task if it runs longer than*.
+
+#### Tray app
+
+The **Tabula tray** app (Windows; Ubuntu builds too) puts the worker next to the clock: its icon shows whether the worker runs, what it transcribes and whether a recording waits on the server. One click transcribes what is queued, or starts the worker until you stop it. The tray runs `tabula worker` for you; the URL and the worker token stay with the CLI (`tabula worker setup`), the tray never reads them.
+
+Install:
+
+1. Set up the worker first (`tabula worker setup`, `tabula worker doctor`, above). The tray needs `tabula` 1.3.0 or newer: `tabula update` (it also refreshes `transcribe.py`, which reports the progress).
+2. Download the installer from the repository's Releases (tags `tray-v…`): the `.msi` for Windows, the `.deb` or the `.AppImage` for Ubuntu. The installers are not signed: the first time Windows SmartScreen says "Windows protected your PC" — choose *More info* → *Run anyway*.
+
+| Icon | Means |
+|---|---|
+| grey | the worker is stopped and nothing waits |
+| grey with an orange dot | recordings wait on the server (the tooltip says how many); one notification "New recording to transcribe" says so when the first arrives — clicking it opens the window, but only while the notification is still on screen (not from the Action Center) |
+| green | the worker is starting, waiting for jobs or stopping — or runs outside the tray (in a terminal, the Task Scheduler): then *Process queue*, *Start* and *Stop* are off and the tooltip says "Running outside the tray" |
+| blue | transcribing; the tooltip shows the step or the progress, the project and the report |
+| red | the worker stopped with an error, or the queue cannot be checked; the tooltip says why |
+
+Right click: a status line (e.g. "2 waiting · worker stopped"), *Process queue* (`tabula worker --once`), *Start* (until you stop it), *Stop* (a job in progress goes back to the queue; while stopping it reads *Stop now* and quits at once), *Open window*, *Start Tabula tray at sign-in* (starts the tray, not the worker), *Quit* (stops the worker first and waits up to 15 s). A left click on the icon opens the window: the current job with a link to its report, the queue on the server, the last 200 log lines, *Run doctor* (only while no worker runs) and *Open log folder*. Closing the window only hides it. The worker logs to `worker.log` in the data folder, as with `--log`.
+
+The tray runs `node` from `PATH` and the CLI at `~/.tabula/tabula.mjs`. If yours are elsewhere, say so in `tray.json` in the data folder (`%LOCALAPPDATA%\tabula\tray.json`; on Ubuntu `~/.local/share/tabula/tray.json`); both keys are optional, other keys are refused, and the file is read again at every start, so a fix needs no restart:
+
+```json
+{ "node": "C:/Program Files/nodejs/node.exe", "cli": "D:/tools/tabula/tabula.mjs" }
+```
+
+On Ubuntu the tray needs `libwebkit2gtk-4.1-0` and `libayatana-appindicator3-1` at run time (the `.deb` installs them; for the `.AppImage`: `sudo apt install libwebkit2gtk-4.1-0 libayatana-appindicator3-1`). GNOME shows tray icons with the AppIndicator extension, which Ubuntu enables by default. Linux reports no clicks on the icon, so there the menu's *Open window* is the way in.
 
 ### The recall digest
 
@@ -377,6 +408,18 @@ pnpm test                   # Vitest; starts a throwaway Postgres via Testcontai
 TEST_DATABASE_URL=postgres://… pnpm test   # or use an existing throwaway database (it is wiped; the database name must contain "test", e.g. tabula_test, and must differ from DATABASE_URL)
 ```
 
+The tray app lives in `tray/` with its own `package.json` and lockfile (not part of the server's workspace):
+
+```bash
+pnpm --dir tray install
+pnpm --dir tray dev         # the tray with the window on http://localhost:1420
+pnpm --dir tray test        # cargo test: the state machine, the CLI processes (needs node on PATH)
+pnpm --dir tray build       # Windows: .msi in tray/src-tauri/target/release/bundle/msi/
+pnpm --dir tray icons       # after changing tray/icons/tray.svg: regenerates the committed PNGs
+```
+
+Building it needs Rust 1.90 or newer; on Windows also Visual Studio 2022 Build Tools with "Desktop development with C++" (WebView2 comes with Windows 11); on Ubuntu `sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev build-essential file`. A release: raise `version` in `tray/package.json`, `tray/src-tauri/Cargo.toml` and `tray/src-tauri/tauri.conf.json`, then push a tag `tray-v<version>`; the Tray workflow attaches the `.msi`, `.deb` and `.AppImage`.
+
 The tests cover the domain rules, the digest builder, the REST API, the MCP endpoint through a real MCP client, and the `tabula` command end to end against a real server and temporary git repositories (git must be installed).
 
 ### Layout
@@ -391,6 +434,7 @@ src/
   db/           Drizzle schema, client, migrations runner
   maintenance/  one-off data migrations run inside the container
 cli/            the tabula command (one dependency-free file, served at /cli/tabula.mjs; the server reuses its glob matcher)
+tray/           the tray app for tabula worker (Tauri 2: Rust core in src-tauri/, window in src/); own package.json and lockfile
 drizzle/        SQL migrations (generated search column, GIN indexes, the global project)
 web/            React UI (web/src/ui is the UI kit)
 templates/      protocol snippets for CLAUDE.md, claude.ai and the SessionStart hook
@@ -410,6 +454,7 @@ test/           Vitest: unit, database, HTTP/MCP and end-to-end CLI tests
 - **ffmpeg reads untrusted files**, so it runs with only `PATH` in its environment (never the token or the database URL), reads local files only, with the demuxer fixed by the detected type, refuses pictures over 64 megapixels, and at most two ffmpeg/ffprobe processes run at once. Its error output stays in the server log.
 - **There is no total storage quota and no limit on concurrent uploads**, only `TABULA_MEDIA_MAX_MB` per file: with a single token, whoever can upload can already do everything else. Watch the free space of the media volume; video and audio of closed reports are deleted after `TABULA_MEDIA_PURGE_HOURS`.
 - **The transcription worker has its own token**, `TABULA_WORKER_TOKEN`, valid only on `/api/worker/*` (take a job, extend its lease, hand in the transcript or the error); `TABULA_TOKEN` is refused there and the worker token is refused everywhere else, including `/mcp`. The worker downloads recordings only through the signed, expiring `/media` links that come with its jobs. `/cli/transcribe.py` is public like the CLI. The worker passes its child processes (ffmpeg, Python) an environment without `TABULA_*` variables and never logs tokens or transcript text.
+- **The tray app never reads a token**: it runs the CLI, which keeps the URL and the worker token. `GET /api/worker/queue` (how many jobs wait) needs the worker token but does not count as a sign of life, so the tray's checks never make a stopped worker look alive.
 - `/cli/tabula.mjs` and `/cli/version` are public: they serve the CLI from this repository and no data.
 - Input is validated at the boundary: length limits, slug format, and NUL characters rejected before they reach Postgres.
 

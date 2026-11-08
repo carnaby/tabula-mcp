@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <!-- The Tabula tablet. scripts/icons.mjs fills in {{glyph}} (the state colour), {{dot}} and {{dotOpacity}} (the
+       orange badge for waiting recordings). The lines and the ring around the badge are cut out, so the icon works on
+       any taskbar colour. -->
+  <defs>
+    <mask id="cut">
+      <rect width="32" height="32" fill="#fff"/>
+      <rect x="8" y="11" width="14" height="2.5" rx="1.25" fill="#000"/>
+      <rect x="8" y="16" width="14" height="2.5" rx="1.25" fill="#000"/>
+      <rect x="8" y="21" width="9" height="2.5" rx="1.25" fill="#000"/>
+      <circle cx="25" cy="7" r="7.5" fill="#000" opacity="{{dotOpacity}}"/>
+    </mask>
+  </defs>
+  <rect x="3" y="3" width="24" height="26" rx="5" fill="{{glyph}}" mask="url(#cut)"/>
+  <circle cx="25" cy="7" r="5.5" fill="{{dot}}" opacity="{{dotOpacity}}"/>
+</svg>

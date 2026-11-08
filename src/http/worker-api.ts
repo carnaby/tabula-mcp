@@ -3,11 +3,18 @@ import { z } from 'zod';
 import type { Config } from '../config.js';
 import type { Db } from '../db/client.js';
 import {
-  claimJob, type ClaimedJob, completeJob, failJob, heartbeatJob, jobSignal, queuedCount, releaseJob, touchWorker,
+  claimJob, type ClaimedJob, completeJob, failJob, heartbeatJob, jobCounts, jobSignal, queuedCount, releaseJob, touchWorker, workerSeenAt,
 } from '../domain/jobs.js';
 import { signMediaPath } from '../media/sign.js';
 import { requireBearer } from './auth.js';
 import { parse } from './parse.js';
+
+declare module 'fastify' {
+  interface FastifyContextConfig {
+    /** The call is no sign of life of the worker: the tray app asks it, not a running worker. */
+    quiet?: boolean;
+  }
+}
 
 /** The longest a claim waits for work before answering 204. */
 export const MAX_CLAIM_WAIT_S = 30;
@@ -60,12 +67,20 @@ export const workerRoutes: FastifyPluginAsync<{ db: Db; config: Config }> = asyn
     }
     return auth(req, reply);
   });
-  // Every authenticated call is a sign of life ("worker last seen" in the UI).
+  // Every authenticated call is a sign of life ("worker last seen" in the UI), except the tray's questions.
   app.addHook('preHandler', async (req) => {
+    if (req.routeOptions.config.quiet) return;
     await touchWorker(db, workerName(req.headers['x-tabula-worker']), workerVersion(req.headers['x-tabula-version']));
   });
 
   app.get('/ping', async () => ({ ok: true, queued: await queuedCount(db) }));
+
+  // The tray app asks this every minute; it must not make a stopped worker look alive.
+  app.get('/queue', { config: { quiet: true } }, async (req) => {
+    const name = workerName(req.headers['x-tabula-worker']);
+    const [counts, seen] = await Promise.all([jobCounts(db), workerSeenAt(db, name)]);
+    return { ...counts, worker: seen ? { name, last_seen: seen.toISOString() } : null };
+  });
 
   app.post('/jobs/claim', async (req, reply) => {
     const { wait } = parse(z.object({ wait: z.number().int().min(0).max(MAX_CLAIM_WAIT_S).default(MAX_CLAIM_WAIT_S) }), req.body ?? {});

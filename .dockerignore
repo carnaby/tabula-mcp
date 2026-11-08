@@ -4,6 +4,7 @@ web/dist
 docs
 .git
 .superpowers
+tray
 .env
 .env.*
 !.env.example

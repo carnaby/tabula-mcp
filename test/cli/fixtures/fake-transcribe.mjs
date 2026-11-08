@@ -1,4 +1,4 @@
-// Stands in for cli/transcribe.py in the worker tests (run by node). FAKE_TRANSCRIBE: ok (default) | fail | env | slow.
+// Stands in for cli/transcribe.py in the worker tests (run by node). FAKE_TRANSCRIBE: ok (default) | fail | noisy | env | slow.
 // --check answers like the real script; FAKE_TRANSCRIBE_CUDA=0 reports no CUDA device. FAKE_TRANSCRIBE_LOG gets the
 // options of every run as one JSON line.
 import { appendFileSync, existsSync } from 'node:fs';
@@ -17,8 +17,12 @@ if (process.env.FAKE_TRANSCRIBE_LOG) {
   appendFileSync(process.env.FAKE_TRANSCRIBE_LOG, `${JSON.stringify({ ...options, wavExists: existsSync(options.wav) })}\n`);
 }
 const mode = process.env.FAKE_TRANSCRIBE ?? 'ok';
+const progress = (ms) => process.stderr.write(`PROGRESS ${ms}\n`);
 if (mode === 'fail') {
-  process.stderr.write('Traceback: boom\n');
+  // A PROGRESS line split over two writes: the worker must join the halves before it filters.
+  process.stderr.write('PROGRESS 4');
+  await new Promise((r) => setTimeout(r, 30));
+  process.stderr.write('00\nTraceback: boom\n');
   process.exit(1);
 }
 if (mode === 'noisy') {
@@ -33,7 +37,13 @@ if (mode === 'env') {
   process.stderr.write('transcribe.py: CUDA is not available (no NVIDIA GPU or driver found)\n');
   process.exit(3);
 }
-if (mode === 'slow') await new Promise((r) => setTimeout(r, 8000));
+if (mode === 'slow') {
+  progress(400);
+  await new Promise((r) => setTimeout(r, 8000));
+}
+// Two reports within one second: the worker turns only the first into a progress event.
+progress(400);
+progress(800);
 process.stdout.write(JSON.stringify({
   language: 'sk',
   duration_ms: 4200,

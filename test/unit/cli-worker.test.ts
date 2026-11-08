@@ -13,15 +13,33 @@ type CliWorker = {
   dataHome(env: Record<string, string | undefined>, platform: string, home: string): string;
   venvPython(venv: string, platform: string): string;
   commandLine(value: unknown, what: string): string[];
+  progressMs(line: string): number | null;
+  wavDurationMs(bytes: number): number;
+  reportUrl(server: string, report: { id: string; project: string }): string;
+  errorKind(e: unknown): string | null;
 };
 
 // A non-literal specifier keeps TypeScript from looking for type declarations of the plain .mjs file.
 const cli = (await import(new URL('../../cli/tabula.mjs', import.meta.url).href)) as CliWorker;
 
 describe('worker helpers of the CLI', () => {
-  it('is version 1.2.0 and exits 3 for a broken transcription setup', () => {
-    expect(cli.VERSION).toBe('1.2.0');
+  it('is version 1.3.0 and exits 3 for a broken transcription setup', () => {
+    expect(cli.VERSION).toBe('1.3.0');
     expect(cli.TRANSCRIBER_ENVIRONMENT_EXIT).toBe(3);
+  });
+
+  it('reads the PROGRESS lines of the transcriber', () => {
+    expect(cli.progressMs('PROGRESS 4200')).toBe(4200);
+    expect(cli.progressMs('PROGRESS 0  ')).toBe(0);
+    for (const line of ['', 'PROGRESS', 'PROGRESS -1', 'PROGRESS 4.2', 'progress 1', 'Traceback: PROGRESS 1', 'PROGRESS 1 2']) {
+      expect(cli.progressMs(line), line).toBeNull();
+    }
+  });
+
+  it('measures the WAV that ffmpeg wrote (16 kHz mono 16-bit after a 44-byte header)', () => {
+    expect(cli.wavDurationMs(44 + 32_000)).toBe(1000);
+    expect(cli.wavDurationMs(44)).toBe(0);
+    expect(cli.wavDurationMs(0)).toBe(0);
   });
 
   it('formats clock times like the server', () => {
@@ -89,5 +107,19 @@ describe('worker helpers of the CLI', () => {
     expect(cli.commandLine(['node', 'fake ffmpeg.mjs'], 'ffmpeg')).toEqual(['node', 'fake ffmpeg.mjs']);
     expect(() => cli.commandLine('', 'python')).toThrow(/worker\.python/);
     expect(() => cli.commandLine([1], 'python')).toThrow(/worker\.python/);
+  });
+
+  it('links a report the way the web UI routes it', () => {
+    expect(cli.reportUrl('https://tabula.example.com', { id: 'r1', project: 'demo' })).toBe('https://tabula.example.com/#/reports/r1?project=demo');
+    expect(cli.reportUrl('https://tabula.example.com', { id: 'r1', project: 'a&b' })).toBe('https://tabula.example.com/#/reports/r1?project=a%26b');
+  });
+
+  it('names the kind of a worker error for --events', () => {
+    expect(cli.errorKind({ rejected: true })).toBe('rejected');
+    expect(cli.errorKind({ disabled: true })).toBe('disabled');
+    expect(cli.errorKind({ config: true })).toBe('config');
+    expect(cli.errorKind({ environment: true })).toBe('environment');
+    expect(cli.errorKind({ connection: true })).toBe('connection');
+    expect(cli.errorKind(new Error('a bug'))).toBeNull();
   });
 });

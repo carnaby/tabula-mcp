@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { eq, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { reportJobs } from '../../src/db/schema.js';
+import { reportJobs, workers } from '../../src/db/schema.js';
 import { buildApp } from '../../src/http/app.js';
 import { MediaStore } from '../../src/media/store.js';
 import { seedProject, TEST_TOKEN, TEST_WORKER_TOKEN, testConfig, useTestDb } from '../helpers.js';
@@ -75,6 +75,38 @@ describe('worker API', () => {
       const res = await off.inject({ method: 'GET', url: '/api/worker/ping', headers: worker });
       expect(res.statusCode).toBe(503);
       expect(res.json().message).toMatch(/TABULA_WORKER_TOKEN/);
+    } finally {
+      await off.close();
+    }
+  });
+
+  it("reports the queue and this computer's worker without counting as a sign of life", async () => {
+    await recordedReport();
+    await recordedReport();
+    expect((await asWorker('GET', '/queue')).json()).toEqual({ queued: 2, running: 0, worker: null });
+    expect(await db.select().from(workers)).toEqual([]);
+
+    await claim(); // a real worker call: studio-pc is seen now
+    const [seen] = await db.select().from(workers);
+    await sleep(30);
+    const res = await asWorker('GET', '/queue');
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ queued: 1, running: 1, worker: { name: 'studio-pc', last_seen: seen!.lastSeenAt.toISOString() } });
+    const [after] = await db.select().from(workers);
+    expect(after!.lastSeenAt.getTime()).toBe(seen!.lastSeenAt.getTime());
+
+    // Another computer's name: no record of it, and asking creates none.
+    const other = await app.inject({ method: 'GET', url: '/api/worker/queue', headers: { ...worker, 'x-tabula-worker': 'Other-PC' } });
+    expect(other.json()).toEqual({ queued: 1, running: 1, worker: null });
+    expect(await db.select().from(workers)).toHaveLength(1);
+  });
+
+  it('opens /queue only with the worker token', async () => {
+    expect((await app.inject({ method: 'GET', url: '/api/worker/queue', headers: main })).statusCode).toBe(401);
+    expect((await app.inject({ method: 'GET', url: '/api/worker/queue' })).statusCode).toBe(401);
+    const off = await buildApp({ config: testConfig({ workerToken: undefined }), db });
+    try {
+      expect((await off.inject({ method: 'GET', url: '/api/worker/queue', headers: worker })).statusCode).toBe(503);
     } finally {
       await off.close();
     }

@@ -220,6 +220,17 @@ describe('MCP endpoint', () => {
     await viaConnector.close();
   });
 
+  it('accepts a write_file whose JSON-RPC body is larger than the SDK default of 4 MiB', async () => {
+    await setSyncConfig(db, 'demo', { sync: ['docs/**'], state: [] });
+    // Each control character is escaped to six characters: a 1 MiB file makes a body of about 6 MiB.
+    const big = String.fromCharCode(1).repeat(1_048_576);
+    const client = await connect('/mcp', bearer);
+    const r = await client.callTool({ name: 'write_file', arguments: { project: 'demo', path: 'docs/escaped.md', content: big } });
+    expect(r.isError, textOf(r).slice(0, 200)).toBeFalsy();
+    expect((await getFile(db, 'demo', 'docs/escaped.md')).size).toBe(1_048_576);
+    await client.close();
+  });
+
   it('rejects a negative or fractional read_file offset', async () => {
     const client = await connect('/mcp', bearer);
     for (const offset of [-1, 1.5]) {

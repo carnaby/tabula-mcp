@@ -20,15 +20,15 @@
   "packageManager": "pnpm@10.33.2",
   "dependencies": {
     "@fastify/static": "^10.1.4",
-    "@modelcontextprotocol/node": "^2.0.0",
-    "@modelcontextprotocol/server": "^2.0.0",
+    "@modelcontextprotocol/node": "^2.1.2",
+    "@modelcontextprotocol/server": "^2.4.0",
     "drizzle-orm": "^0.45.2",
     "fastify": "^5.12.5",
     "postgres": "^3.4.9",
     "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@modelcontextprotocol/client": "^2.0.0",
+    "@modelcontextprotocol/client": "^2.4.0",
     "@testcontainers/postgresql": "^12.1.0",
     "@types/node": "^26.6.2",
     "@types/react": "^19.3.0",

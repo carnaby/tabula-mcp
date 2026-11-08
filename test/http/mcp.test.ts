@@ -231,6 +231,17 @@ describe('MCP endpoint', () => {
     await client.close();
   });
 
+  it('rejects a tool call whose arguments carry more than 10 000 elements', async () => {
+    const client = await connect('/mcp', bearer);
+    const tags = Array.from({ length: 10_001 }, (_, i) => `t${i}`);
+    const r = await client.callTool({ name: 'save_thought', arguments: { title: 't', body: 'b', tags } });
+    expect(r.isError).toBe(true);
+    expect(textOf(r)).toContain('more than the maximum of 10000 elements');
+    const ok = await client.callTool({ name: 'save_thought', arguments: { title: 't', body: 'b', tags: tags.slice(0, 100) } });
+    expect(ok.isError, textOf(ok).slice(0, 200)).toBeFalsy();
+    await client.close();
+  });
+
   it('rejects a negative or fractional read_file offset', async () => {
     const client = await connect('/mcp', bearer);
     for (const offset of [-1, 1.5]) {

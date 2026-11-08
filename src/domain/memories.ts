@@ -2,7 +2,7 @@ import { and, asc, count, desc, eq, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { memories } from '../db/schema.js';
 import { badRequest, conflict, notFound } from './errors.js';
-import { matchesPrefix, type Page, type PageQuery, pageWindow, prefixTsQuery, searchTsQuery } from './paging.js';
+import { matchesPrefix, type Page, type PageQuery, pageWindow, prefixTsQuery } from './paging.js';
 import { requireProject } from './projects.js';
 import { type MemoryKind, normalizeTags, validateMemoryText } from './validation.js';
 
@@ -125,27 +125,6 @@ export async function deprecateMemory(db: Db, id: string, reason: string): Promi
 export async function deleteMemory(db: Db, id: string): Promise<void> {
   const deleted = await db.delete(memories).where(eq(memories.id, id)).returning({ id: memories.id });
   if (deleted.length === 0) throw notFound(`memory ${id} does not exist`);
-}
-
-export async function listMemories(
-  db: Db,
-  f: { projectId?: string; kind?: MemoryKind; status?: 'active' | 'deprecated' | 'all'; q?: string },
-): Promise<Memory[]> {
-  const status = f.status ?? 'active';
-  const q = f.q?.trim();
-  return db
-    .select(cols)
-    .from(memories)
-    .where(
-      and(
-        f.projectId ? eq(memories.projectId, f.projectId) : undefined,
-        f.kind ? eq(memories.kind, f.kind) : undefined,
-        status !== 'all' ? eq(memories.status, status) : undefined,
-        q ? sql`${memories.search} @@ ${searchTsQuery(q)}` : undefined,
-      ),
-    )
-    .orderBy(desc(memories.createdAt))
-    .limit(500);
 }
 
 export const MEMORY_SORTS = ['createdAt', 'updatedAt', 'title', 'kind', 'projectId', 'status', 'source'] as const;

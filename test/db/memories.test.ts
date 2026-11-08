@@ -1,7 +1,7 @@
 import { sql } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import {
-  createMemory, deleteMemory, deprecateMemory, getMemory, listMemories, supersedesChain, updateMemory,
+  createMemory, deleteMemory, deprecateMemory, getMemory, pageMemories, supersedesChain, updateMemory,
 } from '../../src/domain/memories.js';
 import { seedProject, useTestDb } from '../helpers.js';
 
@@ -37,7 +37,7 @@ describe('memories', () => {
     const old = await createMemory(db, base);
     await deprecateMemory(db, old.id, 'obsolete');
     await expect(createMemory(db, { ...base, supersedesId: old.id })).rejects.toMatchObject({ code: 'conflict' });
-    expect(await listMemories(db, { projectId: 'demo', status: 'all' })).toHaveLength(1);
+    expect((await pageMemories(db, { projectId: 'demo', status: 'all' })).items).toHaveLength(1);
   });
 
   it('deprecate is idempotent and requires a reason', async () => {
@@ -66,10 +66,10 @@ describe('memories', () => {
     const a = await createMemory(db, { ...base, title: 'Alpha rule' });
     const b = await createMemory(db, { ...base, kind: 'fact', title: 'Beta fact' });
     await deprecateMemory(db, a.id, 'x');
-    expect((await listMemories(db, {})).map((m) => m.id)).toEqual([b.id]);
-    expect((await listMemories(db, { status: 'all' })).map((m) => m.id)).toEqual([b.id, a.id]);
-    expect((await listMemories(db, { status: 'all', kind: 'rule' })).map((m) => m.id)).toEqual([a.id]);
-    expect((await listMemories(db, { status: 'all', q: 'beta' })).map((m) => m.id)).toEqual([b.id]);
+    expect((await pageMemories(db, {})).items.map((m) => m.id)).toEqual([b.id]);
+    expect((await pageMemories(db, { status: 'all' })).items.map((m) => m.id)).toEqual([b.id, a.id]);
+    expect((await pageMemories(db, { status: 'all', kind: 'rule' })).items.map((m) => m.id)).toEqual([a.id]);
+    expect((await pageMemories(db, { status: 'all', q: 'beta' })).items.map((m) => m.id)).toEqual([b.id]);
   });
 
   it('returns the supersedes chain oldest to newest', async () => {

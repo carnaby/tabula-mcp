@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createNote, deleteNote, findNotes, getNote, listNotes, noteTags, pageNotes, updateNote } from '../../src/domain/notes.js';
+import { createNote, deleteNote, findNotes, getNote, noteTags, pageNotes, updateNote } from '../../src/domain/notes.js';
 import { seedProject, useTestDb } from '../helpers.js';
 
 const db = useTestDb();
@@ -25,7 +25,7 @@ describe('notes', () => {
     const a = await createNote(db, { projectId: 'demo', title: 'A' });
     const b = await createNote(db, { projectId: 'demo', title: 'B' });
     await updateNote(db, a.id, { pinned: true, body: '# Protocol' });
-    expect((await listNotes(db, { projectId: 'demo' })).map((n) => n.id)).toEqual([a.id, b.id]);
+    expect((await pageNotes(db, { projectId: 'demo' })).items.map((n) => n.id)).toEqual([a.id, b.id]);
     expect((await getNote(db, a.id))?.body).toBe('# Protocol');
   });
 
@@ -33,7 +33,7 @@ describe('notes', () => {
     await seedProject(db, 'demo');
     const a = await createNote(db, { projectId: 'demo', title: 'Coding standards', body: 'naming rules' });
     await createNote(db, { projectId: 'demo', title: 'Other' });
-    expect((await listNotes(db, { q: 'naming' })).map((n) => n.id)).toEqual([a.id]);
+    expect((await pageNotes(db, { q: 'naming' })).items.map((n) => n.id)).toEqual([a.id]);
     await deleteNote(db, a.id);
     await expect(deleteNote(db, a.id)).rejects.toMatchObject({ code: 'not_found' });
   });

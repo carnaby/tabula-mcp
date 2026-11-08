@@ -19,8 +19,8 @@ type CliWorker = {
 const cli = (await import(new URL('../../cli/tabula.mjs', import.meta.url).href)) as CliWorker;
 
 describe('worker helpers of the CLI', () => {
-  it('is version 1.2.0 and exits 3 for a broken transcription setup', () => {
-    expect(cli.VERSION).toBe('1.2.0');
+  it('is version 1.3.0 and exits 3 for a broken transcription setup', () => {
+    expect(cli.VERSION).toBe('1.3.0');
     expect(cli.TRANSCRIBER_ENVIRONMENT_EXIT).toBe(3);
   });
 

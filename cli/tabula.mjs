@@ -16,7 +16,7 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 
-export const VERSION = '1.2.0';
+export const VERSION = '1.3.0';
 /** 1 MiB, the server's limit for one file. */
 export const MAX_BYTES = 1048576;
 export const DEFAULT_STATE = ['docs/handoff/*.md', '**/docs/handoff/*.md'];
@@ -1158,7 +1158,7 @@ async function workerFetch(cfg, method, path, body, { timeoutMs = 60000, signal 
     throw Object.assign(new CliError('Tabula rejected the worker token; run tabula worker setup again (it needs TABULA_WORKER_TOKEN, not TABULA_TOKEN)'), { rejected: true });
   }
   if (res.status === 503 && /TABULA_WORKER_TOKEN/.test(data?.message ?? '')) {
-    throw new CliError(`${cfg.url} has no transcription worker enabled: set TABULA_WORKER_TOKEN on the server and restart it`);
+    throw Object.assign(new CliError(`${cfg.url} has no transcription worker enabled: set TABULA_WORKER_TOKEN on the server and restart it`), { disabled: true });
   }
   return { status: res.status, data };
 }
@@ -1617,8 +1617,53 @@ async function workerDoctor() {
   return problems ? 1 : 0;
 }
 
+/**
+ * The queue on the server, for tabula worker queue. It is no sign of life of the worker (GET /api/worker/queue does
+ * not touch it). A failure is a result too, so the tray can show it: error is config, rejected, disabled or unreachable.
+ */
+async function queueStatus() {
+  let cfg;
+  try {
+    cfg = readWorkerConfig();
+  } catch (e) {
+    return { ok: false, error: 'config', message: e.message };
+  }
+  const missing = !cfg.url ? 'no server URL: run tabula worker setup <url>'
+    : !cfg.token ? 'no worker token: run tabula worker setup'
+    : !cfg.python ? 'no Python environment for transcription: run tabula worker setup'
+    : null;
+  if (missing) return { ok: false, error: 'config', message: missing };
+  let r;
+  try {
+    r = await workerFetch(cfg, 'GET', '/api/worker/queue', undefined, { timeoutMs: 15000 });
+  } catch (e) {
+    return { ok: false, error: e.rejected ? 'rejected' : e.disabled ? 'disabled' : 'unreachable', message: shortError(e.message) };
+  }
+  if (r.status === 200 && Number.isInteger(r.data?.queued) && Number.isInteger(r.data?.running)) {
+    const seen = r.data.worker?.last_seen;
+    return { ok: true, server: cfg.url, queued: r.data.queued, running: r.data.running, worker_last_seen: typeof seen === 'string' ? seen : null };
+  }
+  const message = r.status === 404
+    ? `${cfg.url} does not know GET /api/worker/queue: update the Tabula server`
+    : `${cfg.url} answered HTTP ${r.status}${r.data?.message ? ` — ${shortError(r.data.message)}` : ''}`;
+  return { ok: false, error: 'unreachable', message };
+}
+
+/** tabula worker queue [--json]: one line, JSON for the tray app (exit 0 even for an error) or for people. */
+async function workerQueue(flags) {
+  const q = await queueStatus();
+  if (flags.has('--json')) {
+    out(JSON.stringify(q));
+    return 0;
+  }
+  if (!q.ok) throw new CliError(q.message);
+  const seen = q.worker_last_seen ? `; this computer's worker was last seen ${new Date(q.worker_last_seen).toLocaleString()}` : '';
+  out(`${q.queued} waiting, ${q.running} being transcribed on ${q.server}${seen}`);
+  return 0;
+}
+
 /** Options of each worker subcommand ("run" is plain tabula worker). */
-const WORKER_FLAGS = { run: ['--once', '--log'], setup: ['--token-stdin'], doctor: [] };
+const WORKER_FLAGS = { run: ['--once', '--log'], setup: ['--token-stdin'], doctor: [], queue: ['--json'] };
 
 async function workerCommand(args, flags) {
   const sub = args.length ? args[0] : 'run';
@@ -1629,6 +1674,7 @@ async function workerCommand(args, flags) {
   if (unknown) throw new CliError(`tabula worker${sub === 'run' ? '' : ` ${sub}`} does not take ${unknown}`);
   if (sub === 'setup') return workerSetup(args[1], flags);
   if (sub === 'doctor') return workerDoctor();
+  if (sub === 'queue') return workerQueue(flags);
   return workerRun(flags);
 }
 
@@ -1660,6 +1706,7 @@ Usage:
   tabula worker setup [<url>] [--token-stdin]
                                        create the Python environment for transcription and save the worker token
   tabula worker doctor                 check ffmpeg, Python, CUDA and the GPU, then transcribe a 5 s sample
+  tabula worker queue [--json]         how many recordings wait on the server (does not count as the worker being seen)
 
 .tabula.json in the repository root: { "project"?: slug, "sync": [globs], "state"?: [globs] }
 Environment: TABULA_URL and TABULA_TOKEN override the saved login; TABULA_HOME (default ~/.tabula).
@@ -1677,7 +1724,7 @@ function fail(e) {
 /** Options each command accepts (pull --hook is handled before this check). */
 const FLAGS = {
   help: [], version: [], login: ['--token-stdin'], status: [], push: ['--force'], pull: ['--force'], rm: [], install: [], update: [],
-  worker: ['--once', '--log', '--token-stdin'],
+  worker: ['--once', '--log', '--token-stdin', '--json'],
 };
 
 export async function main(argv) {

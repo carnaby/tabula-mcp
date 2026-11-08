@@ -9,7 +9,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { reportJobs } from '../../src/db/schema.js';
 import { seedProject, TEST_TOKEN, TEST_WORKER_TOKEN, testConfig, useTestDb } from '../helpers.js';
 import { silentWav } from '../media-fixtures.js';
-import { runCli, tempDir, useServer } from './harness.js';
+import { buildApp } from '../../src/http/app.js';
+import { type RunResult, runCli, startProxy, tempDir, useServer } from './harness.js';
 
 type Job = { id: string; lease: string };
 type CliWorker = {
@@ -119,7 +120,7 @@ describe('tabula worker', () => {
     const r = await runWorker(home, ['--once', '--log']);
     expect(r.code).toBe(0);
     expect(r.stdout).toBe('');
-    expect(readFileSync(join(home, 'data', 'worker.log'), 'utf8')).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d tabula worker 1\.2\.0/);
+    expect(readFileSync(join(home, 'data', 'worker.log'), 'utf8')).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d tabula worker 1\.3\.0/);
     expect(JSON.parse(readFileSync(join(home, 'transcriber.log'), 'utf8').trim()).language).toBeNull();
   });
 
@@ -451,5 +452,71 @@ describe('tabula worker doctor and setup', () => {
     const r = await run(workerHome(), ['--token-stdin']);
     expect(r.code).toBe(1);
     expect(r.stderr).toMatch(/tabula worker does not take --token-stdin/);
+  });
+});
+
+describe('tabula worker queue', () => {
+  const queue = (home: string, args: string[] = ['--json']) =>
+    runCli(['worker', 'queue', ...args], {
+      cwd: home,
+      env: { TABULA_HOME: home, TABULA_DATA_DIR: join(home, 'data'), TABULA_URL: undefined, TABULA_TOKEN: undefined, TABULA_WORKER_TOKEN: undefined },
+    });
+  /** The one JSON line of a --json run, which always exits 0. */
+  const json = (r: RunResult) => {
+    expect(r.code).toBe(0);
+    expect(r.stdout.trim().split('\n')).toHaveLength(1);
+    return JSON.parse(r.stdout);
+  };
+
+  it("prints what waits and when this computer's worker was last seen, without being seen itself", async () => {
+    await recording();
+    const home = workerHome();
+    expect(json(await queue(home))).toEqual({ ok: true, server: server.url, queued: 1, running: 0, worker_last_seen: null });
+    expect((await runWorker(home)).code).toBe(0);
+    const after = json(await queue(home));
+    expect(after).toMatchObject({ ok: true, queued: 0, running: 0 });
+    expect(Date.now() - Date.parse(after.worker_last_seen)).toBeLessThan(10_000);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(json(await queue(home)).worker_last_seen).toBe(after.worker_last_seen);
+  });
+
+  it('reports a missing setup, a rejected token and no answer as JSON with exit 0', async () => {
+    expect(json(await queue(tempDir('tabula home ')))).toMatchObject({ ok: false, error: 'config', message: expect.stringMatching(/tabula worker setup/) });
+    expect(json(await queue(workerHome({ token: TEST_TOKEN })))).toMatchObject({ ok: false, error: 'rejected', message: expect.stringMatching(/rejected the worker token/) });
+    expect(json(await queue(workerHome({ url: 'http://127.0.0.1:9' })))).toMatchObject({
+      ok: false, error: 'unreachable', message: expect.stringMatching(/cannot reach http:\/\/127\.0\.0\.1:9/),
+    });
+  });
+
+  it('says that a server without TABULA_WORKER_TOKEN has no worker API', async () => {
+    const off = await buildApp({ config: testConfig({ workerToken: undefined }), db });
+    await off.listen({ port: 0, host: '127.0.0.1' });
+    try {
+      const url = `http://127.0.0.1:${(off.server.address() as AddressInfo).port}`;
+      expect(json(await queue(workerHome({ url })))).toMatchObject({ ok: false, error: 'disabled', message: expect.stringMatching(/TABULA_WORKER_TOKEN/) });
+    } finally {
+      await off.close();
+    }
+  });
+
+  it('asks for a server update when the server does not know the queue endpoint', async () => {
+    const proxy = await startProxy(server.url, (url) => (url.startsWith('/api/worker/queue') ? { status: 404 } : 0));
+    try {
+      expect(json(await queue(workerHome({ url: proxy.url })))).toMatchObject({
+        ok: false, error: 'unreachable', message: expect.stringMatching(/update the Tabula server/),
+      });
+    } finally {
+      proxy.close();
+    }
+  });
+
+  it('prints one line for people, and an error with exit 1', async () => {
+    await recording();
+    const ok = await queue(workerHome(), []);
+    expect(ok.code).toBe(0);
+    expect(ok.stdout.trim()).toBe(`1 waiting, 0 being transcribed on ${server.url}`);
+    const bad = await queue(tempDir('tabula home '), []);
+    expect(bad.code).toBe(1);
+    expect(bad.stderr).toMatch(/^tabula: no server URL: run tabula worker setup/);
   });
 });

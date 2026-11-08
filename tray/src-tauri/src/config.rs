@@ -63,6 +63,10 @@ pub fn load(paths: &Paths) -> Result<TrayConfig, String> {
         Ok(text) => serde_json::from_str::<File>(text.trim_start_matches('\u{feff}'))
             .map_err(|e| format!("{} is not valid: {e}", file.display()))?,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => File { node: None, cli: None },
+        // PowerShell 5.1 writes UTF-16 with `>` and Out-File.
+        Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+            return Err(format!("cannot read {}: {e}; save it as UTF-8", file.display()));
+        }
         Err(e) => return Err(format!("cannot read {}: {e}", file.display())),
     };
     let set = |v: Option<String>| v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).map(PathBuf::from);
@@ -154,5 +158,17 @@ mod tests {
         assert!(load(&p).unwrap_err().contains("tray.json is not valid"));
         write(&p, r#"{ "nodePath": "node" }"#);
         assert!(load(&p).unwrap_err().contains("unknown field `nodePath`"));
+    }
+
+    #[test]
+    fn says_to_save_a_utf16_tray_json_as_utf8() {
+        let dir = temp();
+        let p = paths(&dir);
+        fs::create_dir_all(&p.data).unwrap();
+        // What PowerShell 5.1 `>` and Out-File write: UTF-16 LE with a byte-order mark.
+        let utf16: Vec<u8> = [0xFF, 0xFE].into_iter().chain(r#"{ "node": "node" }"#.encode_utf16().flat_map(u16::to_le_bytes)).collect();
+        fs::write(p.tray_json(), utf16).unwrap();
+        let message = load(&p).unwrap_err();
+        assert!(message.contains("cannot read") && message.contains("tray.json") && message.contains("save it as UTF-8"), "{message}");
     }
 }

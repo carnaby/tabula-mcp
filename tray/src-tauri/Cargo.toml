@@ -25,8 +25,13 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 
 [target.'cfg(windows)'.dependencies]
-# Reads whether the taskbar is light or dark.
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Registry"] }
+# Reads whether the taskbar is light or dark, and whether the tray runs with Redirection Guard.
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_System_Registry",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+] }
 
 [profile.release]
 codegen-units = 1

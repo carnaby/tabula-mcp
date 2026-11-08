@@ -134,6 +134,8 @@ pub enum Input {
     Doctor,
     DoctorLine(String),
     DoctorDone { code: Option<i32> },
+    /// A warning of the tray itself, for the window's log.
+    Warning(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -333,6 +335,7 @@ impl Model {
                 self.doctor = false;
                 self.own_ended_ms = Some(now);
             }
+            Input::Warning(text) => self.push(now, &text, true),
         }
         fx
     }
@@ -1115,6 +1118,17 @@ mod tests {
         let last = m.snapshot().log.pop().unwrap();
         assert_eq!(last.text, "Ignored a line from the worker that is not an event: not json");
         assert!(last.error);
+    }
+
+    #[test]
+    fn a_warning_of_the_tray_goes_into_the_log_and_changes_nothing_else() {
+        let mut m = Model::new();
+        let before = m.snapshot();
+        assert_eq!(m.apply(Input::Warning("Windows protects this tray".into()), T), vec![]);
+        let mut after = m.snapshot();
+        let last = after.log.pop().unwrap();
+        assert_eq!((last.text.as_str(), last.error), ("Windows protects this tray", true));
+        assert_eq!(after, before);
     }
 
     #[test]

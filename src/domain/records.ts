@@ -59,19 +59,19 @@ async function byId(db: Db, id: string): Promise<ResolvedRecord | undefined> {
   return report ? { type: 'attachment', record: a, report } : undefined;
 }
 
-/** Records whose id starts with the hex prefix (dashes ignored), at most 6 per type. */
+/** Records whose id starts with the hex prefix (dashes ignored), at most 6 per type (lowest ids first, so the shortest unique prefix does not depend on row order). */
 async function candidatesOf(db: Db, prefix: string, legacy: boolean): Promise<{ id: string; type: RecordType; title: string }[]> {
   const match = sql`replace(id::text, '-', '') LIKE ${`${prefix}%`}`;
   const filesAndAttachments = legacy
     ? sql``
     : sql`
-      UNION ALL (SELECT id::text, 'file', project_id || ': ' || path FROM project_files WHERE ${match} LIMIT 6)
-      UNION ALL (SELECT id::text, 'attachment', file_name FROM report_attachments WHERE ${match} LIMIT 6)`;
+      UNION ALL (SELECT id::text, 'file', project_id || ': ' || path FROM project_files WHERE ${match} ORDER BY id LIMIT 6)
+      UNION ALL (SELECT id::text, 'attachment', file_name FROM report_attachments WHERE ${match} ORDER BY id LIMIT 6)`;
   const rows = await db.execute<{ id: string; type: RecordType; title: string }>(sql`
-    (SELECT id::text AS id, 'memory' AS type, title FROM memories WHERE ${match} LIMIT 6)
-    UNION ALL (SELECT id::text, 'note', title FROM notes WHERE ${match} LIMIT 6)
-    UNION ALL (SELECT id::text, 'thought', title FROM thoughts WHERE ${match} LIMIT 6)
-    UNION ALL (SELECT id::text, 'report', title FROM reports WHERE ${match} LIMIT 6)
+    (SELECT id::text AS id, 'memory' AS type, title FROM memories WHERE ${match} ORDER BY id LIMIT 6)
+    UNION ALL (SELECT id::text, 'note', title FROM notes WHERE ${match} ORDER BY id LIMIT 6)
+    UNION ALL (SELECT id::text, 'thought', title FROM thoughts WHERE ${match} ORDER BY id LIMIT 6)
+    UNION ALL (SELECT id::text, 'report', title FROM reports WHERE ${match} ORDER BY id LIMIT 6)
     ${filesAndAttachments}`);
   return [...rows];
 }

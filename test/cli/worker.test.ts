@@ -407,6 +407,24 @@ describe('tabula worker doctor and setup', () => {
     expect(r.code).toBe(0);
   });
 
+  it('doctor is no sign of life of the worker (the tray must not take it for a running one)', async () => {
+    const home = workerHome();
+    expect((await run(home, ['doctor'])).code).toBe(0);
+    const q = await run(home, ['queue', '--json']);
+    expect(JSON.parse(q.stdout)).toMatchObject({ ok: true, worker_last_seen: null });
+  });
+
+  it('doctor checks an older server without the queue endpoint through ping', async () => {
+    const proxy = await startProxy(server.url, (url) => (url.startsWith('/api/worker/queue') ? { status: 404 } : 0));
+    try {
+      const r = await run(workerHome({ url: proxy.url }), ['doctor']);
+      expect(r.stdout).toMatch(/^ok\s+.*accepts the worker token; 0 job\(s\) waiting/m);
+      expect(r.code).toBe(0);
+    } finally {
+      proxy.close();
+    }
+  });
+
   it('doctor names a missing CUDA device and skips the test transcription', async () => {
     const r = await run(workerHome(), ['doctor'], { FAKE_TRANSCRIBE_CUDA: '0' });
     expect(r.code).toBe(1);
@@ -708,6 +726,16 @@ describe('tabula worker --events', () => {
     run.send('stop');
     expect((await run.done).code).toBe(0);
     expect(run.types().filter((t) => t !== 'error')).toEqual(['started', 'idle', 'stopped']);
+  });
+
+  it('ends --once with a connection error when the server cannot be reached', async () => {
+    const run = startEvents(workerHome({ url: 'http://127.0.0.1:9' }), ['--once', '--events']);
+    expect((await run.done).code).toBe(1);
+    const events = run.events().filter((e) => e.type !== 'log');
+    expect(events.slice(-2)).toMatchObject([
+      { type: 'error', kind: 'connection', message: expect.stringMatching(/cannot reach http:\/\/127\.0\.0\.1:9/) },
+      { type: 'stopped', code: 1 },
+    ]);
   });
 
   it('finishes the job when nobody reads its events any more', async () => {

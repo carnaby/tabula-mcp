@@ -1706,7 +1706,10 @@ async function workerDoctor() {
   if (!cfg.url || !cfg.token) line('FAIL', 'no server URL or worker token', 'run tabula worker setup <url>');
   else {
     try {
-      const r = await workerFetch(cfg, 'GET', '/api/worker/ping', undefined, { timeoutMs: 15000 });
+      // The queue endpoint is no sign of life of the worker, so a doctor run does not look like a running worker (the
+      // tray would block Start for a while); a server from before it (404) is asked through ping.
+      let r = await workerFetch(cfg, 'GET', '/api/worker/queue', undefined, { timeoutMs: 15000 });
+      if (r.status === 404) r = await workerFetch(cfg, 'GET', '/api/worker/ping', undefined, { timeoutMs: 15000 });
       if (r.status === 200) line('ok', `${cfg.url} accepts the worker token; ${r.data.queued} job(s) waiting`);
       else line('FAIL', `${cfg.url} answered HTTP ${r.status}`, r.data?.message);
     } catch (e) {

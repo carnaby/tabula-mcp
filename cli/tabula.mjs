@@ -187,6 +187,15 @@ export function lastLines(text, max = 300) {
 /** ffmpeg's complaint about a recording without a sound track (a screen recording without the microphone). */
 export const isNoAudioError = (stderr) => /does not contain any stream|matches no streams/i.test(String(stderr));
 
+/** transcribe.py reports how far it got with "PROGRESS <end_ms>" lines on stderr; null for any other line. */
+export function progressMs(line) {
+  const m = /^PROGRESS (\d{1,12})\s*$/.exec(line);
+  return m ? Number(m[1]) : null;
+}
+
+/** The length of the 16 kHz mono 16-bit WAV ffmpeg wrote: 32 bytes a millisecond after the 44-byte header. */
+export const wavDurationMs = (bytes) => Math.max(0, Math.round((bytes - 44) / 32));
+
 /** What transcribe.py printed, as the server expects it: whole milliseconds, one-line texts, no empty ones, in time order. */
 export function normalizeTranscript(raw) {
   if (!raw || typeof raw !== 'object' || !Array.isArray(raw.segments)) throw new CliError('the transcriber printed no segments');
@@ -1030,6 +1039,9 @@ const LOG_ROTATE_BYTES = 5 * 1024 * 1024;
 /** How long after ffmpeg or the transcriber failed a Ctrl+C still makes it a release instead of a failure (see runJob). */
 const STOP_GRACE_MS = 1000;
 
+/** tabula worker --events reports a job's progress at most this often. */
+const PROGRESS_EVERY_MS = 1000;
+
 /** The host name as an HTTP header value (ASCII only); the server lower-cases and checks it. */
 const workerId = () => hostname().replace(/[^\x21-\x7e]/g, '').slice(0, 63) || 'worker';
 
@@ -1078,8 +1090,9 @@ const sleep = (ms, signal) =>
  * Run a program without a shell, so paths with spaces need no quoting. Resolves { code, stdout, stderr } (stderr's
  * last 8 KB); kills it (with what it started) when `signal` aborts or after `timeoutMs`. A program that cannot be
  * started rejects with `cannotStart: true` (and `missing: true` when it does not exist); a stop with `aborted: true`.
+ * `onLine` sees every whole line of stderr; a line it returns true for is consumed and stays out of `stderr`.
  */
-function runProcess(command, args, { input, signal, timeoutMs = 600000 } = {}) {
+function runProcess(command, args, { input, signal, timeoutMs = 600000, onLine } = {}) {
   const [cmd, ...pre] = command;
   return new Promise((resolveRun, reject) => {
     if (signal?.aborted) return reject(Object.assign(new Error('stopped'), { aborted: true }));
@@ -1092,6 +1105,10 @@ function runProcess(command, args, { input, signal, timeoutMs = 600000 } = {}) {
     }
     const stdout = [];
     let stderr = '';
+    let partial = '';
+    const keep = (text) => {
+      stderr = (stderr + text).slice(-8192);
+    };
     let timedOut = false;
     const kill = () => killTree(child);
     const timer = setTimeout(() => {
@@ -1105,7 +1122,18 @@ function runProcess(command, args, { input, signal, timeoutMs = 600000 } = {}) {
     };
     child.stdout.on('data', (d) => stdout.push(d));
     child.stderr.setEncoding('utf8').on('data', (d) => {
-      stderr = (stderr + d).slice(-8192);
+      if (!onLine) {
+        keep(d);
+        return;
+      }
+      const lines = (partial + d).split('\n');
+      partial = lines.pop();
+      for (const line of lines) if (!onLine(line.replace(/\r$/, ''))) keep(`${line}\n`);
+      // A program that never ends a line must not grow this without bound.
+      if (partial.length > 8192) {
+        keep(partial);
+        partial = '';
+      }
     });
     child.stdin.on('error', () => {}); // a program that does not read its input closes the pipe early
     child.on('error', (e) => {
@@ -1114,6 +1142,8 @@ function runProcess(command, args, { input, signal, timeoutMs = 600000 } = {}) {
     });
     child.on('close', (code) => {
       settle();
+      if (partial && !onLine(partial.replace(/\r$/, ''))) keep(partial);
+      partial = '';
       if (signal?.aborted) return reject(Object.assign(new Error('stopped'), { aborted: true }));
       if (timedOut) return reject(new Error(`${basename(cmd)} did not finish within ${Math.round(timeoutMs / 60000)} min`));
       resolveRun({ code, stdout: Buffer.concat(stdout).toString('utf8'), stderr });
@@ -1215,7 +1245,7 @@ async function extractAudio(cfg, input, wav, signal) {
 }
 
 /** One Python process per recording: the model leaves the GPU's memory when the process ends. */
-async function transcribe(cfg, wav, signal) {
+async function transcribe(cfg, wav, signal, onProgress = () => {}) {
   if (!cfg.python || (Array.isArray(cfg.python) && !cfg.python.length)) throw environmentError('no Python environment for transcription: run tabula worker setup');
   if (!existsSync(cfg.script)) throw environmentError(`transcribe.py is missing at ${cfg.script}: run tabula worker setup`);
   const options = {
@@ -1229,7 +1259,18 @@ async function transcribe(cfg, wav, signal) {
   };
   let r;
   try {
-    r = await runProcess(commandLine(cfg.python, 'python'), [cfg.script], { input: JSON.stringify(options), signal, timeoutMs: 4 * 3600000 });
+    r = await runProcess(commandLine(cfg.python, 'python'), [cfg.script], {
+      input: JSON.stringify(options),
+      signal,
+      timeoutMs: 4 * 3600000,
+      // PROGRESS lines are for the progress bar; they never reach an error message.
+      onLine: (line) => {
+        const ms = progressMs(line);
+        if (ms === null) return false;
+        onProgress(ms);
+        return true;
+      },
+    });
   } catch (e) {
     if (e.cannotStart || e instanceof CliError) throw environmentError(`${e.message}: run tabula worker setup`);
     throw e;

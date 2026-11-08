@@ -13,6 +13,8 @@ type CliWorker = {
   dataHome(env: Record<string, string | undefined>, platform: string, home: string): string;
   venvPython(venv: string, platform: string): string;
   commandLine(value: unknown, what: string): string[];
+  progressMs(line: string): number | null;
+  wavDurationMs(bytes: number): number;
 };
 
 // A non-literal specifier keeps TypeScript from looking for type declarations of the plain .mjs file.
@@ -22,6 +24,20 @@ describe('worker helpers of the CLI', () => {
   it('is version 1.3.0 and exits 3 for a broken transcription setup', () => {
     expect(cli.VERSION).toBe('1.3.0');
     expect(cli.TRANSCRIBER_ENVIRONMENT_EXIT).toBe(3);
+  });
+
+  it('reads the PROGRESS lines of the transcriber', () => {
+    expect(cli.progressMs('PROGRESS 4200')).toBe(4200);
+    expect(cli.progressMs('PROGRESS 0  ')).toBe(0);
+    for (const line of ['', 'PROGRESS', 'PROGRESS -1', 'PROGRESS 4.2', 'progress 1', 'Traceback: PROGRESS 1', 'PROGRESS 1 2']) {
+      expect(cli.progressMs(line), line).toBeNull();
+    }
+  });
+
+  it('measures the WAV that ffmpeg wrote (16 kHz mono 16-bit after a 44-byte header)', () => {
+    expect(cli.wavDurationMs(44 + 32_000)).toBe(1000);
+    expect(cli.wavDurationMs(44)).toBe(0);
+    expect(cli.wavDurationMs(0)).toBe(0);
   });
 
   it('formats clock times like the server', () => {

@@ -141,6 +141,13 @@ describe('tabula worker', () => {
     expect(error.split(/\s/).includes('')).toBe(false);
   });
 
+  it("keeps the transcriber's PROGRESS lines out of the error and the log", async () => {
+    const { audio } = await recording();
+    const r = await runWorker(workerHome(), ['--once'], { FAKE_TRANSCRIBE: 'fail' });
+    expect(r.stdout + r.stderr).not.toMatch(/PROGRESS/);
+    expect((await jobOf(audio.id)).error).toBe('transcription failed (exit 1): Traceback: boom');
+  });
+
   describe('when the server answers complete with an error', () => {
     // A reverse proxy in front of the real server; `answer` may replace the answer of a complete call.
     let proxy: Server;

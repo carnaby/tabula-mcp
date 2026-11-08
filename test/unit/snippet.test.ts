@@ -20,11 +20,13 @@ describe('claudeMdSection', () => {
     expect(JSON.parse(TABULA_JSON)).toEqual({ sync: ['docs/**', '.superpowers/sdd/*/progress.md'], state: ['docs/handoff/*.md'] });
   });
 
-  it('the claude.ai template reads the state at start, notes on request and saves thoughts on request', () => {
+  it('the claude.ai template reads the state at start and saves thoughts on request', () => {
     const t = readFileSync(new URL('../../templates/claude-ai-project-instructions.md', import.meta.url), 'utf8');
-    for (const s of ['## Memory (Tabula)', '`recall`', '`list_files`', '`find_notes`', '`save_thought`', 'explicitly asks', '`write_file`', '`base_sha256`']) {
+    for (const s of ['## Memory (Tabula)', '`recall`', '`list_files`', '`save_thought`', 'explicitly asks', '`write_file`', '`base_sha256`']) {
       expect(t).toContain(s);
     }
+    // Notes are covered by the server instructions; the template does not repeat them.
+    expect(t).not.toContain('`find_notes`');
     expect(t).not.toContain('supersedes_id');
   });
 

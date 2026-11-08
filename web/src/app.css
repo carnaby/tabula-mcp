@@ -590,6 +590,9 @@ div.file-group__head { cursor: default; }
   height: 100%;
 }
 .att__cap { display: flex; align-items: center; gap: 6px; padding: 6px 8px 6px 10px; font-size: var(--text-sm); min-width: 0; flex-wrap: wrap; }
+/* Video caption: the name truncates and the copy and delete buttons keep their place on the first line; "Save frame" drops below when the line is short. */
+.att__cap--video .t-truncate { flex: 1 1 6em; }
+@media (max-width: 480px) { .att__cap--video .att__cap-frame { order: 1; } }
 .att__frames { display: flex; gap: 8px; overflow-x: auto; padding: 0 10px 10px; }
 .att__frame {
   flex: none;

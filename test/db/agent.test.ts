@@ -6,7 +6,7 @@ import {
 import { memories } from '../../src/db/schema.js';
 import { AGENT_READ_ONLY } from '../../src/domain/errors.js';
 import { deleteFile, getFile, listFiles, putFile, setStatePaths } from '../../src/domain/files.js';
-import { createMemory, getMemory, listMemories } from '../../src/domain/memories.js';
+import { createMemory, getMemory, pageMemories } from '../../src/domain/memories.js';
 import { createNote } from '../../src/domain/notes.js';
 import { setSyncConfig } from '../../src/domain/sync-config.js';
 import { createThought, HUMAN } from '../../src/domain/thoughts.js';
@@ -33,7 +33,7 @@ describe('agent operations', () => {
     const legacy = await createMemory(db, { projectId: 'demo', kind: 'fact', title: 'Old project memory', body: 'b', source: 'agent' });
     await expect(agentDeprecate(ctx, { id: legacy.id, reason: 'x' })).rejects.toMatchObject({ code: 'bad_request', message: GLOBAL_ONLY });
     await expect(agentRemember(ctx, { ...input, supersedes_id: legacy.id })).rejects.toMatchObject({ message: GLOBAL_ONLY });
-    expect(await listMemories(db, { status: 'all' })).toHaveLength(1);
+    expect((await pageMemories(db, { status: 'all' })).items).toHaveLength(1);
     // The agent must not "fix" the error by writing the project knowledge as a global rule instead.
     expect(GLOBAL_ONLY).toMatch(/do not retry with project "global" unless the user asked for a rule that applies to every project/i);
   });
@@ -50,7 +50,7 @@ describe('agent operations', () => {
       code: 'bad_request', message: expect.stringMatching(/is a thought, not a memory/),
     });
     await expect(agentRemember(ctx, { ...input, supersedes_id: t.id })).rejects.toMatchObject({ code: 'bad_request' });
-    expect(await listMemories(db, { status: 'all' })).toHaveLength(0);
+    expect((await pageMemories(db, { status: 'all' })).items).toHaveLength(0);
   });
 
   it('update_thought requires expected_version for body or title, not for append', async () => {
@@ -78,7 +78,7 @@ describe('agent operations', () => {
     });
     const n = await createNote(db, { title: 'Note' });
     await expect(agentRemember(ctx, { ...input, supersedes_id: n.id })).rejects.toMatchObject({ code: 'forbidden' });
-    expect(await listMemories(db, { status: 'all' })).toHaveLength(1);
+    expect((await pageMemories(db, { status: 'all' })).items).toHaveLength(1);
   });
 
   it('deprecate enforces read-only human records and notes, and is idempotent', async () => {

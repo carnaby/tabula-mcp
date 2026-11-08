@@ -83,20 +83,6 @@ export async function deleteNote(db: Db, id: string): Promise<void> {
   if (deleted.length === 0) throw notFound(`note ${id} does not exist`);
 }
 
-export async function listNotes(db: Db, f: { projectId?: string; q?: string }): Promise<Note[]> {
-  const q = f.q?.trim();
-  return db
-    .select(cols)
-    .from(notes)
-    .where(
-      and(
-        f.projectId ? eq(notes.projectId, f.projectId) : undefined,
-        q ? sql`${notes.search} @@ websearch_to_tsquery('tabula', ${q})` : undefined,
-      ),
-    )
-    .orderBy(desc(notes.pinned), desc(notes.updatedAt));
-}
-
 export const NOTE_SORTS = ['updatedAt', 'createdAt', 'title', 'pinned'] as const;
 export type NoteSort = (typeof NOTE_SORTS)[number];
 

@@ -62,6 +62,13 @@ describe('groupFiles', () => {
     ]);
   });
 
+  it('breaks ties by plain code-unit order, independent of the locale', () => {
+    const t = '2026-11-05T10:00:00.000Z';
+    const groups = groupFiles([f('docs/a.md', t), f('docs/B.md', t), f('b/x.md', t), f('A/x.md', t)]);
+    expect(groups.map((g) => g.key)).toEqual(['A', 'b', 'docs']);
+    expect(groups[2]!.files.map((x) => x.name)).toEqual(['B.md', 'a.md']);
+  });
+
   it('returns no groups for no files', () => {
     expect(groupFiles([])).toEqual([]);
   });

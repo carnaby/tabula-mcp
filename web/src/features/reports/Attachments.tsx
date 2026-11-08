@@ -138,13 +138,14 @@ function VideoCard({
       ) : (
         <div className="att__gone"><Icon name="film" /> Video deleted after the report was closed</div>
       )}
-      <figcaption className="att__cap">
+      <figcaption className="att__cap att__cap--video">
         <span className="t-truncate">{a.fileName}</span>
         <span className="t-subtle t-nowrap">{a.durationMs !== null ? clock(a.durationMs) : ''} · {formatSize(a.size)}</span>
         {a.url && (
           <Button
             size="sm"
             icon="aperture"
+            className="att__cap-frame"
             loading={busy}
             onClick={async () => {
               setBusy(true);

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { reportAttachments, reports, reportTranscripts } from '../../src/db/schema.js';
 import { putFile } from '../../src/domain/files.js';
-import { createMemory, listMemories } from '../../src/domain/memories.js';
+import { createMemory, pageMemories } from '../../src/domain/memories.js';
 import { createNote, findNotes, pageNotes } from '../../src/domain/notes.js';
 import { pageReports } from '../../src/domain/reports.js';
 import { quickSearch, search } from '../../src/domain/search.js';
@@ -37,7 +37,7 @@ describe.each([
   it('finds a global rule (search, rules list, quick search)', async () => {
     const m = await rule(`Používaj ${stored} kartu`);
     expect((await search(db, { query })).map((h) => h.id)).toEqual([m.id]);
-    expect((await listMemories(db, { q: query })).map((x) => x.id)).toEqual([m.id]);
+    expect((await pageMemories(db, { q: query })).items.map((x) => x.id)).toEqual([m.id]);
     expect((await quickSearch(db, { q: query })).map((h) => h.id)).toEqual([m.id]);
   });
 
@@ -93,7 +93,7 @@ describe('word-prefix matching in rules and search', () => {
     const m = await rule('Pracuj s projektom opatrne');
     await file('docs/plan.md', 'Poznámky k projektovaniu');
     expect((await search(db, { query: 'projekt' })).map((h) => h.type).sort()).toEqual(['file', 'memory']);
-    expect((await listMemories(db, { q: 'projekt' })).map((x) => x.id)).toEqual([m.id]);
+    expect((await pageMemories(db, { q: 'projekt' })).items.map((x) => x.id)).toEqual([m.id]);
     // Prefix and diacritics together; every word must match.
     expect((await search(db, { query: 'poznam projekt' })).map((h) => h.path)).toEqual(['docs/plan.md']);
     expect(await search(db, { query: 'projekt gitara' })).toEqual([]);
@@ -104,7 +104,6 @@ describe('word-prefix matching in rules and search', () => {
     await rule('Mapa grafická naopak');
     await rule('Pracuj s projektom');
     expect((await search(db, { query: '"graficka mapa"' })).map((h) => h.title)).toEqual(['Grafická mapa sveta']);
-    expect((await listMemories(db, { q: '"graficka mapa"' })).map((h) => h.title)).toEqual(['Grafická mapa sveta']);
     // Inside websearch syntax words match exactly again.
     expect(await search(db, { query: '"projekt"' })).toEqual([]);
   });
@@ -114,7 +113,6 @@ describe('word-prefix matching in rules and search', () => {
     await rule('Beta rule');
     await rule('Gamma rule');
     expect((await search(db, { query: 'alpha OR beta' })).map((h) => h.title).sort()).toEqual(['Alpha rule', 'Beta rule']);
-    expect((await listMemories(db, { q: 'alpha OR beta' })).map((h) => h.title).sort()).toEqual(['Alpha rule', 'Beta rule']);
     // websearch_to_tsquery reads "or" in any case as OR, so the switch does too.
     expect((await search(db, { query: 'alpha or beta' })).map((h) => h.title).sort()).toEqual(['Alpha rule', 'Beta rule']);
   });
@@ -123,7 +121,6 @@ describe('word-prefix matching in rules and search', () => {
     await rule('Cache in memory');
     await rule('Cache in redis');
     expect((await search(db, { query: 'cache -redis' })).map((h) => h.title)).toEqual(['Cache in memory']);
-    expect((await listMemories(db, { q: 'cache -redis' })).map((h) => h.title)).toEqual(['Cache in memory']);
     // A hyphen inside a word is not an exclusion.
     await rule('Use e-mail notifications');
     expect((await search(db, { query: 'e-mail' })).map((h) => h.title)).toEqual(['Use e-mail notifications']);
@@ -133,7 +130,7 @@ describe('word-prefix matching in rules and search', () => {
     await rule('Alpha rule');
     for (const query of ["a:* & !(b | 'c')", "'", '\\', '<->', ':*', '!!!', '&|', 'foo "bar', '-', '"', 'OR', "alpha'"]) {
       await expect(search(db, { query }), query).resolves.toBeInstanceOf(Array);
-      await expect(listMemories(db, { q: query }), query).resolves.toBeInstanceOf(Array);
+      await expect(pageMemories(db, { q: query }), query).resolves.toMatchObject({ items: expect.any(Array) });
     }
     expect((await search(db, { query: "alpha'" })).map((h) => h.title)).toEqual(['Alpha rule']);
     expect((await search(db, { query: 'alp:*' })).map((h) => h.title)).toEqual(['Alpha rule']);

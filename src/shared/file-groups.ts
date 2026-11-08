@@ -36,8 +36,10 @@ export function groupFiles<T extends { path: string; updatedAt: string }>(files:
     if (file.updatedAt > g.latest) g.latest = file.updatedAt;
   }
   const groups = [...byKey.values()];
-  for (const g of groups) g.files.sort((a, b) => cmpDesc(a.file.updatedAt, b.file.updatedAt) || a.name.localeCompare(b.name));
-  return groups.sort((a, b) => Number(a.work) - Number(b.work) || cmpDesc(a.latest, b.latest) || a.key.localeCompare(b.key));
+  for (const g of groups) g.files.sort((a, b) => cmpDesc(a.file.updatedAt, b.file.updatedAt) || cmpAsc(a.name, b.name));
+  return groups.sort((a, b) => Number(a.work) - Number(b.work) || cmpDesc(a.latest, b.latest) || cmpAsc(a.key, b.key));
 }
 
 const cmpDesc = (a: string, b: string) => (a < b ? 1 : a > b ? -1 : 0);
+// Plain comparison: localeCompare depends on the locale, so the order could differ between machines.
+const cmpAsc = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);

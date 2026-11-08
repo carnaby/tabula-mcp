@@ -6,7 +6,41 @@
     <title>Tabula tray</title>
   </head>
   <body>
-    <h1>Tabula tray</h1>
+    <main class="tray">
+      <section class="card">
+        <div class="headline">
+          <span id="dot" class="dot" data-icon="stopped"></span>
+          <h1 id="headline">Worker stopped</h1>
+        </div>
+        <p id="note" class="note" hidden></p>
+        <div class="buttons">
+          <button id="process" type="button" class="primary" disabled>Process queue</button>
+          <button id="start" type="button" disabled>Start</button>
+          <button id="stop" type="button" disabled>Stop</button>
+        </div>
+      </section>
+      <section id="job" class="card" hidden>
+        <h2>Current job</h2>
+        <a id="job-title" class="link" href="#"></a>
+        <p id="job-meta" class="muted"></p>
+        <div class="bar"><div id="job-bar"></div></div>
+      </section>
+      <section class="card">
+        <h2>Queue on the server</h2>
+        <p id="queue" class="queue"></p>
+        <p id="checked" class="muted"></p>
+      </section>
+      <section class="card">
+        <div class="log-head">
+          <h2>Log</h2>
+          <div class="buttons">
+            <button id="doctor" type="button">Run doctor</button>
+            <button id="folder" type="button">Open log folder</button>
+          </div>
+        </div>
+        <ol id="log" class="log"></ol>
+      </section>
+    </main>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

@@ -125,8 +125,9 @@ impl Controller {
         Controller { tx, latest }
     }
 
-    pub fn send(&self, input: Input) {
-        let _ = self.tx.send(input);
+    /// False when the controller thread is gone (it panicked): nothing then acts on the input.
+    pub fn send(&self, input: Input) -> bool {
+        self.tx.send(input).is_ok()
     }
 
     /// What the tray shows now (for the window's first paint).
@@ -172,15 +173,19 @@ fn run(rx: Receiver<Input>, tx: Sender<Input>, paths: Paths, ui: Arc<dyn Ui>, la
                 Effect::Notify { queued } => ui.notify(queued),
                 Effect::RunDoctor => doctor = run_doctor(&paths, &tx, timing.doctor_timeout),
                 Effect::ExitAfterStop => {
-                    let (w, d, ui, wait) = (worker.take(), doctor.take(), Arc::clone(&ui), timing.quit_wait);
+                    let (w, d, quit_ui, wait) = (worker.take(), doctor.take(), Arc::clone(&ui), timing.quit_wait);
                     // On a thread of its own: the controller keeps taking the worker's output meanwhile.
-                    thread::spawn(move || {
+                    let waiting = thread::Builder::new().name("tabula quit".into()).spawn(move || {
                         end(d);
                         if let Some(w) = w {
                             quit_worker(&w, wait);
                         }
-                        ui.exit();
+                        quit_ui.exit();
                     });
+                    if waiting.is_err() {
+                        // Without the thread nobody waits: exit now, the worker stops when its input closes.
+                        ui.exit();
+                    }
                 }
                 Effect::Exit => {
                     end(doctor.take());
@@ -536,8 +541,15 @@ mod tests {
             let (tx, rx) = mpsc::channel();
             let process = run_doctor(paths, &tx, timeout);
             drop(tx);
-            // Longer than the drain wait of a killed process, so a second end would show up.
-            let all = drain(&rx, Duration::from_secs(4));
+            // Everything up to the end, however slow the machine; then a while longer, so a second end would show up.
+            let mut all = Vec::new();
+            while !all.iter().any(|i| matches!(i, Input::DoctorDone { .. })) {
+                match rx.recv_timeout(Duration::from_secs(20)) {
+                    Ok(input) => all.push(input),
+                    Err(e) => panic!("the doctor did not end ({e:?}): {all:?}"),
+                }
+            }
+            all.extend(drain(&rx, Duration::from_secs(3)));
             drop(process);
             assert_eq!(doctor_ends(&all), 1, "{all:?}");
             assert!(matches!(all.last(), Some(Input::DoctorDone { .. })), "the end comes last: {all:?}");
@@ -559,6 +571,15 @@ mod tests {
         write_tray_json(&paths.data, &serde_json::json!({ "node": "tabula-no-such-node", "cli": paths.data.join("fake cli.mjs") }).to_string());
         let all = run(&paths, Duration::from_secs(15));
         assert!(all.iter().any(|i| matches!(i, Input::DoctorLine(l) if l.contains("Node.js was not found"))), "{all:?}");
+    }
+
+    #[test]
+    fn send_says_when_the_controller_is_gone() {
+        let (tx, rx) = mpsc::channel();
+        let ctl = Controller { tx, latest: Arc::new(Mutex::new(Model::new().snapshot())) };
+        assert!(ctl.send(Input::QueueTick));
+        drop(rx);
+        assert!(!ctl.send(Input::Quit));
     }
 
     #[test]

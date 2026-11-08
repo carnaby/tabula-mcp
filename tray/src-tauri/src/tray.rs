@@ -145,7 +145,12 @@ fn on_menu(app: &AppHandle, event: &MenuEvent, autostart: &CheckMenuItem<Wry>) {
         "start" => send(Input::Start { once: false }),
         "stop" => send(Input::Stop),
         "open" => show_window(app),
-        "quit" => send(Input::Quit),
+        "quit" => {
+            // Without a controller to stop the worker first, exit at once: the worker stops when its input closes.
+            if !app.try_state::<Controller>().is_some_and(|ctl| ctl.send(Input::Quit)) {
+                app.exit(0);
+            }
+        }
         "autostart" => {
             let launcher = app.autolaunch();
             let on = launcher.is_enabled().unwrap_or(false);

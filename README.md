@@ -418,7 +418,7 @@ pnpm --dir tray build       # Windows: .msi in tray/src-tauri/target/release/bun
 pnpm --dir tray icons       # after changing tray/icons/tray.svg: regenerates the committed PNGs
 ```
 
-Building it needs Rust 1.90 or newer; on Windows also Visual Studio 2022 Build Tools with "Desktop development with C++" (WebView2 comes with Windows 11); on Ubuntu `sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev build-essential`. A release: raise `version` in `tray/package.json`, `tray/src-tauri/Cargo.toml` and `tray/src-tauri/tauri.conf.json`, then push a tag `tray-v<version>`; the Tray workflow attaches the `.msi`, `.deb` and `.AppImage`.
+Building it needs Rust 1.90 or newer; on Windows also Visual Studio 2022 Build Tools with "Desktop development with C++" (WebView2 comes with Windows 11); on Ubuntu `sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev build-essential file`. A release: raise `version` in `tray/package.json`, `tray/src-tauri/Cargo.toml` and `tray/src-tauri/tauri.conf.json`, then push a tag `tray-v<version>`; the Tray workflow attaches the `.msi`, `.deb` and `.AppImage`.
 
 The tests cover the domain rules, the digest builder, the REST API, the MCP endpoint through a real MCP client, and the `tabula` command end to end against a real server and temporary git repositories (git must be installed).
 

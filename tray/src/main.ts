@@ -69,5 +69,14 @@ el('job-title').addEventListener('click', (e) => {
   command('open_report')();
 });
 
-void listen<Snapshot>('state', (event) => render(event.payload));
-void invoke<Snapshot>('snapshot').then(render);
+// The first paint asks for the snapshot; a state event that comes first is newer, and the answer must not undo it.
+let painted = false;
+void listen<Snapshot>('state', (event) => {
+  painted = true;
+  render(event.payload);
+});
+invoke<Snapshot>('snapshot')
+  .then((s) => {
+    if (!painted) render(s);
+  })
+  .catch(console.error);

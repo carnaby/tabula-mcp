@@ -16,6 +16,8 @@ pub const TOOLTIP_UNITS: usize = 127;
 /// Lines kept to explain a worker that ended without an error event.
 const RECENT_LINES: usize = 3;
 pub const OLD_CLI: &str = "This tabula command is too old for the tray (it needs 1.3.0 or newer): run tabula update";
+/// What a CLI before 1.3.0 says to `tabula worker --events` (1.2.0), or to `tabula worker` at all (older ones).
+const OLD_CLI_SIGNS: [&str; 2] = ["does not take --events", "unknown command \"worker\""];
 
 // ------------------------------------------------------------------ events of tabula worker --events
 
@@ -657,7 +659,7 @@ impl Model {
 
 /// Why the tray's worker ended badly: an old CLI, its last error event, its last lines, or its exit code.
 fn failure(run: &Run, code: Option<i32>) -> (Option<ErrorKind>, String) {
-    if !run.started && run.recent.iter().any(|l| l.contains("does not take --events")) {
+    if !run.started && run.recent.iter().any(|l| OLD_CLI_SIGNS.iter().any(|sign| l.contains(sign))) {
         return (None, OLD_CLI.to_string());
     }
     if let Some((kind, message)) = &run.last_error {
@@ -977,6 +979,12 @@ mod tests {
         m.apply(Input::Stderr("tabula: tabula worker does not take --events".into()), T);
         m.apply(Input::Exited { code: Some(1) }, T);
         assert_eq!(m.worker(), &WorkerState::Error { kind: None, message: OLD_CLI.into() });
+        // A CLI from before tabula worker existed.
+        let mut older = Model::new();
+        older.apply(Input::Start { once: false }, T);
+        older.apply(Input::Stderr("tabula: unknown command \"worker\"; run tabula help".into()), T);
+        older.apply(Input::Exited { code: Some(1) }, T);
+        assert_eq!(older.worker(), &WorkerState::Error { kind: None, message: OLD_CLI.into() });
     }
 
     #[test]

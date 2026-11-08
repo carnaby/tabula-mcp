@@ -19,8 +19,9 @@ pub const QUEUE_TIMEOUT: Duration = Duration::from_secs(30);
 /// process is awaited.
 const AFTER_EXIT: Duration = Duration::from_secs(2);
 
-/// What a CLI before 1.3.0 says to `worker queue --json` (1.2.0: "tabula worker does not take --json").
-const OLD_CLI_SIGNS: [&str; 3] = ["does not take --json", "does not take --events", "unknown worker command"];
+/// What a CLI before 1.3.0 says to `worker queue --json` (1.2.0: "tabula worker does not take --json"; one from
+/// before `tabula worker` existed: `unknown command "worker"`).
+const OLD_CLI_SIGNS: [&str; 4] = ["does not take --json", "does not take --events", "unknown worker command", "unknown command \"worker\""];
 
 #[derive(Deserialize)]
 struct Reply {
@@ -120,6 +121,8 @@ mod tests {
         // What tabula 1.2.0 really answers to "worker queue --json" (and to "worker --events").
         assert_eq!(parse_output("", "tabula: tabula worker does not take --json\n"), QueueResult::Failed { message: OLD_CLI.into() });
         assert_eq!(parse_output("", "tabula: tabula worker does not take --events\n"), QueueResult::Failed { message: OLD_CLI.into() });
+        // A CLI from before tabula worker existed.
+        assert_eq!(parse_output("", "tabula: unknown command \"worker\"; run tabula help\n"), QueueResult::Failed { message: OLD_CLI.into() });
         assert_eq!(
             parse_output("", "node:internal/modules/cjs/loader:1228\n  throw err;\nError: Cannot find module 'x'\n"),
             QueueResult::Failed { message: "tabula worker queue did not answer: Error: Cannot find module 'x'".into() }

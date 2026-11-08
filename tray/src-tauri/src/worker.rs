@@ -26,7 +26,8 @@ pub enum Output {
     /// A stdout line of a plain-text command.
     Text(String),
     Stderr(String),
-    /// The exit code; None when the process was killed. Always the last output.
+    /// The exit code; None when there is none (Unix: ended by a signal). A process ended with `taskkill /F` on
+    /// Windows exits with 1, so None does not mean "killed". Always the last output.
     Exited(Option<i32>),
 }
 

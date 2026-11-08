@@ -1,6 +1,7 @@
 // Stands in for cli/tabula.mjs in the tray's tests (run by node). The mode is in a file named "mode" next to this
 // script: ok (default) | stubborn (ignores stop and the end of its input) | garbage (writes lines that are no events)
-// | crash (exits 1 without "stopped") | old (a CLI before 1.3.0) | slowqueue (worker queue never answers).
+// | crash (exits 1 without "stopped") | old (a CLI before 1.3.0) | slowqueue (worker queue never answers)
+// | slowdoctor (worker doctor never finishes).
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,7 +19,9 @@ if (mode === 'old') {
   if (mode === 'slowqueue') setTimeout(() => {}, 60000);
   else process.stdout.write(`${JSON.stringify({ ok: true, server: 'http://127.0.0.1:9', queued: 2, running: 0, worker_last_seen: null })}\n`);
 } else if (args[0] === 'worker' && args[1] === 'doctor') {
-  process.stdout.write('ok    fake doctor\nEverything works.\n');
+  process.stdout.write('ok    fake doctor\n');
+  if (mode === 'slowdoctor') setTimeout(() => {}, 60000);
+  else process.stdout.write('Everything works.\n');
 } else if (args[0] === 'worker' && args.includes('--events')) {
   emit('started', { version: '1.3.0', once: args.includes('--once'), server: 'http://127.0.0.1:9' });
   if (mode === 'crash') {

@@ -3,3 +3,10 @@ allowBuilds:
   esbuild: true
   protobufjs: true
   ssh2: true
+
+# Security fixes no parent release allows yet; drop each once its parent widens the range.
+overrides:
+  # drizzle-kit lists @esbuild-kit/esm-loader but never loads it; its last core-utils release pins esbuild ~0.18.
+  '@esbuild-kit/core-utils>esbuild': ^0.25.0
+  # testcontainers -> archiver 7 -> archiver-utils 5 (last release) wants glob ^10; glob 14 keeps the CommonJS glob.sync it calls.
+  archiver-utils>glob: ^14.0.2

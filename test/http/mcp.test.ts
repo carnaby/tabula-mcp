@@ -220,6 +220,28 @@ describe('MCP endpoint', () => {
     await viaConnector.close();
   });
 
+  it('accepts a write_file whose JSON-RPC body is larger than the SDK default of 4 MiB', async () => {
+    await setSyncConfig(db, 'demo', { sync: ['docs/**'], state: [] });
+    // Each control character is escaped to six characters: a 1 MiB file makes a body of about 6 MiB.
+    const big = String.fromCharCode(1).repeat(1_048_576);
+    const client = await connect('/mcp', bearer);
+    const r = await client.callTool({ name: 'write_file', arguments: { project: 'demo', path: 'docs/escaped.md', content: big } });
+    expect(r.isError, textOf(r).slice(0, 200)).toBeFalsy();
+    expect((await getFile(db, 'demo', 'docs/escaped.md')).size).toBe(1_048_576);
+    await client.close();
+  });
+
+  it('rejects a tool call whose arguments carry more than 10 000 elements', async () => {
+    const client = await connect('/mcp', bearer);
+    const tags = Array.from({ length: 10_001 }, (_, i) => `t${i}`);
+    const r = await client.callTool({ name: 'save_thought', arguments: { title: 't', body: 'b', tags } });
+    expect(r.isError).toBe(true);
+    expect(textOf(r)).toContain('more than the maximum of 10000 elements');
+    const ok = await client.callTool({ name: 'save_thought', arguments: { title: 't', body: 'b', tags: tags.slice(0, 100) } });
+    expect(ok.isError, textOf(ok).slice(0, 200)).toBeFalsy();
+    await client.close();
+  });
+
   it('rejects a negative or fractional read_file offset', async () => {
     const client = await connect('/mcp', bearer);
     for (const offset of [-1, 1.5]) {

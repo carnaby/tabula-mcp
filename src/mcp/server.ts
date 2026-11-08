@@ -82,8 +82,17 @@ async function runTool(log: McpLogger | undefined, fn: () => Promise<unknown>) {
   }
 }
 
+/**
+ * Array elements plus object members one tools/call may carry (GHSA-46jr-4wx8-v453: without a cap, validating a
+ * huge argument list can exhaust memory). Real calls carry a few tags at most.
+ */
+const MAX_TOOL_INPUT_ELEMENTS = 10_000;
+
 export function buildMcpServer(ctx: McpContext): McpServer {
-  const server = new McpServer({ name: 'tabula', version: '0.1.0' }, { instructions: SERVER_INSTRUCTIONS });
+  const server = new McpServer(
+    { name: 'tabula', version: '0.1.0' },
+    { instructions: SERVER_INSTRUCTIONS, maxToolInputElements: MAX_TOOL_INPUT_ELEMENTS },
+  );
   const run = (fn: () => Promise<unknown>) => runTool(ctx.log, fn);
 
   server.registerTool('list_projects', { description: D.list_projects, inputSchema: z.object({}) }, () =>

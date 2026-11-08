@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createServer, type Server } from 'node:http';
@@ -10,7 +11,7 @@ import { reportJobs } from '../../src/db/schema.js';
 import { seedProject, TEST_TOKEN, TEST_WORKER_TOKEN, testConfig, useTestDb } from '../helpers.js';
 import { silentWav } from '../media-fixtures.js';
 import { buildApp } from '../../src/http/app.js';
-import { type RunResult, runCli, startProxy, tempDir, useServer } from './harness.js';
+import { CLI, type RunResult, runCli, startProxy, tempDir, useServer } from './harness.js';
 
 type Job = { id: string; lease: string };
 type CliWorker = {
@@ -112,6 +113,7 @@ describe('tabula worker', () => {
     });
     // The WAV path (space and diacritic) reached the transcriber intact.
     expect(options.wav.startsWith(join(oddFolder(home), 'tmp'))).toBe(true);
+    expect(r.stdout).not.toMatch(/^\{/m); // no events without --events
   });
 
   it('passes language "auto" as null and writes the log file with --log', async () => {
@@ -285,6 +287,7 @@ describe('tabula worker', () => {
     const home = workerHome();
     expect((await runCli(['worker', 'frobnicate'], { cwd: home, env: { TABULA_HOME: home } })).stderr).toMatch(/unknown worker command "frobnicate"/);
     expect((await runCli(['worker', '--force'], { cwd: home, env: { TABULA_HOME: home } })).stderr).toMatch(/does not take --force/);
+    expect((await runCli(['worker', 'setup', '--events'], { cwd: home, env: { TABULA_HOME: home } })).stderr).toMatch(/tabula worker setup does not take --events/);
   });
 });
 
@@ -525,5 +528,200 @@ describe('tabula worker queue', () => {
     const bad = await queue(tempDir('tabula home '), []);
     expect(bad.code).toBe(1);
     expect(bad.stderr).toMatch(/^tabula: no server URL: run tabula worker setup/);
+  });
+});
+
+type WorkerEvent = { type: string; time: string; [key: string]: unknown };
+
+/**
+ * tabula worker --events with its standard input kept open (runCli closes it at once, which means "stop" here).
+ * `events()` parses the complete lines so far and throws on any stdout line that is not JSON.
+ */
+function startEvents(home: string, args: string[], env: Record<string, string> = {}) {
+  const tmp = join(oddFolder(home), 'tmp');
+  const childEnv: Record<string, string | undefined> = {
+    ...process.env, TABULA_HOME: home, TABULA_DATA_DIR: join(home, 'data'), TABULA_URL: undefined, TABULA_TOKEN: undefined,
+    TABULA_WORKER_TOKEN: undefined, FAKE_TRANSCRIBE_LOG: join(home, 'transcriber.log'), TEMP: tmp, TMP: tmp, TMPDIR: tmp, ...env,
+  };
+  for (const [k, v] of Object.entries(childEnv)) if (v === undefined) delete childEnv[k];
+  const child = spawn(process.execPath, [CLI, 'worker', ...args], { cwd: home, env: childEnv, windowsHide: true });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.setEncoding('utf8').on('data', (d: string) => {
+    stdout += d;
+  });
+  child.stderr.setEncoding('utf8').on('data', (d: string) => {
+    stderr += d;
+  });
+  const done = new Promise<{ code: number; stderr: string }>((resolve, reject) => {
+    child.on('error', reject);
+    child.on('close', (code) => resolve({ code: code ?? -1, stderr }));
+  });
+  const events = (): WorkerEvent[] => {
+    const lines = stdout.split('\n');
+    lines.pop(); // the line still being written, or the empty rest after the last line break
+    return lines.map((line) => JSON.parse(line) as WorkerEvent);
+  };
+  return {
+    events,
+    /** The event types without the log lines. */
+    types: () => events().filter((e) => e.type !== 'log').map((e) => e.type),
+    waitFor: (check: (e: WorkerEvent) => boolean) => until(async () => events().some(check)),
+    send: (line: string) => void child.stdin.write(`${line}\n`),
+    end: () => void child.stdin.end(),
+    /** Stop reading the events: the worker's next writes to stdout fail (a tray that crashed). */
+    hangUp: () => void child.stdout.destroy(),
+    stdout: () => stdout,
+    done,
+  };
+}
+
+/** A proxy in front of the test server that holds back every request whose path ends with `slowPath`. */
+async function slowProxy(slowPath: string, ms: number) {
+  const proxy = createServer((req, res) => {
+    void (async () => {
+      const chunks: Buffer[] = [];
+      for await (const c of req) chunks.push(c as Buffer);
+      if ((req.url ?? '').split('?')[0]!.endsWith(slowPath)) await new Promise((r) => setTimeout(r, ms));
+      const headers = Object.fromEntries(Object.entries(req.headers).filter(([k]) => !['host', 'connection', 'content-length'].includes(k))) as Record<string, string>;
+      try {
+        const up = await fetch(server.url + req.url, { method: req.method, headers, body: chunks.length ? Buffer.concat(chunks) : undefined });
+        res.writeHead(up.status, { 'content-type': up.headers.get('content-type') ?? 'application/octet-stream' }).end(Buffer.from(await up.arrayBuffer()));
+      } catch {
+        res.destroy();
+      }
+    })();
+  });
+  await new Promise<void>((r) => proxy.listen(0, '127.0.0.1', r));
+  return {
+    url: `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`,
+    close: () => {
+      proxy.closeAllConnections();
+      proxy.close();
+    },
+  };
+}
+
+describe('tabula worker --events', () => {
+  const ISO = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
+  const transcribing = (e: WorkerEvent) => e.type === 'phase' && e.phase === 'transcribe';
+
+  it('sends one JSON line per event for a transcribed job and nothing else on stdout', async () => {
+    const { report } = await recording();
+    const home = workerHome();
+    const run = startEvents(home, ['--once', '--events']);
+    const r = await run.done;
+    expect(r.code).toBe(0);
+    expect(r.stderr).toBe('');
+    expect(run.stdout().endsWith('\n')).toBe(true);
+    const events = run.events();
+    for (const e of events) expect(e.time).toMatch(ISO);
+    expect(run.types()).toEqual(['started', 'idle', 'job', 'phase', 'phase', 'phase', 'progress', 'phase', 'done', 'idle', 'stopped']);
+    const of = (type: string) => events.filter((e) => e.type === type);
+    expect(of('started')[0]).toMatchObject({ version: '1.3.0', once: true, server: server.url });
+    expect(of('job')[0]).toMatchObject({
+      attempt: 1,
+      attachment: { kind: 'audio', size: 32044, file_name: 'voice.wav' },
+      report: { id: report.id, project: 'demo', title: 'Player freezes' },
+      report_url: `${server.url}/#/reports/${report.id}?project=demo`,
+    });
+    const id = of('job')[0]!.id;
+    expect(of('phase').map((e) => e.phase)).toEqual(['download', 'extract', 'transcribe', 'upload']);
+    // The fake transcriber reports 400 and 800 ms within one second: only the first becomes an event.
+    expect(of('progress')).toMatchObject([{ id, done_ms: 400, total_ms: 1000 }]);
+    expect(of('done')).toMatchObject([{ id, segments: 2 }]);
+    expect(of('stopped')).toMatchObject([{ done: 1, failed: 0, code: 0 }]);
+    expect(of('log').map((e) => e.text).join('\n')).toMatch(/done in [\d.]+ s, 2 segments/);
+    for (const secret of [TEST_TOKEN, TEST_WORKER_TOKEN, 'Ahoj', 'tlačidlo']) expect(run.stdout()).not.toContain(secret);
+    expect(readFileSync(join(home, 'data', 'worker.log'), 'utf8')).toMatch(/done in [\d.]+ s, 2 segments/);
+  });
+
+  it('reports a failed job with its retry time', async () => {
+    const { audio } = await recording();
+    const run = startEvents(workerHome(), ['--once', '--events'], { FAKE_TRANSCRIBE: 'fail' });
+    expect((await run.done).code).toBe(0);
+    const failed = run.events().find((e) => e.type === 'failed');
+    expect(failed).toMatchObject({ message: 'transcription failed (exit 1): Traceback: boom' });
+    expect(String(failed!.retry_at)).toMatch(ISO);
+    expect(run.types().slice(-3)).toEqual(['failed', 'idle', 'stopped']);
+    expect(run.events().at(-1)).toMatchObject({ type: 'stopped', done: 0, failed: 1, code: 0 });
+    expect(await jobOf(audio.id)).toMatchObject({ status: 'queued', attempts: 1 });
+  });
+
+  it('names a broken GPU setup, a missing setup and a rejected token in an error event before stopped', async () => {
+    const { audio } = await recording();
+    let run = startEvents(workerHome(), ['--once', '--events'], { FAKE_TRANSCRIBE: 'env' });
+    expect((await run.done).code).toBe(1);
+    expect(run.events().find((e) => e.type === 'error')).toMatchObject({ kind: 'environment', message: expect.stringMatching(/CUDA is not available/) });
+    expect(run.events().at(-1)).toMatchObject({ type: 'stopped', code: 1 });
+    expect(await jobOf(audio.id)).toMatchObject({ status: 'queued', attempts: 0 });
+
+    run = startEvents(tempDir('tabula home '), ['--events']);
+    const r = await run.done;
+    expect(r.code).toBe(1);
+    expect(run.types()).toEqual(['error', 'stopped']);
+    expect(run.events().find((e) => e.type === 'error')).toMatchObject({ kind: 'config', message: expect.stringMatching(/tabula worker setup/) });
+    expect(r.stderr).toMatch(/^tabula: no server URL/);
+
+    run = startEvents(workerHome({ token: TEST_TOKEN }), ['--events']);
+    expect((await run.done).code).toBe(1);
+    expect(run.events().find((e) => e.type === 'error')).toMatchObject({ kind: 'rejected' });
+  });
+
+  it.each(['stop', 'end of input'] as const)('gives the job back on %s', async (how) => {
+    const { audio } = await recording();
+    const run = startEvents(workerHome(), ['--events'], { FAKE_TRANSCRIBE: 'slow' });
+    await run.waitFor(transcribing);
+    if (how === 'stop') run.send('stop');
+    else run.end();
+    const r = await run.done;
+    expect(r.code).toBe(0);
+    expect(run.types().slice(-2)).toEqual(['released', 'stopped']);
+    expect(run.events().at(-1)).toMatchObject({ type: 'stopped', done: 0, failed: 0, code: 0 });
+    expect(await jobOf(audio.id)).toMatchObject({ status: 'queued', attempts: 0, leaseId: null });
+  });
+
+  it('quits at once on a second "stop"', async () => {
+    await recording();
+    // The release waits at the proxy, so the first stop is still busy when the second one comes.
+    const proxy = await slowProxy('/release', 5000);
+    try {
+      const run = startEvents(workerHome({ url: proxy.url }), ['--once', '--events'], { FAKE_TRANSCRIBE: 'slow' });
+      await run.waitFor(transcribing);
+      run.send('stop');
+      await run.waitFor((e) => e.type === 'log' && /stopping/.test(String(e.text)));
+      const second = Date.now();
+      run.send('stop');
+      const r = await run.done;
+      expect(r.code).toBe(130);
+      expect(Date.now() - second).toBeLessThan(3000);
+      expect(run.events().at(-1)).toMatchObject({ type: 'stopped', code: 130 });
+    } finally {
+      proxy.close();
+    }
+  });
+
+  it('keeps waiting through connection errors and stops on command', async () => {
+    const run = startEvents(workerHome({ url: 'http://127.0.0.1:9' }), ['--events']);
+    await run.waitFor((e) => e.type === 'error');
+    expect(run.events().find((e) => e.type === 'error')).toMatchObject({ kind: 'connection', message: expect.stringMatching(/cannot reach/) });
+    run.send('stop');
+    expect((await run.done).code).toBe(0);
+    expect(run.types().filter((t) => t !== 'error')).toEqual(['started', 'idle', 'stopped']);
+  });
+
+  it('finishes the job when nobody reads its events any more', async () => {
+    const { audio } = await recording();
+    const home = workerHome();
+    // The slow transcriber reports progress again after 8 s (at the latest): that event goes to a closed pipe from
+    // inside the handler of the transcriber's output, and must not end the worker.
+    const run = startEvents(home, ['--once', '--events'], { FAKE_TRANSCRIBE: 'slow' });
+    await run.waitFor(transcribing);
+    run.hangUp();
+    const r = await run.done;
+    expect(r.stderr).toBe('');
+    expect(r.code).toBe(0);
+    expect(await jobOf(audio.id)).toMatchObject({ status: 'done', attempts: 1 });
+    expect(readFileSync(join(home, 'data', 'worker.log'), 'utf8')).toMatch(/worker stopped: 1 transcribed, 0 failed/);
   });
 });

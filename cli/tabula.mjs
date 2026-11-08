@@ -12,6 +12,7 @@ import {
 } from 'node:fs';
 import { homedir, hostname, tmpdir } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { createInterface } from 'node:readline';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
@@ -195,6 +196,19 @@ export function progressMs(line) {
 
 /** The length of the 16 kHz mono 16-bit WAV ffmpeg wrote: 32 bytes a millisecond after the 44-byte header. */
 export const wavDurationMs = (bytes) => Math.max(0, Math.round((bytes - 44) / 32));
+
+/** The report's page in the Tabula UI. */
+export const reportUrl = (server, report) => `${server}/#/reports/${encodeURIComponent(report.id)}?project=${encodeURIComponent(report.project)}`;
+
+/** The kind of a worker error event of tabula worker --events; null for an unexpected error. */
+export function errorKind(e) {
+  if (e?.rejected) return 'rejected';
+  if (e?.disabled) return 'disabled';
+  if (e?.config) return 'config';
+  if (e?.environment) return 'environment';
+  if (e?.connection) return 'connection';
+  return null;
+}
 
 /** What transcribe.py printed, as the server expects it: whole milliseconds, one-line texts, no empty ones, in time order. */
 export function normalizeTranscript(raw) {
@@ -1284,12 +1298,16 @@ async function transcribe(cfg, wav, signal, onProgress = () => {}) {
   }
 }
 
-/** Log lines with the local time; with --log they go to worker.log in the data folder instead of the console. */
-function makeLog(toFile) {
+/**
+ * Log lines with the local time; with --log (and --events) they go to worker.log in the data folder instead of the
+ * console. `onLine` gets every line as well (tabula worker --events sends them as log events).
+ */
+function makeLog(toFile, onLine) {
   const file = join(dataHome(), 'worker.log');
   if (toFile) mkdirSync(dirname(file), { recursive: true });
   const p = (n) => String(n).padStart(2, '0');
   return (line) => {
+    onLine?.(line);
     const d = new Date();
     const text = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())} ${line}\n`;
     if (!toFile) return void process.stdout.write(text);
@@ -1297,17 +1315,52 @@ function makeLog(toFile) {
       if (existsSync(file) && statSync(file).size > LOG_ROTATE_BYTES) renameSync(file, `${file}.1`);
       appendFileSync(file, text);
     } catch {
-      process.stdout.write(text); // a locked log file must not stop the worker
+      // A locked log file must not stop the worker. With --events stdout carries only events.
+      if (!onLine) process.stdout.write(text);
     }
   };
 }
 
-/** One job, start to end. Returns 'done', 'failed' (reported), 'lost' (the server took it back), 'released' or 'environment'. */
-export async function runJob(cfg, job, { log, stop }) {
+/**
+ * tabula worker --events: one JSON line per event on stdout, each with its type and time. Nothing else goes there.
+ * Never throws: it also runs inside the handlers of the child programs' output, where an exception would end the worker
+ * in the middle of a job. A tray that is gone (a closed pipe) fails asynchronously, and workerRun's error listener on
+ * stdout takes that; worker.log still gets every log line.
+ */
+function emitEvent(type, fields = {}) {
+  try {
+    process.stdout.write(`${JSON.stringify({ type, time: new Date().toISOString(), ...fields })}\n`);
+  } catch {
+    // a stdout that is already closed
+  }
+}
+
+/** A file's size in bytes; 0 when it cannot be read. */
+function fileSize(path) {
+  try {
+    return statSync(path).size;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * One job, start to end. Returns 'done', 'failed' (reported), 'lost' (the server took it back), 'released' or
+ * 'environment'. `emit` gets the job's events for tabula worker --events.
+ */
+export async function runJob(cfg, job, { log, stop, emit = () => {} }) {
   const tag = `job ${job.id.slice(0, 8)}`;
   const a = job.attachment;
   const started = Date.now();
   log(`${tag}: ${a.kind} ${a.duration_ms ? formatClock(a.duration_ms) : '(length unknown)'}, ${(a.size / 1048576).toFixed(1)} MB, project ${job.report.project}, "${job.report.title.slice(0, 60)}", attempt ${job.attempt}`);
+  emit('job', {
+    id: job.id,
+    attempt: job.attempt,
+    attachment: { kind: a.kind, duration_ms: a.duration_ms ?? null, size: a.size, file_name: a.file_name },
+    report: { id: job.report.id, project: job.report.project, title: job.report.title },
+    report_url: reportUrl(cfg.url, job.report),
+  });
+  const phase = (name) => emit('phase', { id: job.id, phase: name });
   const work = new AbortController();
   const onStop = () => work.abort();
   stop.addEventListener('abort', onStop);
@@ -1332,10 +1385,24 @@ export async function runJob(cfg, job, { log, stop }) {
       throw environmentError(`cannot create a temporary folder in ${tmpdir()}: ${e.code ?? e.message}`);
     }
     const input = join(dir, 'recording');
+    phase('download');
     await download(cfg, job.media_path, input, work.signal);
     const wav = join(dir, 'audio.wav');
+    phase('extract');
     const hasAudio = await extractAudio(cfg, input, wav, work.signal);
-    const result = hasAudio ? await transcribe(cfg, wav, work.signal) : { language: null, duration_ms: null, segments: [] };
+    let result = { language: null, duration_ms: null, segments: [] };
+    if (hasAudio) {
+      phase('transcribe');
+      // What Whisper hears; the recording's own length when the WAV cannot be measured.
+      const total = wavDurationMs(fileSize(wav)) || a.duration_ms || null;
+      let shown = 0;
+      result = await transcribe(cfg, wav, work.signal, (ms) => {
+        if (Date.now() - shown < PROGRESS_EVERY_MS) return;
+        shown = Date.now();
+        emit('progress', { id: job.id, done_ms: ms, total_ms: total });
+      });
+    }
+    phase('upload');
     // The transcript is the expensive part: a restarting server must not lose it. The heartbeat timer keeps running
     // during these retries (about 3 minutes, the lease lasts 10), so the lease is renewed as soon as the server is back.
     let r;
@@ -1367,6 +1434,7 @@ export async function runJob(cfg, job, { log, stop }) {
     const took = ((Date.now() - started) / 1000).toFixed(1);
     const audio = result.duration_ms ? ` from ${formatClock(result.duration_ms)} of audio` : '';
     log(`${tag}: done in ${took} s, ${result.segments.length} segments${audio}${hasAudio ? '' : ' (no sound track)'}`);
+    emit('done', { id: job.id, segments: result.segments.length });
     return 'done';
   } catch (e) {
     // While stopping, whatever ffmpeg or the transcriber exited with gives the attempt back. A terminal Ctrl+C reaches
@@ -1380,10 +1448,12 @@ export async function runJob(cfg, job, { log, stop }) {
       await report('release', {}).catch((e) => log(`${tag}: could not give the job back (${shortError(e.message)}); its lease will run out`));
       if (stop.aborted) {
         log(`${tag}: stopped; the job went back to the queue`);
+        emit('released', { id: job.id });
         return 'released';
       }
       log(`${tag}: ${shortError(e.message)}`);
       log('the job went back to the queue; check the setup with tabula worker doctor, then start the worker again');
+      emit('error', { kind: 'environment', message: shortError(e.message) });
       return 'environment';
     }
     const message = shortError(e.message);
@@ -1392,6 +1462,7 @@ export async function runJob(cfg, job, { log, stop }) {
       return null;
     });
     log(`${tag}: failed: ${message}${r?.data?.status === 'queued' ? ' (the server will offer it again later)' : ''}`);
+    emit('failed', { id: job.id, message, retry_at: r?.data?.retry_at ?? null });
     return 'failed';
   } finally {
     clearInterval(beat);
@@ -1404,52 +1475,95 @@ export async function runJob(cfg, job, { log, stop }) {
   }
 }
 
-/** tabula worker [--once] [--log] */
+/** tabula worker [--once] [--log] [--events] */
 async function workerRun(flags) {
-  const toFile = flags.has('--log');
-  const log = makeLog(toFile);
+  const events = flags.has('--events');
+  // A write to a closed pipe (EPIPE) fails as an 'error' event of stdout, which would end the process without a listener.
+  if (events) process.stdout.on('error', () => {});
+  const toFile = events || flags.has('--log');
+  const emit = events ? emitEvent : () => {};
+  const log = makeLog(toFile, events ? (text) => emit('log', { text }) : undefined);
+  const counts = { done: 0, failed: 0 };
   try {
-    return await workerLoop(flags.has('--once'), log);
+    const code = await workerLoop(flags.has('--once'), { log, emit, counts, commands: events });
+    emit('stopped', { ...counts, code });
+    return code;
   } catch (e) {
     // With --log nobody sees the console (Task Scheduler): why the worker stopped belongs in worker.log too.
     if (toFile) log(e instanceof CliError ? e.message : `unexpected error: ${shortError(e?.message ?? e)}`);
+    const kind = errorKind(e);
+    if (kind) emit('error', { kind, message: shortError(e.message) });
+    emit('stopped', { ...counts, code: 1 });
     throw e;
   }
 }
 
-async function workerLoop(once, log) {
-  const cfg = readWorkerConfig();
-  if (!cfg.url) throw new CliError('no server URL: run tabula worker setup <url> (or tabula login <url> first)');
-  if (!cfg.token) throw new CliError('no worker token: run tabula worker setup');
-  // A broken program setting stops the worker before it takes a job, instead of failing every job in the queue.
-  commandLine(cfg.ffmpeg, 'ffmpeg');
-  if (!cfg.python) throw new CliError('no Python environment for transcription: run tabula worker setup');
-  commandLine(cfg.python, 'python');
+/**
+ * The claim loop. With `commands` (tabula worker --events) standard input takes commands: "stop" stops like the first
+ * Ctrl+C, a second "stop" quits at once, and the end of the input stops too (the tray that started the worker is gone).
+ */
+async function workerLoop(once, { log, emit, counts, commands }) {
+  let cfg;
+  try {
+    cfg = readWorkerConfig();
+    if (!cfg.url) throw new CliError('no server URL: run tabula worker setup <url> (or tabula login <url> first)');
+    if (!cfg.token) throw new CliError('no worker token: run tabula worker setup');
+    // A broken program setting stops the worker before it takes a job, instead of failing every job in the queue.
+    commandLine(cfg.ffmpeg, 'ffmpeg');
+    if (!cfg.python) throw new CliError('no Python environment for transcription: run tabula worker setup');
+    commandLine(cfg.python, 'python');
+  } catch (e) {
+    throw e instanceof CliError ? Object.assign(e, { config: true }) : e;
+  }
   const stop = new AbortController();
+  const quitNow = () => {
+    if (!commands) process.exit(130);
+    emit('stopped', { ...counts, code: 130 });
+    // Leave once the last event is written (a pipe may be asynchronous); the timer is a fallback.
+    process.stdout.write('', () => process.exit(130));
+    setTimeout(() => process.exit(130), 1000).unref();
+  };
   const onSignal = () => {
-    if (stop.signal.aborted) process.exit(130); // a second Ctrl+C: leave at once
-    log('stopping… (Ctrl+C again to quit at once)');
+    if (stop.signal.aborted) return quitNow(); // a second Ctrl+C or stop: leave at once
+    log(`stopping… (${commands ? 'stop' : 'Ctrl+C'} again to quit at once)`);
     stop.abort();
   };
   process.on('SIGINT', onSignal);
   process.on('SIGTERM', onSignal);
-  log(`tabula worker ${VERSION} ${once ? 'transcribing what is queued' : 'waiting for jobs (Ctrl+C stops)'}; server ${cfg.url}`);
-  const counts = { done: 0, failed: 0 };
+  let input = null;
+  if (commands) {
+    input = createInterface({ input: process.stdin, crlfDelay: Infinity });
+    input.on('line', (line) => {
+      if (line.trim().toLowerCase() === 'stop') onSignal();
+    });
+    input.once('close', () => {
+      if (stop.signal.aborted) return;
+      log('standard input closed; stopping');
+      stop.abort();
+    });
+  }
+  log(`tabula worker ${VERSION} ${once ? 'transcribing what is queued' : `waiting for jobs (${commands ? 'the stop command' : 'Ctrl+C'} stops)`}; server ${cfg.url}`);
+  emit('started', { version: VERSION, once, server: cfg.url });
+  emit('idle');
   let failures = 0;
   try {
     while (!stop.signal.aborted) {
       let job;
       try {
         job = await claimNext(cfg, once ? 0 : CLAIM_WAIT_S, stop.signal);
-        if (failures) log('connected again');
+        if (failures) {
+          log('connected again');
+          emit('idle');
+        }
         failures = 0;
       } catch (e) {
         if (e instanceof CliError) throw e;
         if (e.aborted || stop.signal.aborted) break;
-        if (once) throw new CliError(shortError(e.message));
+        if (once) throw Object.assign(new CliError(shortError(e.message)), { connection: true });
         failures++;
         const wait = workerBackoffMs(failures);
         log(`${shortError(e.message)}; trying again in ${wait / 1000} s`);
+        emit('error', { kind: 'connection', message: shortError(e.message) });
         await sleep(wait, stop.signal);
         continue;
       }
@@ -1457,14 +1571,20 @@ async function workerLoop(once, log) {
         if (once) break;
         continue;
       }
-      const outcome = await runJob(cfg, job, { log, stop: stop.signal });
+      const outcome = await runJob(cfg, job, { log, stop: stop.signal, emit });
       if (outcome === 'environment') return 1;
       if (outcome === 'done') counts.done++;
       if (outcome === 'failed') counts.failed++;
+      if (!stop.signal.aborted) emit('idle');
     }
   } finally {
     process.off('SIGINT', onSignal);
     process.off('SIGTERM', onSignal);
+    if (input) {
+      input.removeAllListeners('close');
+      input.close();
+      process.stdin.destroy();
+    }
   }
   log(`worker stopped: ${counts.done} transcribed, ${counts.failed} failed`);
   return 0;
@@ -1704,7 +1824,7 @@ async function workerQueue(flags) {
 }
 
 /** Options of each worker subcommand ("run" is plain tabula worker). */
-const WORKER_FLAGS = { run: ['--once', '--log'], setup: ['--token-stdin'], doctor: [], queue: ['--json'] };
+const WORKER_FLAGS = { run: ['--once', '--log', '--events'], setup: ['--token-stdin'], doctor: [], queue: ['--json'] };
 
 async function workerCommand(args, flags) {
   const sub = args.length ? args[0] : 'run';
@@ -1744,6 +1864,7 @@ Usage:
   tabula update                        replace this file with the version the server offers
   tabula worker [--once] [--log]       transcribe bug-report recordings until Ctrl+C (--once: what is queued, then exit;
                                        --log: write to worker.log in the data folder instead of the console)
+  tabula worker [--once] --events      the same for the tray app: JSON events on stdout, "stop" on stdin, log in worker.log
   tabula worker setup [<url>] [--token-stdin]
                                        create the Python environment for transcription and save the worker token
   tabula worker doctor                 check ffmpeg, Python, CUDA and the GPU, then transcribe a 5 s sample
@@ -1765,7 +1886,7 @@ function fail(e) {
 /** Options each command accepts (pull --hook is handled before this check). */
 const FLAGS = {
   help: [], version: [], login: ['--token-stdin'], status: [], push: ['--force'], pull: ['--force'], rm: [], install: [], update: [],
-  worker: ['--once', '--log', '--token-stdin', '--json'],
+  worker: ['--once', '--log', '--events', '--token-stdin', '--json'],
 };
 
 export async function main(argv) {

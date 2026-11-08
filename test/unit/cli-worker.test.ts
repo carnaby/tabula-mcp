@@ -15,6 +15,8 @@ type CliWorker = {
   commandLine(value: unknown, what: string): string[];
   progressMs(line: string): number | null;
   wavDurationMs(bytes: number): number;
+  reportUrl(server: string, report: { id: string; project: string }): string;
+  errorKind(e: unknown): string | null;
 };
 
 // A non-literal specifier keeps TypeScript from looking for type declarations of the plain .mjs file.
@@ -105,5 +107,19 @@ describe('worker helpers of the CLI', () => {
     expect(cli.commandLine(['node', 'fake ffmpeg.mjs'], 'ffmpeg')).toEqual(['node', 'fake ffmpeg.mjs']);
     expect(() => cli.commandLine('', 'python')).toThrow(/worker\.python/);
     expect(() => cli.commandLine([1], 'python')).toThrow(/worker\.python/);
+  });
+
+  it('links a report the way the web UI routes it', () => {
+    expect(cli.reportUrl('https://tabula.example.com', { id: 'r1', project: 'demo' })).toBe('https://tabula.example.com/#/reports/r1?project=demo');
+    expect(cli.reportUrl('https://tabula.example.com', { id: 'r1', project: 'a&b' })).toBe('https://tabula.example.com/#/reports/r1?project=a%26b');
+  });
+
+  it('names the kind of a worker error for --events', () => {
+    expect(cli.errorKind({ rejected: true })).toBe('rejected');
+    expect(cli.errorKind({ disabled: true })).toBe('disabled');
+    expect(cli.errorKind({ config: true })).toBe('config');
+    expect(cli.errorKind({ environment: true })).toBe('environment');
+    expect(cli.errorKind({ connection: true })).toBe('connection');
+    expect(cli.errorKind(new Error('a bug'))).toBeNull();
   });
 });

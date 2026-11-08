@@ -16,8 +16,9 @@ pub const TOOLTIP_UNITS: usize = 127;
 /// Lines kept to explain a worker that ended without an error event.
 const RECENT_LINES: usize = 3;
 pub const OLD_CLI: &str = "This tabula command is too old for the tray (it needs 1.3.0 or newer): run tabula update";
-/// What a CLI before 1.3.0 says to `tabula worker --events` (1.2.0), or to `tabula worker` at all (older ones).
-const OLD_CLI_SIGNS: [&str; 2] = ["does not take --events", "unknown command \"worker\""];
+/// What a CLI before 1.3.0 says to `tabula worker --events` or `worker queue --json` (1.2.0: "tabula worker does not
+/// take --events" / "--json", "unknown worker command"), or to `tabula worker` at all (older ones).
+pub const OLD_CLI_SIGNS: [&str; 4] = ["does not take --json", "does not take --events", "unknown worker command", "unknown command \"worker\""];
 
 // ------------------------------------------------------------------ events of tabula worker --events
 
@@ -304,10 +305,14 @@ impl Model {
             Input::Event(event) => self.event(event, now, &mut fx),
             Input::Invalid(line) => self.push(now, &format!("Ignored a line from the worker that is not an event: {line}"), true),
             Input::Stderr(line) => {
-                if let Some(run) = self.run.as_mut() {
-                    remember(&mut run.recent, &line);
+                // The CLI repeats an error event on stderr ("tabula: <message>"); the log has it already.
+                let last_error = self.run.as_ref().and_then(|r| r.last_error.as_ref());
+                if !last_error.is_some_and(|(_, message)| line.strip_prefix("tabula: ") == Some(message.as_str())) {
+                    if let Some(run) = self.run.as_mut() {
+                        remember(&mut run.recent, &line);
+                    }
+                    self.push(now, &line, true);
                 }
-                self.push(now, &line, true);
             }
             Input::Exited { code } => self.exited(code, now, &mut fx),
             Input::QueueTick => self.check_queue(&mut fx),
@@ -323,7 +328,11 @@ impl Model {
                 let error = line.starts_with("FAIL");
                 self.push(now, &line, error);
             }
-            Input::DoctorDone { .. } => self.doctor = false,
+            Input::DoctorDone { .. } => {
+                // Its server check may count as a sign of life of this computer's worker (an older CLI pings).
+                self.doctor = false;
+                self.own_ended_ms = Some(now);
+            }
         }
         fx
     }
@@ -405,6 +414,7 @@ impl Model {
             }
             WorkerEvent::Released { .. } => {
                 self.push(now, "The job went back to the queue", false);
+                self.job_given_back();
                 self.check_queue(fx);
             }
             WorkerEvent::Log { text } => {
@@ -414,8 +424,11 @@ impl Model {
                 self.push(now, &text, false);
             }
             WorkerEvent::Error { kind, message } => {
-                if kind == ErrorKind::Connection {
-                    self.note = Some(message.clone());
+                match kind {
+                    ErrorKind::Connection => self.note = Some(message.clone()),
+                    // The CLI gives the job back without a released event.
+                    ErrorKind::Environment => self.job_given_back(),
+                    _ => {}
                 }
                 self.flag_error(now, &message);
                 if let Some(run) = self.run.as_mut() {
@@ -429,6 +442,12 @@ impl Model {
                 self.check_queue(fx);
             }
         }
+    }
+
+    /// The job given back waits again: the next check may answer only after the worker ended, and must not take it for a
+    /// new recording.
+    fn job_given_back(&mut self) {
+        self.last_queued = Some(self.last_queued.unwrap_or(0).max(1));
     }
 
     /// A connection error the worker has recovered from must not be reported as the cause of a later crash.
@@ -502,7 +521,7 @@ impl Model {
     /// This compares the server's clock with the local one, so it assumes they differ by well under
     /// `OWN_GRACE_MS` (about 10 s; NTP keeps ordinary computers far closer).
     fn detect_external(&mut self, seen: Option<i64>, now: i64) {
-        if self.run.is_some() || self.quitting {
+        if self.run.is_some() || self.doctor || self.quitting {
             return;
         }
         if !matches!(self.worker, WorkerState::Stopped | WorkerState::Error { .. } | WorkerState::External) {
@@ -1127,6 +1146,62 @@ mod tests {
         assert!(m.snapshot().can_start);
         let mut r = running();
         assert_eq!(r.apply(Input::Doctor, T), vec![]);
+    }
+
+    #[test]
+    fn a_doctor_run_is_not_a_worker_outside_the_tray() {
+        let mut m = Model::new();
+        m.apply(Input::Doctor, T - 30_000);
+        // The doctor of an older CLI pings the server: a check while it runs sees that call.
+        m.apply(queue(0, Some("2026-11-08T09:59:40.000Z")), T - 15_000);
+        assert_eq!(m.worker(), &WorkerState::Stopped);
+        m.apply(Input::DoctorDone { code: Some(0) }, T);
+        m.apply(queue(0, Some("2026-11-08T09:59:40.000Z")), T + 30_000); // seen 20 s before the doctor ended
+        assert_eq!(m.worker(), &WorkerState::Stopped);
+        assert!(m.can_start() && m.can_doctor());
+    }
+
+    #[test]
+    fn a_job_given_back_on_stop_is_no_new_recording() {
+        let mut m = running();
+        m.apply(queue(0, None), T);
+        m.apply(ev(job("j1", "Player freezes")), T);
+        m.apply(Input::Stop, T);
+        // The check the release asks for is answered only after the worker ended.
+        assert_eq!(m.apply(ev(WorkerEvent::Released { id: "j1".into() }), T), vec![Effect::CheckQueue]);
+        m.apply(ev(WorkerEvent::Stopped { done: 0, failed: 0, code: 0 }), T);
+        m.apply(Input::Exited { code: Some(0) }, T);
+        assert_eq!(m.worker(), &WorkerState::Stopped);
+        assert_eq!(notifications(&mut m, queue(1, None)), 0);
+        assert_eq!(notifications(&mut m, queue(1, None)), 0);
+        // A new wave still notifies.
+        assert_eq!(notifications(&mut m, queue(0, None)), 0);
+        assert_eq!(notifications(&mut m, queue(1, None)), 1);
+    }
+
+    #[test]
+    fn a_job_given_back_after_an_environment_error_is_no_new_recording() {
+        let mut m = running();
+        m.apply(ev(job("j1", "Player freezes")), T);
+        m.apply(ev(WorkerEvent::Error { kind: ErrorKind::Environment, message: "CUDA is not available".into() }), T);
+        m.apply(ev(WorkerEvent::Stopped { done: 0, failed: 0, code: 1 }), T);
+        m.apply(Input::Exited { code: Some(1) }, T);
+        assert!(matches!(m.worker(), WorkerState::Error { .. }));
+        assert_eq!(notifications(&mut m, queue(1, None)), 0);
+    }
+
+    #[test]
+    fn the_stderr_copy_of_an_error_event_is_not_logged_twice() {
+        let mut m = Model::new();
+        m.apply(Input::Start { once: false }, T);
+        let message = "no server URL: run tabula worker setup <url>";
+        m.apply(ev(WorkerEvent::Error { kind: ErrorKind::Config, message: message.into() }), T);
+        m.apply(ev(WorkerEvent::Stopped { done: 0, failed: 0, code: 1 }), T);
+        m.apply(Input::Stderr(format!("tabula: {message}")), T);
+        m.apply(Input::Stderr("tabula: something else".into()), T);
+        let log = texts(&m);
+        assert_eq!(log.iter().filter(|l| l.contains(message)).count(), 1, "{log:?}");
+        assert!(log.contains(&"tabula: something else".to_string()));
     }
 
     #[test]

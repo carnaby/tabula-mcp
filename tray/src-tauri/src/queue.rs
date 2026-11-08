@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use serde::Deserialize;
 
 use crate::config::TrayConfig;
-use crate::state::{QueueResult, OLD_CLI};
+use crate::state::{QueueResult, OLD_CLI, OLD_CLI_SIGNS};
 use crate::worker::{check_cli, command, kill_tree, spawn_error};
 
 /// How long one check may take; the CLI itself gives up on the server after 15 s.
@@ -18,10 +18,6 @@ pub const QUEUE_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long the output is awaited once the process ended (a grandchild may hold a pipe open), and how long a killed
 /// process is awaited.
 const AFTER_EXIT: Duration = Duration::from_secs(2);
-
-/// What a CLI before 1.3.0 says to `worker queue --json` (1.2.0: "tabula worker does not take --json"; one from
-/// before `tabula worker` existed: `unknown command "worker"`).
-const OLD_CLI_SIGNS: [&str; 4] = ["does not take --json", "does not take --events", "unknown worker command", "unknown command \"worker\""];
 
 #[derive(Deserialize)]
 struct Reply {

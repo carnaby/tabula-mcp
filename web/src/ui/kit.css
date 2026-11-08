@@ -149,7 +149,8 @@ button, input, select, textarea {
   flex: none;
 }
 a.t-btn { text-decoration: none; }
-.t-icon-btn.t-btn--sm { width: var(--control-h-sm); }
+/* At least 32px: the minimum touch target. */
+.t-icon-btn.t-btn--sm { width: 32px; height: 32px; }
 
 /* In-text toggles: accent text, no box until hover; the negative margin keeps the text aligned with its block. */
 .t-text-btn {

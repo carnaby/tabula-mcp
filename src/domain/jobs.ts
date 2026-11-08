@@ -275,6 +275,23 @@ export async function queuedCount(db: Db): Promise<number> {
   return r?.n ?? 0;
 }
 
+/** Jobs waiting and running, over all reports (a claim takes every queued job, whatever its report's state). */
+export async function jobCounts(db: Db): Promise<{ queued: number; running: number }> {
+  const rows = await db
+    .select({ status: reportJobs.status, n: count() })
+    .from(reportJobs)
+    .where(inArray(reportJobs.status, ['queued', 'running']))
+    .groupBy(reportJobs.status);
+  const n = (s: Job['status']) => rows.find((r) => r.status === s)?.n ?? 0;
+  return { queued: n('queued'), running: n('running') };
+}
+
+/** When the worker of this name last called the server; null when it never did. */
+export async function workerSeenAt(db: Db, name: string): Promise<Date | null> {
+  const [w] = await db.select({ at: workers.lastSeenAt }).from(workers).where(eq(workers.name, name));
+  return w?.at ?? null;
+}
+
 export type WorkerStatus = {
   lastSeenAt: string | null;
   workers: Array<{ name: string; version: string | null; lastSeenAt: string }>;

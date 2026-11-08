@@ -1,7 +1,7 @@
 {
   "name": "tabula-tray",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "Tray app for tabula worker (Tauri 2). Not part of the server's workspace: it has its own lockfile.",
   "license": "MIT",

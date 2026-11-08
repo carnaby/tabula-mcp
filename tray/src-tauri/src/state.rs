@@ -186,6 +186,7 @@ pub struct QueueView {
 }
 
 /// Everything the tray and the window show, made from the model.
+/// `tray/src/types.ts` mirrors these field names (camelCase) and the lowercase `Icon` values; change them together.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
@@ -356,12 +357,14 @@ impl Model {
             }
             WorkerEvent::Idle => {
                 self.note = None;
+                self.clear_connection_error();
                 if !stopping {
                     self.worker = WorkerState::Idle;
                 }
             }
             WorkerEvent::Job { id, attachment, report, report_url, .. } => {
                 self.note = None;
+                self.clear_connection_error();
                 if !stopping {
                     self.worker = WorkerState::Busy { job: Job { id, attachment, report, report_url }, phase: None, progress: None };
                 }
@@ -426,6 +429,15 @@ impl Model {
         }
     }
 
+    /// A connection error the worker has recovered from must not be reported as the cause of a later crash.
+    fn clear_connection_error(&mut self) {
+        if let Some(run) = self.run.as_mut() {
+            if run.last_error.as_ref().is_some_and(|(kind, _)| *kind == ErrorKind::Connection) {
+                run.last_error = None;
+            }
+        }
+    }
+
     fn exited(&mut self, code: Option<i32>, now: i64, fx: &mut Vec<Effect>) {
         let Some(run) = self.run.take() else { return };
         self.own_ended_ms = Some(now);
@@ -444,6 +456,9 @@ impl Model {
     }
 
     fn check_queue(&mut self, fx: &mut Vec<Effect>) {
+        if self.quitting {
+            return;
+        }
         if self.checking {
             self.check_again = true;
         } else {
@@ -461,13 +476,20 @@ impl Model {
                 self.detect_external(seen, now);
                 let rose = queued > 0 && self.last_queued.is_none_or(|q| q == 0);
                 self.last_queued = Some(queued);
-                if rose && matches!(self.worker, WorkerState::Stopped | WorkerState::Error { .. }) {
+                if rose && !self.quitting && matches!(self.worker, WorkerState::Stopped | WorkerState::Error { .. }) {
                     fx.push(Effect::Notify { queued });
                 }
             }
-            QueueResult::Failed { message } => self.queue = QueueState::Unknown { error: message, checked_at_ms: now },
+            QueueResult::Failed { message } => {
+                // Without a queue answer there is no sign of life: an outside worker can no longer be assumed.
+                if self.worker == WorkerState::External {
+                    self.worker = WorkerState::Stopped;
+                    self.push(now, "Cannot tell whether the worker outside the tray still runs", false);
+                }
+                self.queue = QueueState::Unknown { error: message, checked_at_ms: now };
+            }
         }
-        if self.check_again {
+        if self.check_again && !self.quitting {
             self.check_again = false;
             self.checking = true;
             fx.push(Effect::CheckQueue);
@@ -475,6 +497,8 @@ impl Model {
     }
 
     /// External: no worker of the tray, and the server saw one of this computer recently — later than the tray's own.
+    /// This compares the server's clock with the local one, so it assumes they differ by well under
+    /// `OWN_GRACE_MS` (about 10 s; NTP keeps ordinary computers far closer).
     fn detect_external(&mut self, seen: Option<i64>, now: i64) {
         if self.run.is_some() || self.quitting {
             return;
@@ -707,6 +731,9 @@ pub fn format_clock(ms: u64) -> String {
 pub fn clip_utf16(text: &str, max: usize) -> String {
     if text.encode_utf16().count() <= max {
         return text.to_string();
+    }
+    if max < 2 {
+        return if max == 0 { String::new() } else { "…".to_string() };
     }
     let mut out = String::new();
     let mut units = 0;
@@ -1111,6 +1138,75 @@ mod tests {
         for bad in ["", "yesterday", "2026-11-08 10:00:00Z", "2026-11-08T10:00:00.000", "2026-13-08T10:00:00.000Z", "2026-11-08T10:00:00.é00Z"] {
             assert_eq!(parse_iso_ms(bad), None, "{bad}");
         }
+    }
+
+    #[test]
+    fn an_outside_worker_is_dropped_when_the_queue_cannot_be_checked() {
+        let mut m = Model::new();
+        m.apply(queue(0, Some("2026-11-08T09:59:50.000Z")), T);
+        assert_eq!(m.worker(), &WorkerState::External);
+        m.apply(unknown("cannot reach the server"), T + 1_000);
+        assert_eq!(m.worker(), &WorkerState::Stopped);
+        assert_eq!((m.icon(), m.tooltip()), (Icon::Error, "cannot reach the server".to_string()));
+        assert!(m.can_start() && m.can_doctor());
+    }
+
+    #[test]
+    fn a_recovered_connection_error_is_not_blamed_for_a_later_crash() {
+        let mut m = running();
+        m.apply(ev(WorkerEvent::Error { kind: ErrorKind::Connection, message: "cannot reach the server".into() }), T);
+        m.apply(ev(WorkerEvent::Idle), T);
+        m.apply(ev(WorkerEvent::Log { text: "segfault".into() }), T);
+        m.apply(Input::Exited { code: Some(139) }, T);
+        assert_eq!(m.worker(), &WorkerState::Error { kind: None, message: "segfault".into() });
+        let mut other = running();
+        other.apply(ev(WorkerEvent::Error { kind: ErrorKind::Connection, message: "cannot reach the server".into() }), T);
+        other.apply(ev(job("j1", "x")), T);
+        other.apply(Input::Exited { code: Some(1) }, T);
+        assert_eq!(other.worker(), &WorkerState::Error { kind: None, message: "the worker ended with exit code 1".into() });
+    }
+
+    #[test]
+    fn the_snapshot_serializes_with_the_names_the_window_reads() {
+        let mut m = running();
+        m.apply(ev(job("j1", "Player freezes")), T);
+        m.apply(queue(2, None), T);
+        let v = serde_json::to_value(m.snapshot()).unwrap();
+        let keys = |v: &serde_json::Value| {
+            let mut k: Vec<String> = v.as_object().unwrap().keys().cloned().collect();
+            k.sort();
+            k
+        };
+        assert_eq!(
+            keys(&v),
+            ["canDoctor", "canStart", "canStop", "headline", "icon", "job", "log", "note", "queue", "status", "stopLabel", "tooltip"]
+        );
+        assert_eq!(keys(&v["job"]), ["percent", "project", "recording", "reportUrl", "step", "title"]);
+        assert_eq!(keys(&v["queue"]), ["checkedAtMs", "error", "text"]);
+        assert_eq!(keys(&v["log"][0]), ["atMs", "error", "text"]);
+        assert_eq!(v["icon"], "busy");
+        for (icon, name) in [(Icon::Stopped, "stopped"), (Icon::Waiting, "waiting"), (Icon::Idle, "idle"), (Icon::Busy, "busy"), (Icon::Error, "error")] {
+            assert_eq!(serde_json::to_value(icon).unwrap(), name);
+        }
+    }
+
+    #[test]
+    fn clipping_to_a_tiny_limit_does_not_panic() {
+        assert_eq!(clip_utf16("abc", 0), "");
+        assert_eq!(clip_utf16("abc", 1), "…");
+        assert_eq!(clip_utf16("abc", 2), "a…");
+        assert_eq!(clip_utf16("", 0), "");
+    }
+
+    #[test]
+    fn nothing_is_checked_or_notified_while_quitting() {
+        let mut m = running();
+        m.apply(Input::Quit, T);
+        m.apply(Input::Stop, T);
+        m.apply(ev(WorkerEvent::Stopped { done: 0, failed: 0, code: 0 }), T);
+        assert_eq!(m.apply(Input::Exited { code: Some(0) }, T), vec![]);
+        assert_eq!(m.apply(Input::QueueTick, T), vec![]);
+        assert_eq!(m.apply(queue(3, None), T), vec![]);
     }
 
     #[test]

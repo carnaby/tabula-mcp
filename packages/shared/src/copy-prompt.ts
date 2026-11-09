@@ -10,8 +10,8 @@ export const REF_PLACEHOLDER = '{ref}';
 export const normalizeCopyPrompt = (raw: string): string => raw.replace(/\r\n/g, '\n').trim();
 
 const NUL = String.fromCharCode(0);
-/** Control characters other than the line feed (NUL is checked on its own). */
-const CONTROL = /[\x01-\x09\x0b-\x1f\x7f]/;
+/** Control characters (C0, DEL and C1) other than the line feed (NUL is checked on its own). */
+const CONTROL = /[\x01-\x09\x0b-\x1f\x7f-\x9f]/;
 
 /** Why a normalized text can't be stored, or null when it can. */
 export function copyPromptProblem(text: string): string | null {

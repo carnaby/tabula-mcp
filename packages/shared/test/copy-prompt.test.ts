@@ -23,7 +23,7 @@ describe('copy prompt', () => {
 
   it('refuses control characters other than a new line', () => {
     expect(copyPromptProblem('One\nTwo')).toBeNull();
-    for (const code of [0, 9, 13, 27, 127]) {
+    for (const code of [0, 9, 13, 27, 127, 0x80, 0x85, 0x9f]) {
       expect(copyPromptProblem(`a${String.fromCharCode(code)}b`)).toBe('text must not contain control characters other than a new line');
     }
   });

@@ -1,6 +1,6 @@
 # Tabula
 
-Self-hosted MCP memory server (Node 22, TypeScript, Fastify, Postgres, React). See README.md. Commands: `pnpm typecheck`, `pnpm test` (Docker), `pnpm build`. The repository is public: no host-specific details in code, tests or docs; comments in English.
+Self-hosted MCP memory server (Node 22, TypeScript, Fastify, Postgres, React). See README.md. pnpm workspace with Nx: `apps/server`, `apps/web`, `apps/cli`, `apps/tray`, `packages/shared`. Commands from the root: `pnpm typecheck`, `pnpm test` (Docker), `pnpm build`, `pnpm affected`; one test file: `pnpm --filter @tabula/server exec vitest run test/…` (after one `pnpm build` on a fresh clone); the tray: `pnpm --filter @tabula/tray build|test`. The repository is public: no host-specific details in code, tests or docs; comments in English.
 
 ## Memory (Tabula)
 Tabula keeps this project's files that are not in git (handoff state, private specs and plans) and the global rules that apply to every project.

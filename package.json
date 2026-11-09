@@ -1,47 +1,24 @@
 {
   "name": "tabula",
-  "version": "0.1.0",
   "private": true,
   "type": "module",
   "engines": { "node": ">=22" },
   "scripts": {
-    "dev": "tsx watch --env-file=.env src/main.ts",
-    "dev:web": "vite --config web/vite.config.ts",
+    "dev": "nx run-many -t dev -p @tabula/server @tabula/web --output-style=stream",
+    "dev:server": "nx run @tabula/server:dev --output-style=stream",
+    "dev:web": "nx run @tabula/web:dev --output-style=stream",
     "db:dev": "docker start tabula-dev-db || docker run -d --name tabula-dev-db -e POSTGRES_DB=tabula -e POSTGRES_USER=tabula -e POSTGRES_PASSWORD=change-me -p 5432:5432 -v tabula-dev-pg17:/var/lib/postgresql/data postgres:17-alpine",
-    "build": "pnpm build:server && pnpm build:web",
-    "build:server": "tsc -p tsconfig.build.json",
-    "build:web": "vite build --config web/vite.config.ts",
-    "start": "node dist/main.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p web/tsconfig.json",
-    "test": "vitest run",
-    "db:generate": "drizzle-kit generate"
+    "build": "nx run-many -t build --output-style=static",
+    "typecheck": "nx run-many -t typecheck --output-style=static",
+    "test": "nx run-many -t test --parallel=1 --output-style=stream",
+    "affected": "nx affected -t typecheck test build --parallel=1 --output-style=static",
+    "graph": "nx graph",
+    "db:generate": "pnpm --filter @tabula/server db:generate"
   },
   "license": "MIT",
   "packageManager": "pnpm@10.33.2",
-  "dependencies": {
-    "@fastify/static": "^10.1.10",
-    "@modelcontextprotocol/node": "^2.1.2",
-    "@modelcontextprotocol/server": "^2.4.0",
-    "drizzle-orm": "^0.45.2",
-    "fastify": "^5.12.8",
-    "postgres": "^3.4.9",
-    "zod": "^4.6.7"
-  },
   "devDependencies": {
-    "@modelcontextprotocol/client": "^2.4.0",
-    "@testcontainers/postgresql": "^12.2.1",
-    "@types/node": "^26.6.2",
-    "@types/react": "^19.3.0",
-    "@types/react-dom": "^19.3.0",
-    "@vitejs/plugin-react": "^6.1.1",
-    "dompurify": "^3.4.17",
-    "drizzle-kit": "^0.31.10",
-    "marked": "^18.0.13",
-    "react": "^19.3.0",
-    "react-dom": "^19.3.0",
-    "tsx": "^4.23.13",
-    "typescript": "^7.0.2",
-    "vite": "^8.3.6",
-    "vitest": "^5.1.0"
+    "nx": "24.0.5",
+    "typescript": "^7.0.2"
   }
 }

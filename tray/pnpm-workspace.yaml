@@ -1,2 +1,0 @@
-# Makes tray/ its own pnpm workspace: `pnpm --dir tray install` keeps tray/pnpm-lock.yaml and never touches the
-# server's workspace or lockfile in the repository root.

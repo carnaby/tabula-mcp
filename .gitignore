@@ -1,8 +1,10 @@
 docs/
 .superpowers/
+.nx/
 node_modules/
 dist/
-web/dist/
 .env
 .env.compose
-cli/__pycache__/
+apps/cli/__pycache__/
+data/
+.claude/

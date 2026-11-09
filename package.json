@@ -4,11 +4,12 @@
   "type": "module",
   "engines": { "node": ">=22" },
   "scripts": {
-    "dev": "nx run @tabula/server:dev --output-style=stream",
-    "dev:web": "vite --config web/vite.config.ts",
+    "dev": "nx run-many -t dev -p @tabula/server @tabula/web --output-style=stream",
+    "dev:server": "nx run @tabula/server:dev --output-style=stream",
+    "dev:web": "nx run @tabula/web:dev --output-style=stream",
     "db:dev": "docker start tabula-dev-db || docker run -d --name tabula-dev-db -e POSTGRES_DB=tabula -e POSTGRES_USER=tabula -e POSTGRES_PASSWORD=change-me -p 5432:5432 -v tabula-dev-pg17:/var/lib/postgresql/data postgres:17-alpine",
-    "build": "nx run-many -t build --output-style=static && vite build --config web/vite.config.ts",
-    "typecheck": "nx run-many -t typecheck --output-style=static && tsc -p web/tsconfig.json",
+    "build": "nx run-many -t build --output-style=static",
+    "typecheck": "nx run-many -t typecheck --output-style=static",
     "test": "nx run-many -t test --parallel=1 --output-style=static",
     "affected": "nx affected -t typecheck test build --parallel=1 --output-style=static",
     "graph": "nx graph",
@@ -16,20 +17,8 @@
   },
   "license": "MIT",
   "packageManager": "pnpm@10.33.2",
-  "dependencies": {
-    "@tabula/shared": "workspace:*"
-  },
   "devDependencies": {
-    "@types/node": "^26.6.2",
-    "@types/react": "^19.3.0",
-    "@types/react-dom": "^19.3.0",
-    "@vitejs/plugin-react": "^6.1.1",
-    "dompurify": "^3.4.17",
-    "marked": "^18.0.13",
     "nx": "24.0.5",
-    "react": "^19.3.0",
-    "react-dom": "^19.3.0",
-    "typescript": "^7.0.2",
-    "vite": "^8.3.6"
+    "typescript": "^7.0.2"
   }
 }

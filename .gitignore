@@ -3,7 +3,6 @@ docs/
 .nx/
 node_modules/
 dist/
-web/dist/
 .env
 .env.compose
 apps/cli/__pycache__/

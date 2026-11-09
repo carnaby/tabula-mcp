@@ -28,7 +28,7 @@ Project files and global rules feed the `recall` digest. Notes and Thoughts neve
 
 ### The `tabula` command
 
-`tabula` is a single ES module (`cli/tabula.mjs`) without dependencies; Node 22 or newer runs it on Windows, macOS and Linux. The server hands it out at `/cli/tabula.mjs`:
+`tabula` is a single ES module (`apps/cli/tabula.mjs`) without dependencies; Node 22 or newer runs it on Windows, macOS and Linux. The server hands it out at `/cli/tabula.mjs`:
 
 ```bash
 # macOS / Linux
@@ -73,7 +73,7 @@ A repository opts in with a `.tabula.json` in its root, committed:
 
 Each clone keeps the hash it last synced for every file in `<git-dir>/tabula-sync.json` (per worktree, never committed). The server accepts a change only if it is based on the server's current version, so two machines editing the same file produce a **conflict** instead of a silent overwrite: merge by hand, or take one side with `--force`. Exit codes: 0 OK, 1 error, 2 finished with conflicts.
 
-To restore the files at the start of every Claude Code session, add the hook from [`templates/session-start-hook.json`](templates/session-start-hook.json) to `~/.claude/settings.json`:
+To restore the files at the start of every Claude Code session, add the hook from [`apps/server/templates/session-start-hook.json`](apps/server/templates/session-start-hook.json) to `~/.claude/settings.json`:
 
 ```json
 { "hooks": { "SessionStart": [ { "hooks": [ { "type": "command", "command": "node ~/.tabula/tabula.mjs pull --hook", "timeout": 10 } ] } ] } }
@@ -292,11 +292,11 @@ Tabula keeps this project's files that are not in git (handoff state, private sp
 
 **Without the `tabula` command** — Claude Code on the web runs in a temporary container without your login, and claude.ai has only the connector — nothing is on disk and nothing would survive the session. The section covers that case too: the agent calls `recall` with `include_state: true`, reads files with `read_file` and saves every new or changed spec, plan, `progress.md` or handoff state with `write_file`. On your computer `tabula pull` (or the SessionStart hook) brings them down like any other change; if you edited the same file locally meanwhile, it is a conflict, not a silent overwrite.
 
-You don't write it by hand: tell the agent *"use Tabula in this project"* and it calls `setup_project` with the folder name as the slug, puts the section into `CLAUDE.md` and the suggested `.tabula.json` into the repository root. Run `tabula status` before the first `tabula push`: it lists every file the push would upload. For claude.ai projects use [`templates/claude-ai-project-instructions.md`](templates/claude-ai-project-instructions.md).
+You don't write it by hand: tell the agent *"use Tabula in this project"* and it calls `setup_project` with the folder name as the slug, puts the section into `CLAUDE.md` and the suggested `.tabula.json` into the repository root. Run `tabula status` before the first `tabula push`: it lists every file the push would upload. For claude.ai projects use [`apps/server/templates/claude-ai-project-instructions.md`](apps/server/templates/claude-ai-project-instructions.md).
 
 ### The web UI
 
-A responsive React app with its own small UI kit (`web/src/ui`), light and dark themes, and an installable icon for the home screen.
+A responsive React app with its own small UI kit (`apps/web/src/ui`), light and dark themes, and an installable icon for the home screen.
 
 - **Sidebar** — *Notebook* (Notes, Thoughts, and Reports with the number of open reports), *For agents* (Global), and the projects with their file counts, the most recently active first (files, reports and notes count). On phones it is a drawer. Next to the logo (on phones in the top bar) a dot shows the transcription worker: green *Worker* when it is online, pulsing *Transcribing* while it works, orange *Worker offline · N waiting* when recordings wait for it, grey *Worker offline*; a click shows when it last called in, what waits, runs and failed, and how to start it. Without `TABULA_WORKER_TOKEN` it is not shown.
 - **Thoughts** and **Notes** — card grids with search, tag chips, sort and pinning; a Markdown editor with Write / Split / Preview and Ctrl/⌘ S. Thoughts also keep a version history and warn when an agent changed the text while you were typing.
@@ -323,7 +323,7 @@ flowchart LR
 
 One Node.js process serves everything: the MCP endpoint (`/mcp`), the REST API for the UI and the CLI (`/api`), the CLI download (`/cli/tabula.mjs`, `/cli/version`), the static UI build and `/healthz`.
 
-- **Node 22, TypeScript, Fastify 5.** Domain logic (including project files with optimistic locking) lives in `src/domain` and is shared by the MCP tools and the REST API; `src/agent` adds the rules that apply only to agents (source tagging, read-only human records).
+- **Node 22, TypeScript, Fastify 5.** Domain logic (including project files with optimistic locking) lives in `apps/server/src/domain` and is shared by the MCP tools and the REST API; `apps/server/src/agent` adds the rules that apply only to agents (source tagging, read-only human records).
 - **MCP TypeScript SDK v2**, Streamable HTTP in **stateless** mode: every request gets a fresh server instance, so the process holds no session state and restarts are invisible to clients.
 - **Postgres 17 with Drizzle ORM.** Search uses a generated, weighted `tsvector` column with a GIN index and the `tabula` text search configuration: `simple` (no stemming, because records mix Slovak and English and language-specific stemming would mangle one of them) with every word passed through the `unaccent` extension first, so "graficka" and "grafická" find each other while snippets keep the original text. Queries match words by their beginning. The migration creates `unaccent` (a trusted contrib extension since Postgres 13, so the database owner may create it). No embeddings: the records are short and most reads go through `recall`, not search.
 - **React + Vite** UI, built into static files served by the same process.
@@ -389,7 +389,7 @@ https://tabula.example.com/mcp/<TABULA_CONNECTOR_SECRET>
 
 with no authentication. Custom connectors in claude.ai can't always send a static `Authorization` header, so when `TABULA_CONNECTOR_SECRET` is set, Tabula also accepts the secret as a path segment. Treat that URL as a password. Records written this way are labelled `claude-ai`.
 
-Then paste [`templates/claude-ai-project-instructions.md`](templates/claude-ai-project-instructions.md) into the instructions of a claude.ai project, with your project slug.
+Then paste [`apps/server/templates/claude-ai-project-instructions.md`](apps/server/templates/claude-ai-project-instructions.md) into the instructions of a claude.ai project, with your project slug.
 
 ### Other MCP clients
 
@@ -405,7 +405,7 @@ Any client that speaks Streamable HTTP with the classic `initialize` handshake (
 | `TABULA_WORKER_TOKEN` | no | — | Enables the transcription worker's API (`/api/worker/*`) for `tabula worker`; at least 32 characters and different from `TABULA_TOKEN`. Without it that API answers `503` |
 | `PORT` | no | `3000` | Port the server listens on |
 | `HOST` | no | `0.0.0.0` | Interface to bind |
-| `WEB_DIST` | no | `web/dist` | Path to the UI build |
+| `WEB_DIST` | no | `web/dist` | Path to the UI build (in the image `/app/web/dist`; for `pnpm dev` see `.env.example`) |
 | `LOG_LEVEL` | no | `info` | `debug`, `info`, `warn` or `error` |
 | `TABULA_MEDIA_DIR` | no | `data/media` (`/data/media` in the image) | Where report attachments are stored; mount a volume there (writable by uid 1000 in the image) and back it up with the database |
 | `TABULA_MEDIA_MAX_MB` | no | `1024` | Largest accepted upload (a reverse proxy in front needs a body limit at least this big) |
@@ -417,54 +417,64 @@ Any client that speaks Streamable HTTP with the classic `initialize` handshake (
 
 ## Development
 
+The repository is a pnpm workspace with [Nx](https://nx.dev): `apps/server`, `apps/web`, `apps/cli`, `apps/tray` and `packages/shared`. Each package's `package.json` scripts are its targets; `nx.json` builds `@tabula/shared` first and caches builds, type checks and the light tests (the server's tests always run).
+
 ```bash
-pnpm install
+pnpm install                # the whole workspace, one lockfile
 pnpm db:dev                 # Postgres 17 in Docker (container tabula-dev-db, port 5432)
-cp .env.example .env        # then set TABULA_TOKEN
-pnpm dev                    # server with reload on PORT (default 3000)
-pnpm dev:web                # UI on http://localhost:5173, proxies /api to TABULA_API (default http://localhost:3000)
+cp .env.example .env        # then set TABULA_TOKEN (an older .env: add WEB_DIST and TABULA_MEDIA_DIR from .env.example)
+pnpm dev                    # server with reload on PORT (default 3000) and the UI on http://localhost:5173
+pnpm dev:server             # only the server
+pnpm dev:web                # only the UI; proxies /api to TABULA_API (default http://localhost:3000)
 ```
 
-A `502 Bad Gateway` on `/api` in the browser means the server isn't running — usually because the database isn't.
+A `502 Bad Gateway` on `/api` in the browser means the server isn't running — usually because the database isn't. After changing `packages/shared`, restart `pnpm dev` (the server and the UI use its build).
 
 ```bash
-pnpm typecheck              # server and UI
-pnpm test                   # Vitest; starts a throwaway Postgres via Testcontainers (needs Docker)
+pnpm typecheck              # every package
+pnpm test                   # Vitest in every package, one at a time; the server's tests start a throwaway Postgres via Testcontainers (needs Docker)
 TEST_DATABASE_URL=postgres://… pnpm test   # or use an existing throwaway database (it is wiped; the database name must contain "test", e.g. tabula_test, and must differ from DATABASE_URL)
+pnpm build                  # shared, server and UI (the tray builds on its own, below)
+pnpm affected               # typecheck, test and build only what changed against main
+pnpm graph                  # the project graph in the browser
+pnpm --filter @tabula/server exec vitest run test/unit/digest.test.ts   # one test file
+pnpm db:generate --name <name>                                          # a new migration in apps/server/drizzle
 ```
 
-The tray app lives in `tray/` with its own `package.json` and lockfile (not part of the server's workspace):
+The tray app is the workspace package `@tabula/tray` in `apps/tray`:
 
 ```bash
-pnpm --dir tray install
-pnpm --dir tray dev         # the tray with the window on http://localhost:1420
-pnpm --dir tray test        # cargo test: the state machine, the CLI processes (needs node on PATH)
-pnpm --dir tray build       # Windows: .msi in tray/src-tauri/target/release/bundle/msi/
-pnpm --dir tray icons       # after changing tray/icons/tray.svg: regenerates the committed PNGs
+pnpm --filter @tabula/tray dev     # the tray with the window on http://localhost:1420
+pnpm --filter @tabula/tray test    # cargo test: the state machine, the CLI processes (needs node on PATH)
+pnpm --filter @tabula/tray build   # Windows: .msi in apps/tray/src-tauri/target/release/bundle/msi/
+pnpm --filter @tabula/tray icons   # after changing apps/tray/icons/tray.svg: regenerates the committed PNGs
 ```
 
-Building it needs Rust 1.90 or newer; on Windows also Visual Studio 2022 Build Tools with "Desktop development with C++" (WebView2 comes with Windows 11); on Ubuntu `sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev build-essential file`. A release: raise `version` in `tray/package.json`, `tray/src-tauri/Cargo.toml` and `tray/src-tauri/tauri.conf.json`, then push a tag `tray-v<version>`; the Tray workflow attaches the `.msi`, `.deb` and `.AppImage`.
+Building it needs Rust 1.90 or newer; on Windows also Visual Studio 2022 Build Tools with "Desktop development with C++" (WebView2 comes with Windows 11); on Ubuntu `sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev build-essential file`. A release: raise `version` in `apps/tray/package.json`, `apps/tray/src-tauri/Cargo.toml` (and its entry in `Cargo.lock`) and `apps/tray/src-tauri/tauri.conf.json`, then push a tag `tray-v<version>`; the Tray workflow attaches the `.msi`, `.deb` and `.AppImage`.
 
 The tests cover the domain rules, the digest builder, the REST API, the MCP endpoint through a real MCP client, and the `tabula` command end to end against a real server and temporary git repositories (git must be installed).
 
 ### Layout
 
 ```text
-src/
-  domain/       records, validation, search, digest builder, token estimate
-  agent/        what agents may do (source tagging, read-only human records)
-  mcp/          MCP server, tool descriptions, server instructions, CLAUDE.md section
-  shared/       pure helpers the UI builds too (references, grouping files by folder)
-  http/         Fastify app, REST API, bearer auth, static UI
-  db/           Drizzle schema, client, migrations runner
-  maintenance/  one-off data migrations run inside the container
-cli/            the tabula command (one dependency-free file, served at /cli/tabula.mjs; the server reuses its glob matcher)
-tray/           the tray app for tabula worker (Tauri 2: Rust core in src-tauri/, window in src/); own package.json and lockfile
-drizzle/        SQL migrations (generated search column, GIN indexes, the global project)
-web/            React UI (web/src/ui is the UI kit)
-templates/      protocol snippets for CLAUDE.md, claude.ai and the SessionStart hook
-deploy/         example production stack and backup script
-test/           Vitest: unit, database, HTTP/MCP and end-to-end CLI tests
+apps/
+  server/         @tabula/server
+    src/
+      domain/       records, validation, search, digest builder, token estimate
+      agent/        what agents may do (source tagging, read-only human records)
+      mcp/          MCP server, tool descriptions, server instructions, CLAUDE.md section
+      http/         Fastify app, REST API, bearer auth, static UI, the CLI download
+      db/           Drizzle schema, client, migrations runner
+      maintenance/  one-off data migrations run inside the container
+    drizzle/      SQL migrations (generated search column, GIN indexes, the global project)
+    templates/    protocol snippets for CLAUDE.md, claude.ai and the SessionStart hook
+    test/         Vitest: unit, database, HTTP/MCP and end-to-end CLI tests against a real server
+  web/            @tabula/web: React UI (src/ui is the UI kit)
+  cli/            @tabula/cli: the tabula command (one dependency-free file, served at /cli/tabula.mjs; the server reuses its glob matcher), the worker's Python scripts, unit tests
+  tray/           @tabula/tray: the tray app for tabula worker (Tauri 2: Rust core in src-tauri/, window in src/)
+packages/
+  shared/         @tabula/shared: pure helpers the server and the UI share (references, grouping files by folder, report titles), built to dist/
+deploy/           example production stack and backup script
 ```
 
 ## Security

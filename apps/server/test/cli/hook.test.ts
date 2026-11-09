@@ -161,7 +161,7 @@ describe('tabula install, update and the version check', { timeout: 60_000 }, ()
     writeFileSync(script, '# old\n');
     const up = await runCli(['update'], { cwd: a, env: env(), cli: copy });
     expect(up.code, up.stderr).toBe(0);
-    expect(readFileSync(script, 'utf8')).toBe(readFileSync(new URL('../../cli/transcribe.py', import.meta.url), 'utf8'));
+    expect(readFileSync(script, 'utf8')).toBe(readFileSync(new URL('../../../cli/transcribe.py', import.meta.url), 'utf8'));
     // diarize.py is replaced too when tabula worker setup --diarize put it into the data folder.
     const diarizer = join(home, 'data', 'diarize', 'diarize.py');
     mkdirSync(dirname(diarizer), { recursive: true });
@@ -171,6 +171,6 @@ describe('tabula install, update and the version check', { timeout: 60_000 }, ()
     writeFileSync(configFile, JSON.stringify({ ...config, worker: { ...config.worker, diarize: { python: 'python', script: diarizer } } }));
     const again = await runCli(['update'], { cwd: a, env: env(), cli: copy });
     expect(again.code, again.stderr).toBe(0);
-    expect(readFileSync(diarizer, 'utf8')).toBe(readFileSync(new URL('../../cli/diarize.py', import.meta.url), 'utf8'));
+    expect(readFileSync(diarizer, 'utf8')).toBe(readFileSync(new URL('../../../cli/diarize.py', import.meta.url), 'utf8'));
   });
 });

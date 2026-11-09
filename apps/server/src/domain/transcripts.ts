@@ -1,3 +1,4 @@
+import { importCli } from '../cli-package.js';
 import type { TranscriptSegment } from '../db/schema.js';
 import { badRequest } from './errors.js';
 import { SPEAKER_ID } from './speakers.js';
@@ -8,9 +9,9 @@ export type { TranscriptSegment };
 /** What one finished transcription may carry; no recording is longer than 24 hours. */
 export const TRANSCRIPT_LIMITS = { segments: 20_000, segmentChars: 2_000, totalChars: 500_000, maxMs: 24 * 3600 * 1000 } as const;
 
-// One formatter for the server and the CLI worker; see glob.ts for why the CLI is imported like this.
+// One formatter for the server and the CLI worker (see cli-package.ts).
 type CliClock = { formatClock(ms: number): string };
-const cli = (await import(new URL('../../cli/tabula.mjs', import.meta.url).href)) as CliClock;
+const cli = await importCli<CliClock>();
 
 /** "0:05", "2:41", "1:02:03": the same form as the UI's clock. */
 export const clock: (ms: number) => string = cli.formatClock;

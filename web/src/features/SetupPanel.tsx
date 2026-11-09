@@ -96,7 +96,7 @@ export function SetupPanel({ project }: { project: Project | undefined }) {
           Commit this <code className="t-mono">.tabula.json</code> in the repository root. <code className="t-mono">sync</code> lists the untracked files to keep in Tabula, <code className="t-mono">state</code> the ones that form the current project state. Without <code className="t-mono">"project"</code> the folder name is the slug — add <code className="t-mono">"project": "{project.id}"</code> if the folder is named differently.
         </p>
         {snippet.data ? <CodeBlock text={snippet.data.tabulaJson} label=".tabula.json" /> : <Skeleton height={90} />}
-        <p className="t-muted">For a claude.ai project, paste the project instructions template from the repository's <code className="t-mono">templates/</code> folder with this slug.</p>
+        <p className="t-muted">For a claude.ai project, paste the project instructions template from the repository's <code className="t-mono">apps/server/templates/</code> folder with this slug.</p>
       </section>
 
       <section className="t-card t-card--pad t-stack">

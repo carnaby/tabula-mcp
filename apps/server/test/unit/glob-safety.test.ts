@@ -3,7 +3,7 @@ import { matchesSyncPattern } from '../../src/domain/glob.js';
 
 type CliGlob = { matchesAny(path: string, patterns: string[]): boolean; globMatch(glob: string, path: string): boolean };
 // A non-literal specifier keeps TypeScript from looking for type declarations of the plain .mjs file.
-const cli = (await import(new URL('../../cli/tabula.mjs', import.meta.url).href)) as CliGlob;
+const cli = (await import(new URL('../../../cli/tabula.mjs', import.meta.url).href)) as CliGlob;
 
 /** The regex translation the CLI used up to 1.1.0: the reference for the semantics (it backtracks, so short inputs only). */
 function referenceRegExp(glob: string): RegExp {

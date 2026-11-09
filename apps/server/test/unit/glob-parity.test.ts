@@ -3,7 +3,7 @@ import { matchesSyncPattern } from '../../src/domain/glob.js';
 
 type CliGlob = { matchesAny(path: string, patterns: string[]): boolean };
 // A non-literal specifier keeps TypeScript from looking for type declarations of the plain .mjs file.
-const cli = (await import(new URL('../../cli/tabula.mjs', import.meta.url).href)) as CliGlob;
+const cli = (await import(new URL('../../../cli/tabula.mjs', import.meta.url).href)) as CliGlob;
 
 /** One table for both sides: the server decides what write_file accepts exactly as the CLI decides what it syncs. */
 const CASES: Array<[glob: string, path: string, expected: boolean]> = [

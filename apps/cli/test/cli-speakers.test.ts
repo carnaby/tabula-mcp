@@ -13,7 +13,7 @@ type Cli = {
   DIARIZE_MODEL: string;
 };
 // A non-literal specifier keeps TypeScript from looking for type declarations of the plain .mjs file.
-const cli = (await import(new URL('../../cli/tabula.mjs', import.meta.url).href)) as Cli;
+const cli = (await import(new URL('../tabula.mjs', import.meta.url).href)) as Cli;
 
 const w = (start: number, end: number, text: string): Word => ({ start_ms: start, end_ms: end, text });
 const t = (start: number, end: number, speaker: string): Turn => ({ start_ms: start, end_ms: end, speaker });

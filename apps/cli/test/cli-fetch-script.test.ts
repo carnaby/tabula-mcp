@@ -10,7 +10,7 @@ type CliFetch = {
 };
 
 // A non-literal specifier keeps TypeScript from looking for type declarations of the plain .mjs file.
-const cli = (await import(new URL('../../cli/tabula.mjs', import.meta.url).href)) as CliFetch;
+const cli = (await import(new URL('../tabula.mjs', import.meta.url).href)) as CliFetch;
 
 describe('fetchScript on a stale connection', () => {
   let server: Server | undefined;

@@ -12,7 +12,7 @@ import type { Db } from '../../src/db/client.js';
 import { buildApp } from '../../src/http/app.js';
 import { testConfig } from '../helpers.js';
 
-export const CLI = fileURLToPath(new URL('../../cli/tabula.mjs', import.meta.url));
+export const CLI = fileURLToPath(new URL('../../../cli/tabula.mjs', import.meta.url));
 
 /** A real Tabula server on an ephemeral port, for the CLI to talk to. */
 export function useServer(db: Db, config: Config = testConfig()): { url: string } {

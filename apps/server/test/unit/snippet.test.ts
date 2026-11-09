@@ -31,7 +31,7 @@ describe('claudeMdSection', () => {
   });
 
   it('the README shows the current CLAUDE.md section', () => {
-    const readme = readFileSync(new URL('../../README.md', import.meta.url), 'utf8');
+    const readme = readFileSync(new URL('../../../../README.md', import.meta.url), 'utf8');
     expect(readme).toContain(claudeMdSection('my-project').trim());
   });
 });

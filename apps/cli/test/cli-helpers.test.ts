@@ -18,7 +18,7 @@ type CliModule = {
   makeApi(conn: { url: string; token: string }, deadline?: number): (method: string, path: string) => Promise<unknown>;
 };
 
-const CLI_URL = new URL('../../cli/tabula.mjs', import.meta.url);
+const CLI_URL = new URL('../tabula.mjs', import.meta.url);
 // A non-literal specifier keeps TypeScript from looking for type declarations of the plain .mjs file.
 const cli = (await import(CLI_URL.href)) as CliModule;
 

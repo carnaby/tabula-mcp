@@ -1,15 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import type { FastifyInstance } from 'fastify';
-
-/** From both src/http/ and dist/http/, ../../cli is the repository's cli folder (in Docker: /app/cli). */
-export const CLI_FILE = fileURLToPath(new URL('../../cli/tabula.mjs', import.meta.url));
-
-/** The transcriber that tabula worker setup installs next to its Python environment. */
-export const TRANSCRIBE_FILE = fileURLToPath(new URL('../../cli/transcribe.py', import.meta.url));
-
-/** Speaker recognition, which tabula worker setup --diarize installs next to its own Python environment. */
-export const DIARIZE_FILE = fileURLToPath(new URL('../../cli/diarize.py', import.meta.url));
+import { CLI_FILE, DIARIZE_FILE, TRANSCRIBE_FILE } from '../cli-package.js';
 
 /** The single source of the CLI version is its VERSION line, so the served file and /cli/version cannot drift. */
 export function readCliVersion(source: string): string {

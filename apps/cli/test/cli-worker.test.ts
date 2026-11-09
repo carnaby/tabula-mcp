@@ -22,7 +22,7 @@ type CliWorker = {
 };
 
 // A non-literal specifier keeps TypeScript from looking for type declarations of the plain .mjs file.
-const cli = (await import(new URL('../../cli/tabula.mjs', import.meta.url).href)) as CliWorker;
+const cli = (await import(new URL('../tabula.mjs', import.meta.url).href)) as CliWorker;
 
 describe('worker helpers of the CLI', () => {
   it('is version 1.4.1 and exits 3 for a broken transcription setup', () => {

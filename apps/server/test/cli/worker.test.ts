@@ -24,7 +24,7 @@ type CliWorker = {
   runJob(cfg: Record<string, unknown>, job: Job, opts: { log: (line: string) => void; stop: AbortSignal }): Promise<string>;
 };
 // A non-literal specifier keeps TypeScript from looking for type declarations of the plain .mjs file.
-const cli = (await import(new URL('../../cli/tabula.mjs', import.meta.url).href)) as CliWorker;
+const cli = (await import(new URL('../../../cli/tabula.mjs', import.meta.url).href)) as CliWorker;
 
 const db = useTestDb();
 const server = useServer(

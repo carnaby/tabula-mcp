@@ -941,6 +941,8 @@ a.t-btn { text-decoration: none; }
 }
 .t-popover__item:hover { background: var(--surface-hover); }
 .t-popover__item .t-icon { color: var(--text-muted); }
+.t-popover__item--danger, .t-popover__item--danger .t-icon { color: var(--danger); }
+.t-popover__item--danger:hover { background: var(--danger-soft); }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }

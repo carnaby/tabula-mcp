@@ -6,7 +6,7 @@ import { Badge, Button, Icon, IconButton, Textarea, useConfirm, useToast } from 
 import { Author, authorOf } from '../common';
 import { CopyRefButton } from '../CopyRefButton';
 import { clock } from './Recorder';
-import { Transcript } from './Transcript';
+import { RecordingMenu, Transcript } from './Transcript';
 import type { Upload } from './uploads';
 
 /** Jump the player to a moment of the transcript and play from there. */
@@ -166,7 +166,7 @@ function VideoCard({
         )}
         <span className="t-spacer" />
         <CopyRefButton id={a.id} size="sm" />
-        <IconButton size="sm" icon="trash" label="Delete video" onClick={onDelete} />
+        <RecordingMenu a={a} closed={closed} onChange={onTranscript} deleteLabel="Delete video" onDelete={onDelete} />
       </figcaption>
       {frames.length > 0 && (
         <div className="att__frames">
@@ -196,7 +196,7 @@ function VideoCard({
         </div>
       )}
       {selected && <FrameNote key={selected.id} frame={selected} onSaved={onNote} />}
-      <Transcript a={a} worker={worker} onSeek={a.url ? onSeek : undefined} onChange={onTranscript} currentMs={t * 1000} playing={playing} closed={closed} />
+      <Transcript a={a} worker={worker} onSeek={a.url ? onSeek : undefined} onChange={onTranscript} currentMs={t * 1000} playing={playing} />
     </figure>
   );
 }
@@ -221,9 +221,9 @@ function AudioCard({
         <span className="t-subtle t-nowrap">{a.durationMs !== null ? `${clock(a.durationMs)} · ` : ''}{formatSize(a.size)}</span>
         <span className="t-spacer" />
         <CopyRefButton id={a.id} size="sm" />
-        <IconButton size="sm" icon="trash" label="Delete voice note" onClick={onDelete} />
+        <RecordingMenu a={a} closed={closed} onChange={onTranscript} deleteLabel="Delete voice note" onDelete={onDelete} />
       </figcaption>
-      <Transcript a={a} worker={worker} onSeek={a.url ? onSeek : undefined} onChange={onTranscript} currentMs={t * 1000} playing={playing} closed={closed} />
+      <Transcript a={a} worker={worker} onSeek={a.url ? onSeek : undefined} onChange={onTranscript} currentMs={t * 1000} playing={playing} />
     </figure>
   );
 }

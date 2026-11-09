@@ -57,14 +57,46 @@ const Line = memo(function Line({
   );
 });
 
-/** The "⋯" menu above a transcript. */
-function TranscriptMenu({ onAgain }: { onAgain: () => void }) {
+/** "Transcribe again" of a recording: whether it is allowed now, and the confirmed action. Used by the card's menu. */
+export function useTranscribeAgain(a: Attachment, closed: boolean, onChange: (t: TranscriptState) => void) {
+  const notify = useToast();
+  const { confirm } = useConfirm();
+  const t = a.transcript;
+  const canAgain = !!a.url && !closed && t?.status === 'done' && t.again?.status !== 'queued' && t.again?.status !== 'running';
+  const again = async () => {
+    const ok = await confirm({
+      title: 'Transcribe again?',
+      message: 'The worker transcribes the recording again and replaces this transcript when it is done. The speaker names are cleared, because a new run may number the speakers differently.',
+      confirmLabel: 'Transcribe again',
+    });
+    if (!ok) return;
+    try {
+      onChange(await api.transcribeAgain(a.id));
+    } catch (e) {
+      notify((e as Error).message, { tone: 'danger' });
+    }
+  };
+  return { canAgain, again };
+}
+
+/** The "⋯" menu in the caption of a video or voice note: Transcribe again (when allowed) and Delete. */
+export function RecordingMenu({
+  a, closed = false, onChange, deleteLabel, onDelete,
+}: { a: Attachment; closed?: boolean; onChange: (t: TranscriptState) => void; deleteLabel: string; onDelete: () => void }) {
+  const { canAgain, again } = useTranscribeAgain(a, closed, onChange);
   return (
-    <Popover className="transcript__menu" triggerClassName="transcript__menu-trigger" triggerLabel="Transcript options" trigger={<Icon name="more" />}>
+    <Popover fixed align="end" className="rec-menu" triggerClassName="rec-menu__trigger" triggerLabel="Recording options" trigger={<Icon name="more" />}>
       {(close) => (
-        <button type="button" className="t-popover__item" onClick={() => { close(); onAgain(); }}>
-          <Icon name="refresh" /> Transcribe again
-        </button>
+        <>
+          {canAgain && (
+            <button type="button" className="t-popover__item" onClick={() => { close(); void again(); }}>
+              <Icon name="refresh" /> Transcribe again
+            </button>
+          )}
+          <button type="button" className="t-popover__item t-popover__item--danger" onClick={() => { close(); onDelete(); }}>
+            <Icon name="trash" /> {deleteLabel}
+          </button>
+        </>
       )}
     </Popover>
   );
@@ -72,7 +104,7 @@ function TranscriptMenu({ onAgain }: { onAgain: () => void }) {
 
 /** The transcript under a video or voice note: lines with clickable times (and speakers), or what it is waiting for. */
 export function Transcript({
-  a, worker, onSeek, onChange, currentMs, playing = false, closed = false,
+  a, worker, onSeek, onChange, currentMs, playing = false,
 }: {
   a: Attachment;
   worker: WorkerStatus | undefined;
@@ -83,11 +115,8 @@ export function Transcript({
   currentMs?: number;
   /** While true, the transcript scrolls to keep the active line in view. */
   playing?: boolean;
-  /** The report is closed: no "Transcribe again". */
-  closed?: boolean;
 }) {
   const notify = useToast();
-  const { confirm } = useConfirm();
   const [busy, setBusy] = useState(false);
   const listRef = useRef<HTMLOListElement>(null);
   const lastUserAction = useRef(0);
@@ -136,27 +165,11 @@ export function Transcript({
     }
   };
 
-  const again = async () => {
-    const ok = await confirm({
-      title: 'Transcribe again?',
-      message: 'The worker transcribes the recording again and replaces this transcript when it is done. The speaker names are cleared, because a new run may number the speakers differently.',
-      confirmLabel: 'Transcribe again',
-    });
-    if (!ok) return;
-    try {
-      onChange(await api.transcribeAgain(a.id));
-    } catch (e) {
-      notify((e as Error).message, { tone: 'danger' });
-    }
-  };
-
   if (t.status === 'done') {
     const pending = t.again;
-    const canAgain = !!a.url && !closed && pending?.status !== 'queued' && pending?.status !== 'running';
     const notRecognized = t.diarization && 'error' in t.diarization ? t.diarization.error : null;
     return (
       <div className="transcript-block">
-        {canAgain && <div className="transcript__head"><TranscriptMenu onAgain={() => void again()} /></div>}
         {t.segments.length ? (
           <ol
             ref={listRef}

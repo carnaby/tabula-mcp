@@ -7,7 +7,7 @@ import { cx } from './Button';
  * because a dialog clips what overflows it.
  */
 export function Popover({
-  trigger, triggerLabel, triggerTitle, triggerClassName, className, fixed, children,
+  trigger, triggerLabel, triggerTitle, triggerClassName, className, fixed, align = 'start', children,
 }: {
   trigger: ReactNode;
   /** The accessible name of the trigger button. */
@@ -18,6 +18,8 @@ export function Popover({
   className?: string;
   /** Lay the panel out against the viewport, so a scrolling parent does not clip it; it follows the trigger when anything scrolls. */
   fixed?: boolean;
+  /** Which edge of the trigger the panel lines up with in `fixed` mode: 'end' for a trigger at the right end of a row. */
+  align?: 'start' | 'end';
   /** A function gets `close` and `labelId`: give the panel's heading that id to name the panel. */
   children: ReactNode | ((close: () => void, labelId: string) => ReactNode);
 }) {
@@ -72,7 +74,8 @@ export function Popover({
           setOpen(false);
           return;
         }
-        const left = Math.max(8, Math.min(at.left, document.documentElement.clientWidth - el.offsetWidth - 8));
+        const wanted = align === 'end' ? at.right - el.offsetWidth : at.left;
+        const left = Math.max(8, Math.min(wanted, document.documentElement.clientWidth - el.offsetWidth - 8));
         const below = at.bottom + 6;
         // Not enough room below: open upwards.
         const up = at.top - 6 - el.offsetHeight;
@@ -105,7 +108,7 @@ export function Popover({
     const bounds = el.closest('dialog')?.getBoundingClientRect() ?? { left: 0, right: document.documentElement.clientWidth };
     const over = box.right - (bounds.right - 8);
     if (over > 0) el.style.left = `${-Math.max(0, Math.min(over, box.left - (bounds.left + 8)))}px`;
-  }, [open, fixed]);
+  }, [open, fixed, align]);
 
   return (
     <span

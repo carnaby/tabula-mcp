@@ -656,19 +656,18 @@ span.transcript__time { color: var(--text-subtle); }
   color: var(--text-muted);
   font-size: var(--text-sm);
 }
-.transcript__head { display: flex; justify-content: flex-end; padding: 0 10px; }
-.transcript__menu-trigger {
+.rec-menu__trigger {
   display: inline-grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   border: 0;
   border-radius: var(--radius-sm);
   background: none;
   color: var(--text-muted);
   cursor: pointer;
 }
-.transcript__menu-trigger:hover { background: var(--surface-hover); }
+.rec-menu__trigger:hover, .rec-menu__trigger[aria-expanded='true'] { background: var(--surface-hover); color: var(--text); }
 .transcript__note--quiet { color: var(--text-subtle); }
 .transcript__speaker { flex: none; width: 7.5em; min-width: 0; }
 @media (max-width: 480px) { .transcript__speaker { width: 5.5em; } }

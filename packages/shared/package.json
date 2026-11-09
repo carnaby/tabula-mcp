@@ -2,13 +2,14 @@
   "name": "@tabula/shared",
   "private": true,
   "type": "module",
-  "description": "Pure helpers the server and the web UI share: references, grouping files by folder, report titles.",
+  "description": "Pure helpers the server and the web UI share: references, grouping files by folder, report titles, the Copy for Claude text.",
   "license": "MIT",
   "files": ["dist"],
   "exports": {
     "./refs": { "types": "./dist/refs.d.ts", "default": "./dist/refs.js" },
     "./file-groups": { "types": "./dist/file-groups.d.ts", "default": "./dist/file-groups.js" },
-    "./report-title": { "types": "./dist/report-title.d.ts", "default": "./dist/report-title.js" }
+    "./report-title": { "types": "./dist/report-title.d.ts", "default": "./dist/report-title.js" },
+    "./copy-prompt": { "types": "./dist/copy-prompt.d.ts", "default": "./dist/copy-prompt.js" }
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

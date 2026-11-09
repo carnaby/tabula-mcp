@@ -9,6 +9,10 @@ import { parse } from './parse.js';
 
 /** The server's own zone, when the browser does not say its own. */
 const SERVER_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
+/** `before` of the timeline: an ISO date and time with Z or an offset, within a range the date arithmetic handles. */
+const BEFORE_MIN = Date.UTC(2000, 0, 1);
+const BEFORE_MAX = Date.UTC(2100, 0, 1);
+const BEFORE_FORMAT = 'must be an ISO 8601 date and time with Z or an offset (e.g. 2026-11-09T10:00:00Z), in the years 2000 to 2099';
 
 /**
  * The Home page: what waits for the user, the timeline, the warnings, and the user's settings. Registered inside the
@@ -22,7 +26,10 @@ export const homeRoutes: FastifyPluginAsync<{ db: Db; config: Config }> = async 
   app.get('/activity', (req) => {
     const q = parse(
       z.object({
-        before: z.string().refine((s) => !Number.isNaN(Date.parse(s)), { message: 'must be a date and time (ISO 8601)' }).optional(),
+        before: z.iso
+          .datetime({ offset: true, error: BEFORE_FORMAT })
+          .refine((s) => Date.parse(s) >= BEFORE_MIN && Date.parse(s) < BEFORE_MAX, { error: BEFORE_FORMAT })
+          .optional(),
         type: z.enum(ACTIVITY_TYPES).optional(),
         tz: z.string().max(100).optional(),
       }),

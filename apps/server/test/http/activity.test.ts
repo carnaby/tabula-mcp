@@ -28,6 +28,12 @@ describe('GET /api/activity', () => {
     expect(res.json().days[0].items).toEqual([expect.objectContaining({ type: 'note', action: 'New note', title: 'Idea', project: 'demo', by: 'human' })]);
 
     for (const bad of ['?before=yesterday', '?type=memories', '?tz=Mars%2FBase']) expect((await get(bad)).statusCode).toBe(400);
+    // Only an ISO date and time with an offset, in years 2000–2100; nothing else may reach the date arithmetic.
+    for (const before of ['Nov 9 2026', '2026', '2026-11-09T10:00:00', '+275760-01-01T00:00:00Z', '9999-01-01T00:00:00Z', '1999-12-31T23:59:59Z']) {
+      const r = await get(`?before=${encodeURIComponent(before)}`);
+      expect([before, r.statusCode, r.json().message]).toEqual([before, 400, expect.stringContaining('before')]);
+    }
+    expect((await get(`?before=${encodeURIComponent('2026-11-10T00:00:00+01:00')}`)).statusCode).toBe(200);
   });
 
   it('needs the user token; the worker token is refused', async () => {

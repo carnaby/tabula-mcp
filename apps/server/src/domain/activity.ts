@@ -404,10 +404,10 @@ async function hasOlder(db: Db, before: Date, type: ActivityType | undefined): P
 /** One page of the timeline: 14 local days before `before` (default now), grouped by day, newest first. */
 export async function activityPage(
   db: Db,
-  opts: { before?: Date; type?: ActivityType; tz: string; now?: Date },
+  opts: { before?: Date; type?: ActivityType; tz: string },
 ): Promise<ActivityPage> {
   const tz = checkTimeZone(opts.tz);
-  const { from, to } = activityWindow(opts.before ?? opts.now ?? new Date(), tz);
+  const { from, to } = activityWindow(opts.before ?? new Date(), tz);
   const [events, older] = await Promise.all([collect(db, from, to, opts.type), hasOlder(db, from, opts.type)]);
   return { days: groupByDay(mergeActivity(events), tz), next_before: older ? from.toISOString() : null };
 }

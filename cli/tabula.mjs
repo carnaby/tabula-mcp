@@ -17,7 +17,7 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 
-export const VERSION = '1.4.0';
+export const VERSION = '1.4.1';
 /** 1 MiB, the server's limit for one file. */
 export const MAX_BYTES = 1048576;
 export const DEFAULT_STATE = ['docs/handoff/*.md', '**/docs/handoff/*.md'];
@@ -199,8 +199,9 @@ export function progressMs(line) {
 /** The length of the 16 kHz mono 16-bit WAV ffmpeg wrote: 32 bytes a millisecond after the 44-byte header. */
 export const wavDurationMs = (bytes) => Math.max(0, Math.round((bytes - 44) / 32));
 
-/** The report's page in the Tabula UI. */
-export const reportUrl = (server, report) => `${server}/#/reports/${encodeURIComponent(report.id)}?project=${encodeURIComponent(report.project)}`;
+/** The report's page in the Tabula UI; a report without a project has no project in its link. */
+export const reportUrl = (server, report) =>
+  `${server}/#/reports/${encodeURIComponent(report.id)}${report.project ? `?project=${encodeURIComponent(report.project)}` : ''}`;
 
 /** The kind of a worker error event of tabula worker --events; null for an unexpected error. */
 export function errorKind(e) {
@@ -1524,12 +1525,14 @@ export async function runJob(cfg, job, { log, stop, emit = () => {} }) {
   const tag = `job ${job.id.slice(0, 8)}`;
   const a = job.attachment;
   const started = Date.now();
-  log(`${tag}: ${a.kind} ${a.duration_ms ? formatClock(a.duration_ms) : '(length unknown)'}, ${(a.size / 1048576).toFixed(1)} MB, project ${job.report.project}, "${job.report.title.slice(0, 60)}", attempt ${job.attempt}`);
+  const project = job.report.project ? `project ${job.report.project}` : 'no project';
+  log(`${tag}: ${a.kind} ${a.duration_ms ? formatClock(a.duration_ms) : '(length unknown)'}, ${(a.size / 1048576).toFixed(1)} MB, ${project}, "${job.report.title.slice(0, 60)}", attempt ${job.attempt}`);
   emit('job', {
     id: job.id,
     attempt: job.attempt,
     attachment: { kind: a.kind, duration_ms: a.duration_ms ?? null, size: a.size, file_name: a.file_name },
-    report: { id: job.report.id, project: job.report.project, title: job.report.title },
+    // The tray reads project as text and shows it before the title.
+    report: { id: job.report.id, project: job.report.project ?? 'no project', title: job.report.title },
     report_url: reportUrl(cfg.url, job.report),
   });
   const phase = (name) => emit('phase', { id: job.id, phase: name });
@@ -2250,7 +2253,7 @@ Usage:
   tabula rm <path>                     delete a file on the server (restorable in the Tabula UI)
   tabula install                       put tabula on PATH (~/.tabula/bin) and print the SessionStart hook
   tabula update                        replace this file with the version the server offers
-  tabula worker [--once] [--log]       transcribe bug-report recordings until Ctrl+C (--once: what is queued, then exit;
+  tabula worker [--once] [--log]       transcribe report recordings until Ctrl+C (--once: what is queued, then exit;
                                        --log: write to worker.log in the data folder instead of the console)
   tabula worker [--once] --events      the same for the tray app: JSON events on stdout, "stop" on stdin, log in worker.log
   tabula worker setup [<url>] [--token-stdin] [--diarize]

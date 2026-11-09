@@ -77,8 +77,12 @@ export function sanitizeAgentLabel(raw: unknown): string {
 
 const SLUG = /^[a-z0-9][a-z0-9-]{0,39}$/;
 
+/** The list filter and the open-report counts use this word for reports without a project. */
+export const NO_PROJECT = 'none';
+
 export function validateProjectSlug(id: string): string {
   const v = id.trim();
   if (!SLUG.test(v)) throw badRequest(`project slug "${id}" is invalid: use lowercase letters, digits and dashes (max 40)`);
+  if (v === NO_PROJECT) throw badRequest(`project slug "${NO_PROJECT}" is reserved: it means "no project" in report filters`);
   return v;
 }

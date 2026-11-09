@@ -6,6 +6,9 @@ import { Alert, Badge, type BadgeTone, Button, ButtonLink, EmptyState, Icon, Pag
 import { ProjectSelect, TimeAgo } from '../common';
 import { ListToolbar } from '../ListToolbar';
 
+/** The list filter's value (and the API's) for reports without a project. */
+const NO_PROJECT = 'none';
+
 type Filters = { q: string; status: 'open' | 'done' | 'all'; project: string };
 export const STATUS_TONE: Record<ReportStatus, BadgeTone> = { new: 'accent', triaged: 'info', done: 'success' };
 
@@ -23,7 +26,7 @@ function Counts({ r }: { r: ReportSummary }) {
   );
 }
 
-/** Bug reports as cards (phones first); `project` fixes the project (the project page's tab). */
+/** Reports as cards (phones first); `project` fixes the project (the project page's tab). */
 export function ReportsList({ project, projects }: { project?: string; projects: Project[] | undefined }) {
   const t = useTableState<ReportSort, Filters>(project ? 'project-reports' : 'reports', {
     sort: 'createdAt', dir: 'desc', pageSize: 25, filters: { q: '', status: 'open', project: '' },
@@ -36,9 +39,10 @@ export function ReportsList({ project, projects }: { project?: string; projects:
     { topics: ['reports'] },
   );
   useClampPage(list.data?.total, t.page, t.pageSize, t.setPage);
-  const multiProject = !project && (projects?.filter((p) => p.id !== 'global').length ?? 0) > 1;
   // On a project's tab, reports remember it so their back button returns here (the global list is the default).
   const from = project ? href.project(project, 'reports') : undefined;
+  // A new report starts in the listed project, or with none under "No project"; "All projects" leaves it to the form.
+  const newIn = scope || undefined;
 
   return (
     <div className="t-stack">
@@ -53,12 +57,18 @@ export function ReportsList({ project, projects }: { project?: string; projects:
           />
         }
         filters={
-          multiProject && (
-            <ProjectSelect projects={projects?.filter((p) => p.id !== 'global')} value={t.filters.project} onChange={(v) => t.setFilter('project', v)} allowAll />
+          !project && (
+            <ProjectSelect
+              projects={projects?.filter((p) => p.id !== 'global')}
+              value={t.filters.project}
+              onChange={(v) => t.setFilter('project', v)}
+              allowAll
+              noProject={NO_PROJECT}
+            />
           )
         }
         active={t.filters.project ? 1 : 0}
-        action={<ButtonLink href={href.report('new', scope || undefined, from)} variant="primary" icon="plus">New report</ButtonLink>}
+        action={<ButtonLink href={href.report('new', newIn, from)} variant="primary" icon="plus">New report</ButtonLink>}
       />
 
       {list.error && <Alert tone="danger">{list.error.message}</Alert>}
@@ -67,8 +77,8 @@ export function ReportsList({ project, projects }: { project?: string; projects:
         (t.filters.q || t.filters.status !== 'open' || t.filters.project ? (
           <EmptyState icon="search" title="No reports match" action={<Button onClick={t.resetFilters}>Clear filters</Button>} />
         ) : (
-          <EmptyState icon="bug" title="No open bug reports" action={<ButtonLink href={href.report('new', scope || undefined, from)} variant="primary" icon="plus">Report a bug</ButtonLink>}>
-            Testing on the phone? Record the screen, say what's wrong, add it here. An agent turns it into tasks.
+          <EmptyState icon="inbox" title="No open reports" action={<ButtonLink href={href.report('new', newIn, from)} variant="primary" icon="plus">New report</ButtonLink>}>
+            Record the screen, a meeting or a voice note, or describe a bug. Claude turns it into tasks or a summary.
           </EmptyState>
         ))}
       {list.data && list.data.items.length > 0 && (
@@ -80,7 +90,7 @@ export function ReportsList({ project, projects }: { project?: string; projects:
                 <Badge tone={STATUS_TONE[r.status]}>{REPORT_STATUS_INFO[r.status].label}</Badge>
               </div>
               <div className="report-card__meta">
-                {!project && <Badge tone="outline" icon="folder">{r.projectId}</Badge>}
+                {!project && (r.projectId ? <Badge tone="outline" icon="folder">{r.projectId}</Badge> : <Badge tone="outline">No project</Badge>)}
                 <Counts r={r} />
                 {r.triage && r.status !== 'done' && <Badge icon="bot">tasks ready</Badge>}
                 <span className="t-spacer" />

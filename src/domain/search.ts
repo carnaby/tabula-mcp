@@ -98,7 +98,7 @@ export type QuickHit = {
   updated_at: string;
 };
 
-/** The UI's global search box: prefix match over memories, notes, thoughts, project files, bug reports and their transcripts, best match first. */
+/** The UI's global search box: prefix match over memories, notes, thoughts, project files, reports and their transcripts, best match first. */
 export async function quickSearch(db: Db, p: { q: string; limit?: number }): Promise<QuickHit[]> {
   const tsq = prefixTsQuery(p.q);
   if (!tsq) return [];

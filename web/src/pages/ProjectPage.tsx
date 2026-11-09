@@ -40,7 +40,7 @@ export function ProjectPage({
             current={tab}
             items={[
               { id: 'state', label: 'State', href: href.project(project), icon: 'sparkles' },
-              { id: 'reports', label: 'Bug reports', href: href.project(project, 'reports'), icon: 'bug', count: reportCounts.data?.[project] },
+              { id: 'reports', label: 'Reports', href: href.project(project, 'reports'), icon: 'inbox', count: reportCounts.data?.[project] },
               { id: 'files', label: 'Files', href: href.project(project, 'files'), icon: 'fileText', count: p?.file_count },
               { id: 'recall', label: 'Recall preview', href: href.project(project, 'recall'), icon: 'eye' },
               { id: 'setup', label: 'Setup', href: href.project(project, 'setup'), icon: 'sliders' },

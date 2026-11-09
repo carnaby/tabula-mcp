@@ -60,6 +60,7 @@
   --success-soft-fg: #166534;
   --warn-soft: #fef3c7;
   --warn-soft-fg: #92400e;
+  --warn: #d97706;
   --info-soft: #e0f2fe;
   --info-soft-fg: #075985;
 
@@ -118,6 +119,7 @@
     --success-soft-fg: #86efac;
     --warn-soft: rgba(251, 191, 36, 0.14);
     --warn-soft-fg: #fcd34d;
+    --warn: #fbbf24;
     --info-soft: rgba(56, 189, 248, 0.14);
     --info-soft-fg: #7dd3fc;
 
@@ -175,6 +177,7 @@
   --success-soft-fg: #86efac;
   --warn-soft: rgba(251, 191, 36, 0.14);
   --warn-soft-fg: #fcd34d;
+  --warn: #fbbf24;
   --info-soft: rgba(56, 189, 248, 0.14);
   --info-soft-fg: #7dd3fc;
 

@@ -56,6 +56,16 @@ async function listening() {
 }
 
 describe('worker API', () => {
+  it('hands out a job of a report without a project with project null', async () => {
+    const report = (await asUser('POST', '/reports', { body: 'Standup' })).json();
+    const res = await app.inject({
+      method: 'POST', url: `/api/reports/${report.id}/attachments`, payload: silentWav(2),
+      headers: { ...main, 'content-type': 'audio/wav', 'x-file-name': 'voice.wav' },
+    });
+    expect(res.statusCode).toBe(201);
+    expect((await claim()).report).toEqual({ id: report.id, project: null, title: 'Standup' });
+  });
+
   it('opens only with the worker token, and the worker token opens nothing else', async () => {
     expect((await asWorker('GET', '/ping')).statusCode).toBe(200);
     expect((await app.inject({ method: 'GET', url: '/api/worker/ping', headers: main })).statusCode).toBe(401);

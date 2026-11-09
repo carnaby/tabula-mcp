@@ -11,7 +11,7 @@ import type { Project, RecordType, RefCandidate, RefTarget, SearchHit } from '..
 import { Alert, Badge, EmptyState, Icon, type IconName, SearchInput, Skeleton, useToast } from '../ui';
 
 const TYPE: Record<RecordType, { icon: IconName; label: string }> = {
-  report: { icon: 'bug', label: 'Bug report' },
+  report: { icon: 'inbox', label: 'Report' },
   memory: { icon: 'layers', label: 'Memory' },
   note: { icon: 'pencil', label: 'Note' },
   thought: { icon: 'lightbulb', label: 'Thought' },
@@ -116,7 +116,7 @@ export function SearchPage({ q: initialQ, projects }: { q: string; projects: Pro
       <PageHeader
         title="Search"
         description="Rules, files, reports, notes and thoughts."
-        more="Global rules, project files, bug reports, notes and thoughts at once. Words match as prefixes: “drizz pri” finds “Drizzle over Prisma”. Paste a reference (tabula:d86d86e7) to open its record; a shorter one (tabula:d86d) shows what it matches."
+        more="Global rules, project files, reports, notes and thoughts at once. Words match as prefixes: “drizz pri” finds “Drizzle over Prisma”. Paste a reference (tabula:d86d86e7) to open its record; a shorter one (tabula:d86d) shows what it matches."
       />
       <div className="search-hero">
         <SearchInput ref={input} value={q} onChange={setQ} placeholder="Search everything" />

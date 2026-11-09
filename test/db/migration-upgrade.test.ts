@@ -85,3 +85,26 @@ describe('upgrade to speaker recognition (migration 0013)', () => {
     }
   });
 });
+
+describe('upgrade to optional projects and Keep media (migration 0014)', () => {
+  it('keeps the project of existing reports, sets keep_media to false, and takes a report without a project', async () => {
+    const name = 'tabula_upgrade_reports';
+    await admin.unsafe(`DROP DATABASE IF EXISTS ${name}`);
+    await admin.unsafe(`CREATE DATABASE ${name}`);
+    const url = new URL(upgradeUrl);
+    url.pathname = `/${name}`;
+    const c = postgres(url.href, { max: 1, onnotice: () => {} });
+    try {
+      for (const m of migrations.filter((x) => x.file < '0014')) for (const s of m.statements) await c.unsafe(s);
+      await c`INSERT INTO projects (id, name) VALUES ('demo', 'demo')`;
+      await c`INSERT INTO reports (project_id, title, source, edited_by) VALUES ('demo', 'Old report', 'human', 'human')`;
+      for (const m of migrations.filter((x) => x.file >= '0014')) for (const s of m.statements) await c.unsafe(s);
+      expect([...(await c`SELECT project_id, keep_media FROM reports`)]).toEqual([{ project_id: 'demo', keep_media: false }]);
+      await c`INSERT INTO reports (title, source, edited_by) VALUES ('Meeting', 'human', 'human')`;
+      expect((await c`SELECT count(*)::int AS n FROM reports WHERE project_id IS NULL`)[0]!.n).toBe(1);
+    } finally {
+      await c.end();
+      await admin.unsafe(`DROP DATABASE IF EXISTS ${name}`);
+    }
+  });
+});

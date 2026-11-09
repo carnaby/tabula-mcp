@@ -3,7 +3,7 @@ import { z } from 'zod';
 import {
   type AgentContext, agentDeprecate, agentFindNotes, agentFindThoughts, agentGet, agentListFiles, agentListProjects,
   agentDeleteFile, agentReadFile, agentRecall, agentRemember, agentSaveThought, agentSearch, agentUpdateThought, agentWriteFile,
-  agentCreateReport, agentGetFrame, agentGetReport, agentGetTranscript, agentListReports, agentNameSpeakers, agentUpdateReport, agentViewAttachment, type AgentImage,
+  agentCreateReport, agentEditTranscript, agentGetFrame, agentGetReport, agentGetTranscript, agentListReports, agentNameSpeakers, agentUpdateReport, agentViewAttachment, type AgentImage,
   type AgentBlock, type AgentFileRead,
 } from '../agent/operations.js';
 import { REPORT_STATUSES } from '../domain/reports.js';
@@ -293,7 +293,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
     {
       description: D.list_reports,
       inputSchema: z.object({
-        project: z.string().optional().describe('Project slug; omit for every project.'),
+        project: z.string().optional().describe('Project slug; "none" for the reports without a project; omit for every project.'),
         status: z.enum([...REPORT_STATUSES, 'open', 'all']).default('open').describe('"open" = new and triaged.'),
         query: z.string().optional().describe('Words to look for (prefix match).'),
         limit: z.number().int().min(1).max(50).default(20),
@@ -311,9 +311,9 @@ export function buildMcpServer(ctx: McpContext): McpServer {
     {
       description: D.create_report,
       inputSchema: z.object({
-        project: z.string().describe('Project slug the bug belongs to, as list_projects shows it.'),
-        title: z.string().describe('What is broken, one line, max 200 characters.'),
-        description: z.string().optional().describe('Markdown: what happened, steps to reproduce, expected result.'),
+        project: z.string().optional().describe('Project slug as list_projects shows it; leave it out when the user names no project.'),
+        title: z.string().optional().describe('One line, max 200 characters; for a bug, what is broken. Without it: the first line of the description, or the date and time.'),
+        description: z.string().optional().describe('Markdown: what happened, steps to reproduce, expected result; or what the recording is about.'),
       }),
     },
     (a) => run(() => agentCreateReport(ctx, a)),
@@ -373,6 +373,28 @@ export function buildMcpServer(ctx: McpContext): McpServer {
       }),
     },
     (a) => run(() => agentNameSpeakers(ctx, a)),
+  );
+
+  server.registerTool(
+    'edit_transcript',
+    {
+      description: D.edit_transcript,
+      inputSchema: z.object({
+        attachment_id: attachmentId,
+        // The limit of 50 is checked by Tabula, so the agent gets its message instead of a schema error.
+        edits: z
+          .array(
+            z.object({
+              at: z.string().describe('When the line starts, as the transcript shows it: "0:12" or "1:02:03".'),
+              from: z.string().optional().describe('Exact text in that line; its first occurrence is replaced.'),
+              to: z.string().optional().describe('The text that replaces from.'),
+              speaker: z.string().optional().describe('Another speaker for the line, e.g. "S2".'),
+            }),
+          )
+          .describe('1 to 50 corrections.'),
+      }),
+    },
+    (a) => run(() => agentEditTranscript(ctx, a)),
   );
 
   return server;

@@ -15,8 +15,14 @@ const cli = (await import(new URL('../../cli/tabula.mjs', import.meta.url).href)
 /** "0:05", "2:41", "1:02:03": the same form as the UI's clock. */
 export const clock: (ms: number) => string = cli.formatClock;
 
-/** A segment as the worker sends it: `speaker` null means no label. */
-export type IncomingSegment = Omit<TranscriptSegment, 'speaker'> & { speaker?: string | null };
+/** A segment as the worker sends it: `speaker` null means no label; a worker never sends edits. */
+export type IncomingSegment = Omit<TranscriptSegment, 'speaker' | 'edit'> & { speaker?: string | null };
+
+/** A line's text as stored: whitespace collapsed, trimmed. One rule for the worker's lines and the edited ones. */
+export const collapseSpaces = (s: string): string => s.replace(/\s+/g, ' ').trim();
+
+/** The transcript's size as the limit counts it: the sum of the lines' text lengths. */
+export const segmentsChars = (segments: readonly TranscriptSegment[]): number => segments.reduce((n, s) => n + s.text.length, 0);
 
 /**
  * Segments from a worker as they are stored: whole milliseconds, whitespace collapsed, empty ones dropped, in time
@@ -35,7 +41,7 @@ export function cleanSegments(raw: readonly IncomingSegment[]): TranscriptSegmen
       throw badRequest(`segment ${i}: start_ms and end_ms must satisfy 0 <= start_ms <= end_ms <= 24 h`);
     }
     rejectNul(s.text, `segment ${i} text`);
-    const text = s.text.replace(/\s+/g, ' ').trim();
+    const text = collapseSpaces(s.text);
     if (!text) continue;
     if (text.length > TRANSCRIPT_LIMITS.segmentChars) {
       throw badRequest(`segment ${i} has ${text.length} characters; the limit is ${TRANSCRIPT_LIMITS.segmentChars}`);

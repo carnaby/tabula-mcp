@@ -7,8 +7,9 @@ import type { MediaStore, StoredFile } from '../media/store.js';
 import { badRequest, conflict, notFound, unavailable } from './errors.js';
 import { enqueueTranscription, failPendingJobs } from './jobs.js';
 import { matchesPrefix, type Page, type PageQuery, pageWindow, prefixTsQuery } from './paging.js';
+import { dateTitle } from '../shared/report-title.js';
 import { requireProject } from './projects.js';
-import { charCount, rejectNul } from './validation.js';
+import { charCount, NO_PROJECT, rejectNul } from './validation.js';
 
 export const REPORT_STATUSES = ['new', 'triaged', 'done'] as const;
 export type ReportStatus = (typeof REPORT_STATUSES)[number];
@@ -28,13 +29,15 @@ const cols = {
   editedBy: reports.editedBy,
   version: reports.version,
   closedAt: reports.closedAt,
+  keepMedia: reports.keepMedia,
   createdAt: reports.createdAt,
   updatedAt: reports.updatedAt,
 };
 
 export type Report = {
   id: string;
-  projectId: string;
+  /** null: the report belongs to no project. */
+  projectId: string | null;
   title: string;
   body: string;
   triage: string;
@@ -43,6 +46,8 @@ export type Report = {
   editedBy: string;
   version: number;
   closedAt: Date | null;
+  /** Video and audio stay after closing. */
+  keepMedia: boolean;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -65,11 +70,19 @@ function checkText(value: string, field: 'body' | 'triage'): string {
   return value;
 }
 
-/** A title from the first line of the description, so a report can be captured with one tap. */
+/** A report's project: an existing project, or null for none (null, undefined and '' alike). "global" is refused. */
+async function checkProject(db: Db, projectId: string | null | undefined): Promise<string | null> {
+  if (!projectId) return null;
+  if (projectId === 'global') throw badRequest('a report belongs to a project or to none, not to "global"');
+  await requireProject(db, projectId);
+  return projectId;
+}
+
+/** A title from the first line of the description, so a report can be captured with one tap; else the date and time (server time zone, TZ). */
 function defaultTitle(body: string, now: Date): string {
   const first = body.split('\n').map((l) => l.replace(/^[#>*\-\s]+/, '').trim()).find(Boolean);
   if (first) return [...first].slice(0, 120).join('');
-  return `Bug report ${now.toISOString().slice(0, 16).replace('T', ' ')}`;
+  return dateTitle(now);
 }
 
 export async function getReport(db: Db, id: string): Promise<Report | undefined> {
@@ -85,17 +98,16 @@ export async function requireReport(db: Db, id: string): Promise<Report> {
 
 export async function createReport(
   db: Db,
-  input: { projectId: string; title?: string; body?: string },
+  input: { projectId?: string | null; title?: string; body?: string },
   editor: Editor,
   now = new Date(),
 ): Promise<Report> {
-  if (input.projectId === 'global') throw badRequest('a report belongs to a project, not to "global"');
-  await requireProject(db, input.projectId);
+  const projectId = await checkProject(db, input.projectId);
   const body = checkText((input.body ?? '').trim(), 'body');
   const title = cleanTitle(input.title ?? '') || defaultTitle(body, now);
   const [row] = await db
     .insert(reports)
-    .values({ projectId: input.projectId, title, body, source: editor.source, editedBy: editor.label })
+    .values({ projectId, title, body, source: editor.source, editedBy: editor.label })
     .returning(cols);
   return row!;
 }
@@ -107,16 +119,15 @@ export type ReportPatch = {
   /** Added to the end of the triage after a blank line. */
   appendTriage?: string;
   status?: ReportStatus;
-  projectId?: string;
+  /** null (or ''): the report no longer belongs to a project. */
+  projectId?: string | null;
+  keepMedia?: boolean;
   /** Reject the write if someone else changed the report since this version was read. */
   expectedVersion?: number;
 };
 
 export async function updateReport(db: Db, id: string, patch: ReportPatch, editor: Editor): Promise<Report> {
-  if (patch.projectId !== undefined) {
-    if (patch.projectId === 'global') throw badRequest('a report belongs to a project, not to "global"');
-    await requireProject(db, patch.projectId);
-  }
+  const newProject = patch.projectId === undefined ? undefined : await checkProject(db, patch.projectId);
   return db.transaction(async (tx) => {
     const [cur] = await tx.select(cols).from(reports).where(eq(reports.id, id)).for('update');
     if (!cur) throw notFound(`report ${id} does not exist`);
@@ -131,15 +142,17 @@ export async function updateReport(db: Db, id: string, patch: ReportPatch, edito
     if (patch.appendTriage?.trim()) triage = triage ? `${triage.trimEnd()}\n\n${patch.appendTriage.trim()}` : patch.appendTriage.trim();
     checkText(triage, 'triage');
     const status = patch.status ?? cur.status;
-    const projectId = patch.projectId ?? cur.projectId;
+    const projectId = newProject === undefined ? cur.projectId : newProject;
+    const keepMedia = patch.keepMedia ?? cur.keepMedia;
 
     const changed =
-      title !== cur.title || body !== cur.body || triage !== cur.triage || status !== cur.status || projectId !== cur.projectId;
+      title !== cur.title || body !== cur.body || triage !== cur.triage || status !== cur.status || projectId !== cur.projectId ||
+      keepMedia !== cur.keepMedia;
     if (!changed) return cur;
     const closedAt = status === 'done' ? (cur.status === 'done' ? cur.closedAt : new Date()) : null;
     const [row] = await tx
       .update(reports)
-      .set({ title, body, triage, status, projectId, closedAt, editedBy: editor.label, version: cur.version + 1 })
+      .set({ title, body, triage, status, projectId, keepMedia, closedAt, editedBy: editor.label, version: cur.version + 1 })
       .where(eq(reports.id, id))
       .returning(cols);
     return row!;
@@ -162,6 +175,7 @@ const transcriptMatches = (tsq: string) => sql`EXISTS (
   SELECT 1 FROM report_transcripts t JOIN report_attachments a ON a.id = t.attachment_id
   WHERE a.report_id = ${reports.id} AND t.search @@ to_tsquery('tabula', ${tsq}))`;
 
+/** `projectId` "none" (NO_PROJECT) lists the reports without a project; absent lists all. */
 export async function pageReports(
   db: Db,
   f: { projectId?: string; status?: ReportStatusFilter; q?: string } & PageQuery<ReportSort>,
@@ -170,7 +184,7 @@ export async function pageReports(
   const status = f.status ?? 'open';
   const tsq = prefixTsQuery(f.q);
   const where = and(
-    f.projectId ? eq(reports.projectId, f.projectId) : undefined,
+    f.projectId === NO_PROJECT ? isNull(reports.projectId) : f.projectId ? eq(reports.projectId, f.projectId) : undefined,
     status === 'open' ? inArray(reports.status, ['new', 'triaged']) : status === 'all' ? undefined : eq(reports.status, status),
     tsq ? or(matchesPrefix(reports.search, tsq), transcriptMatches(tsq)) : undefined,
   );
@@ -201,14 +215,14 @@ export async function pageReports(
   };
 }
 
-/** Open reports per project, for the sidebar. */
+/** Open reports per project, for the sidebar; reports without a project count under "none". */
 export async function openReportCounts(db: Db): Promise<Record<string, number>> {
   const rows = await db
     .select({ projectId: reports.projectId, n: count() })
     .from(reports)
     .where(inArray(reports.status, ['new', 'triaged']))
     .groupBy(reports.projectId);
-  return Object.fromEntries(rows.map((r) => [r.projectId, r.n]));
+  return Object.fromEntries(rows.map((r) => [r.projectId ?? NO_PROJECT, r.n]));
 }
 
 export async function listAttachments(db: Db, reportId: string): Promise<Attachment[]> {
@@ -436,7 +450,8 @@ export async function attachmentImage(db: Db, store: MediaStore, paths: FfmpegPa
 }
 
 /**
- * Video and audio of reports closed more than `hours` ago are deleted from disk; photos, frames and the text stay.
+ * Video and audio of reports closed more than `hours` ago are deleted from disk, unless the report has Keep media on
+ * (checked on every run, so turning it off lets the next run delete them); photos, frames and the text stay.
  * The rows remain with purged_at set, so the report still shows what was there. A file that can't be deleted is
  * reported to onError and tried again next time; the others go on. Returns how many were deleted.
  */
@@ -448,26 +463,33 @@ export async function purgeClosedMedia(
   onError: (err: unknown, attachmentId: string) => void = () => {},
 ): Promise<number> {
   const cutoff = new Date(now.getTime() - hours * 3600 * 1000);
+  const dueReport = and(eq(reports.status, 'done'), eq(reports.keepMedia, false), lt(reports.closedAt, cutoff));
   const due = await db
-    .select({ id: reportAttachments.id, key: reportAttachments.storageKey })
+    .select({ id: reportAttachments.id, key: reportAttachments.storageKey, reportId: reportAttachments.reportId })
     .from(reportAttachments)
     .innerJoin(reports, eq(reports.id, reportAttachments.reportId))
     .where(
       and(
         inArray(reportAttachments.kind, ['video', 'audio']),
         isNull(reportAttachments.purgedAt),
-        eq(reports.status, 'done'),
-        lt(reports.closedAt, cutoff),
+        dueReport,
       ),
     );
   let deleted = 0;
   for (const a of due) {
     try {
-      await store.remove(a.key);
-      // Job rows first, then the attachment row: completeJob locks them in that order too.
-      await failPendingJobs(db, [a.id], now);
-      await db.update(reportAttachments).set({ purgedAt: now }).where(eq(reportAttachments.id, a.id));
-      deleted++;
+      // The selection may be stale (Keep media turned on, or the report reopened, since): the report is checked again
+      // under a share lock, so updateReport waits until the file is gone and the row says so.
+      const purged = await db.transaction(async (tx) => {
+        const [still] = await tx.select({ id: reports.id }).from(reports).where(and(eq(reports.id, a.reportId), dueReport)).for('share');
+        if (!still) return false;
+        await store.remove(a.key);
+        // Job rows first, then the attachment row: completeJob locks them in that order too.
+        await failPendingJobs(tx, [a.id], now);
+        await tx.update(reportAttachments).set({ purgedAt: now }).where(eq(reportAttachments.id, a.id));
+        return true;
+      });
+      if (purged) deleted++;
     } catch (e) {
       onError(e, a.id);
     }

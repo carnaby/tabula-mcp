@@ -340,6 +340,44 @@ describe('bug reports', () => {
   });
 });
 
+describe('reports without a project, and Keep media', () => {
+  it('creates a report with no fields, titled with the date and time', async () => {
+    const bare = await app.inject({ method: 'POST', url: '/api/reports', headers: auth });
+    expect(bare.statusCode).toBe(201);
+    expect(bare.json()).toMatchObject({ projectId: null, keepMedia: false, body: '' });
+    expect(bare.json().title).toMatch(/^Report \d{1,2}\. \d{1,2}\. \d{4} \d{2}:\d{2}$/);
+    expect((await call('POST', '/api/reports', {})).json().title).toMatch(/^Report /);
+    expect((await call('POST', '/api/reports', { projectId: null, title: 'Standup' })).json()).toMatchObject({ projectId: null, title: 'Standup' });
+  });
+
+  it('filters and counts reports without a project, and takes the project away with null', async () => {
+    const none = (await call('POST', '/api/reports', { title: 'Meeting' })).json();
+    const demo = await newReport();
+    expect((await call('GET', '/api/reports?project=none')).json()).toMatchObject({ total: 1, items: [{ id: none.id, projectId: null }] });
+    expect((await call('GET', '/api/reports')).json().total).toBe(2);
+    expect((await call('GET', '/api/reports/counts')).json()).toEqual({ demo: 1, none: 1 });
+    expect((await call('PATCH', `/api/reports/${demo.id}`, { projectId: null })).json()).toMatchObject({ projectId: null, version: 2 });
+    expect((await call('GET', '/api/reports/counts')).json()).toEqual({ none: 2 });
+    expect((await call('PATCH', `/api/reports/${none.id}`, { projectId: 'demo' })).json().projectId).toBe('demo');
+    expect((await call('PATCH', `/api/reports/${none.id}`, { projectId: 'global' })).statusCode).toBe(400);
+    expect((await call('POST', '/api/projects', { id: 'none', name: 'None' })).statusCode).toBe(400);
+  });
+
+  it('turns Keep media on and off, says how long closed media wait, and purges once it is off', async () => {
+    const r = await newReport();
+    expect((await call('PATCH', `/api/reports/${r.id}`, { keepMedia: true })).json()).toMatchObject({ keepMedia: true });
+    expect((await call('GET', `/api/reports/${r.id}`)).json()).toMatchObject({ keepMedia: true, purgeAfterHours: 24 });
+    expect((await call('PATCH', `/api/reports/${r.id}`, { keepMedia: 'yes' })).statusCode).toBe(400);
+    const voice = (await upload(r.id, mp3, 'audio/mpeg', 'voice.mp3')).json();
+    await call('PATCH', `/api/reports/${r.id}`, { status: 'done' });
+    expect(await purgeClosedMedia(db, store, 0, new Date(Date.now() + 1000))).toBe(0);
+    await call('PATCH', `/api/reports/${r.id}`, { keepMedia: false });
+    expect(await purgeClosedMedia(db, store, 0, new Date(Date.now() + 1000))).toBe(1);
+    const audio = (await call('GET', `/api/reports/${r.id}`)).json().attachments.find((a: { id: string }) => a.id === voice.id);
+    expect(audio.url).toBeNull();
+  });
+});
+
 describe('media storage that is missing or not writable', () => {
   it('startup clears temporary files left by interrupted uploads', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'tabula-leftovers-'));

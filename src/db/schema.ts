@@ -213,16 +213,16 @@ export const reportStatus = pgEnum('report_status', ['new', 'triaged', 'done']);
 export const attachmentKind = pgEnum('attachment_kind', ['image', 'video', 'audio', 'frame']);
 
 /**
- * Bug reports: captured on the phone (text, photos, screen recordings, voice), always for one project.
- * The human writes the description; an agent writes the triage (analysis and tasks).
+ * Reports: bugs captured on the phone (text, photos, screen recordings, voice) and recordings of meetings and
+ * conversations; usually for one project, possibly none. The human writes the description; an agent writes the
+ * triage (for a bug the cause and tasks, for a recording a summary, decisions and tasks).
  */
 export const reports = pgTable(
   'reports',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    projectId: text('project_id')
-      .notNull()
-      .references(() => projects.id, { onDelete: 'restrict' }),
+    /** null: no project yet (the user assigns one in the UI; agents never do). */
+    projectId: text('project_id').references(() => projects.id, { onDelete: 'restrict' }),
     title: text('title').notNull(),
     body: text('body').notNull().default(''),
     /** Written by an agent: what is wrong and the tasks to fix it (Markdown). */
@@ -233,6 +233,8 @@ export const reports = pgTable(
     editedBy: text('edited_by').notNull(),
     version: integer('version').notNull().default(1),
     closedAt: timestamp('closed_at', { withTimezone: true }),
+    /** The user keeps the video and audio after closing: the purge skips the report while this is on. */
+    keepMedia: boolean('keep_media').notNull().default(false),
     ...timestamps,
     search: tsvector('search').generatedAlwaysAs(
       sql`setweight(to_tsvector('tabula'::regconfig, coalesce(title, '')), 'A') || setweight(to_tsvector('tabula'::regconfig, coalesce(body, '') || ' ' || coalesce(triage, '')), 'C')`,
@@ -284,8 +286,11 @@ export const reportAttachments = pgTable(
 export const jobStatus = pgEnum('job_status', ['queued', 'running', 'done', 'failed']);
 export const jobKind = pgEnum('job_kind', ['transcribe']);
 
+/** A line changed after the worker wrote it: who changed it last, when, and the worker's own text and speaker (kept from the first edit). */
+export type SegmentEdit = { by: 'user' | 'agent'; at: string; original: { text: string; speaker?: string } };
+
 /** One line of a transcript; times in milliseconds from the start of the recording; `speaker` "S1"… when diarized. */
-export type TranscriptSegment = { start_ms: number; end_ms: number; text: string; speaker?: string };
+export type TranscriptSegment = { start_ms: number; end_ms: number; text: string; speaker?: string; edit?: SegmentEdit };
 
 /** How the speakers were recognized: the model and how many speak, or why it failed. */
 export type Diarization = { model: string; speakers: number } | { error: string };

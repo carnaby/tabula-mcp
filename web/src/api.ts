@@ -107,10 +107,12 @@ export const api = {
     request<Page<ReportSummary>>('GET', `/reports${qs(f)}`, undefined, signal),
   reportCounts: (signal?: S) => request<Record<string, number>>('GET', '/reports/counts', undefined, signal),
   report: (id: string, signal?: S) => request<ReportDetail>('GET', `/reports/${id}`, undefined, signal),
-  createReport: (r: { projectId: string; title?: string; body?: string }) => request<Report>('POST', '/reports', r),
+  createReport: (r: { projectId?: string | null; title?: string; body?: string }) => request<Report>('POST', '/reports', r),
   updateReport: (
     id: string,
-    p: { title?: string; body?: string; triage?: string; status?: ReportStatus; projectId?: string; expectedVersion?: number },
+    p: {
+      title?: string; body?: string; triage?: string; status?: ReportStatus; projectId?: string | null; keepMedia?: boolean; expectedVersion?: number;
+    },
   ) => request<Report>('PATCH', `/reports/${id}`, p),
   deleteReport: (id: string) => request<void>('DELETE', `/reports/${id}`),
   deleteAttachment: (id: string) => request<void>('DELETE', `/attachments/${id}`),
@@ -120,6 +122,10 @@ export const api = {
   setSpeakers: (attachmentId: string, names: Record<string, string>) => request<TranscriptState>('PUT', `/attachments/${attachmentId}/speakers`, names),
   speakerNames: (reportId: string, signal?: S) => request<{ names: string[] }>('GET', `/reports/${reportId}/speaker-names`, undefined, signal),
   transcribeAgain: (attachmentId: string) => request<TranscriptState>('POST', `/attachments/${attachmentId}/transcribe`),
+  editSegment: (attachmentId: string, index: number, body: { text?: string; speaker?: string; expected: { text: string; speaker: string | null } }) =>
+    request<TranscriptState>('PATCH', `/attachments/${attachmentId}/segments/${index}`, body),
+  restoreSegment: (attachmentId: string, index: number) =>
+    request<TranscriptState>('POST', `/attachments/${attachmentId}/segments/${index}/restore`),
   transcriptionStatus: (signal?: S) => request<WorkerStatus>('GET', '/transcription/status', undefined, signal),
 
   search: (q: string, signal?: S) => request<SearchHit[]>('GET', `/search${qs({ q, limit: 30 })}`, undefined, signal),

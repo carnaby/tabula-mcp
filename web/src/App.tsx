@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from './api';
+import { WorkerIndicator } from './features/reports/WorkerIndicator';
 import { useQuery } from './hooks/data';
 import { Sidebar } from './layout/Sidebar';
 import { GlobalPage } from './pages/GlobalPage';
@@ -24,8 +25,8 @@ function title(route: Route, projects: Project[] | undefined): string {
     case 'note': return route.id === 'new' ? 'New note' : 'Note';
     case 'global': return 'Global';
     case 'search': return 'Search';
-    case 'reports': return 'Bug reports';
-    case 'report': return route.id === 'new' ? 'New bug report' : 'Bug report';
+    case 'reports': return 'Reports';
+    case 'report': return route.id === 'new' ? 'New report' : 'Report';
     case 'project': return projects?.find((x) => x.id === route.project)?.name ?? route.project;
     default: return 'Tabula';
   }
@@ -34,6 +35,13 @@ function title(route: Route, projects: Project[] | undefined): string {
 export function App() {
   const route = useRoute();
   const projects = useQuery((s) => api.projects(s), [], { topics: ['projects', 'memories', 'files'] });
+  // The transcription worker for the header: one request for the top bar and the sidebar, again every minute.
+  const worker = useQuery((s) => api.transcriptionStatus(s), [], { topics: ['reports'] });
+  const reloadWorker = worker.reload;
+  useEffect(() => {
+    const timer = setInterval(reloadWorker, 60_000);
+    return () => clearInterval(timer);
+  }, [reloadWorker]);
   const [navOpen, setNavOpen] = useState(false);
   const [newProject, setNewProject] = useState(false);
   const routeKey = JSON.stringify(route);
@@ -57,13 +65,14 @@ export function App() {
 
   return (
     <div className="shell" data-nav-open={navOpen}>
-      <Sidebar route={route} projects={projects.data} onClose={() => setNavOpen(false)} onNewProject={() => setNewProject(true)} />
+      <Sidebar route={route} projects={projects.data} worker={worker.data} onClose={() => setNavOpen(false)} onNewProject={() => setNewProject(true)} />
       <div className="shell__backdrop" onClick={() => setNavOpen(false)} />
       <div className="shell__main">
         <header className="topbar">
           <IconButton icon="menu" label="Open menu" onClick={() => setNavOpen(true)} />
           <LogoMark size={24} />
           <span className="topbar__title">{title(route, projects.data)}</span>
+          <WorkerIndicator status={worker.data} align="end" className="worker-ind--topbar" />
           <IconButton icon="search" label="Search" onClick={() => navigate(href.search())} />
         </header>
         <Page key={route.name === 'search' ? 'search' : routeKey} route={route} projects={projects.data} />

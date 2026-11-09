@@ -1,29 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { api, clearToken } from '../api';
-import { workerAlive } from '../features/reports/Transcript';
-import { timeAgo } from '../format';
+import { WorkerIndicator } from '../features/reports/WorkerIndicator';
 import { useQuery } from '../hooks/data';
 import { promptInstall, useCanInstall } from '../pwa';
 import { href, type Route, sectionOf } from '../router';
 import type { Project, WorkerStatus } from '../types';
 import { Button, Icon, type IconName, IconButton, Input, Kbd, Logo, Segmented, useConfirm, useTheme } from '../ui';
-
-/** A quiet line under Bug reports: is the transcription worker running? Hidden until a worker connected or something waits. */
-function WorkerLine({ status }: { status: WorkerStatus | undefined }) {
-  if (!status || !status.enabled || (!status.lastSeenAt && !status.queued)) return null;
-  const alive = workerAlive(status);
-  const seen = alive ? 'Transcription worker online' : status.lastSeenAt ? `Worker last seen ${timeAgo(status.lastSeenAt)}` : 'Worker never connected';
-  return (
-    <div
-      className="worker-line"
-      data-alive={alive}
-      title={status.queued && !alive ? `${status.queued} recording(s) waiting — run tabula worker --once on your PC` : undefined}
-    >
-      <span className="worker-line__dot" aria-hidden="true" />
-      <span className="t-truncate">{seen}{status.queued ? ` · ${status.queued} waiting` : ''}</span>
-    </div>
-  );
-}
 
 function NavItem({ to, icon, label, count, active }: { to: string; icon: IconName; label: string; count?: number; active: boolean }) {
   return (
@@ -38,22 +20,15 @@ function NavItem({ to, icon, label, count, active }: { to: string; icon: IconNam
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 
 export function Sidebar({
-  route, projects, onClose, onNewProject,
-}: { route: Route; projects: Project[] | undefined; onClose: () => void; onNewProject: () => void }) {
+  route, projects, worker, onClose, onNewProject,
+}: { route: Route; projects: Project[] | undefined; worker: WorkerStatus | undefined; onClose: () => void; onNewProject: () => void }) {
   const [theme, setTheme] = useTheme();
   const canInstall = useCanInstall();
   const reportCounts = useQuery((s) => api.reportCounts(s), [], { topics: ['reports'] });
-  const worker = useQuery((s) => api.transcriptionStatus(s), [], { topics: ['reports'] });
-  const reloadWorker = worker.reload;
-  // "Online" goes stale while the sidebar stays open: look again every minute.
-  useEffect(() => {
-    const timer = setInterval(reloadWorker, 60_000);
-    return () => clearInterval(timer);
-  }, [reloadWorker]);
   const openReports = Object.values(reportCounts.data ?? {}).reduce((a, b) => a + b, 0);
   const [filter, setFilter] = useState('');
   const { confirm } = useConfirm();
-  // A report opened from a project's Bug reports tab highlights that project, not the global list.
+  // A report opened from a project's Reports tab highlights that project, not the global list.
   const section = sectionOf(route);
   const activeProject = section.name === 'project' ? section.project : null;
   const global = projects?.find((p) => p.id === 'global');
@@ -65,6 +40,7 @@ export function Sidebar({
     <aside className="sidebar" aria-label="Navigation">
       <div className="sidebar__head">
         <a href={href.thoughts()} aria-label="Tabula home"><Logo /></a>
+        <WorkerIndicator status={worker} className="worker-ind--sidebar" />
         <IconButton className="sidebar__close" icon="x" label="Close menu" onClick={onClose} />
       </div>
 
@@ -76,12 +52,9 @@ export function Sidebar({
         </button>
 
         <div className="nav-section">Notebook</div>
-        <NavItem to={href.thoughts()} icon="lightbulb" label="Thoughts" active={section.name === 'thoughts' || section.name === 'thought'} />
         <NavItem to={href.notes()} icon="fileText" label="Notes" active={section.name === 'notes' || section.name === 'note'} />
-
-        <div className="nav-section">Testing</div>
-        <NavItem to={href.reports()} icon="bug" label="Bug reports" count={openReports || undefined} active={section.name === 'reports' || section.name === 'report'} />
-        <WorkerLine status={worker.data} />
+        <NavItem to={href.thoughts()} icon="lightbulb" label="Thoughts" active={section.name === 'thoughts' || section.name === 'thought'} />
+        <NavItem to={href.reports()} icon="inbox" label="Reports" count={openReports || undefined} active={section.name === 'reports' || section.name === 'report'} />
 
         <div className="nav-section">For agents</div>
         <NavItem to={href.global()} icon="globe" label="Global" count={global?.memory_count} active={section.name === 'global'} />

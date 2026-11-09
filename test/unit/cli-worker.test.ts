@@ -17,7 +17,7 @@ type CliWorker = {
   commandLine(value: unknown, what: string): string[];
   progressMs(line: string): number | null;
   wavDurationMs(bytes: number): number;
-  reportUrl(server: string, report: { id: string; project: string }): string;
+  reportUrl(server: string, report: { id: string; project: string | null }): string;
   errorKind(e: unknown): string | null;
 };
 
@@ -25,8 +25,8 @@ type CliWorker = {
 const cli = (await import(new URL('../../cli/tabula.mjs', import.meta.url).href)) as CliWorker;
 
 describe('worker helpers of the CLI', () => {
-  it('is version 1.4.0 and exits 3 for a broken transcription setup', () => {
-    expect(cli.VERSION).toBe('1.4.0');
+  it('is version 1.4.1 and exits 3 for a broken transcription setup', () => {
+    expect(cli.VERSION).toBe('1.4.1');
     expect(cli.TRANSCRIBER_ENVIRONMENT_EXIT).toBe(3);
   });
 
@@ -131,6 +131,7 @@ describe('worker helpers of the CLI', () => {
   });
 
   it('links a report the way the web UI routes it', () => {
+    expect(cli.reportUrl('https://tabula.example.com', { id: 'r1', project: null })).toBe('https://tabula.example.com/#/reports/r1');
     expect(cli.reportUrl('https://tabula.example.com', { id: 'r1', project: 'demo' })).toBe('https://tabula.example.com/#/reports/r1?project=demo');
     expect(cli.reportUrl('https://tabula.example.com', { id: 'r1', project: 'a&b' })).toBe('https://tabula.example.com/#/reports/r1?project=a%26b');
   });

@@ -319,6 +319,8 @@ a.t-btn { text-decoration: none; }
 }
 .t-switch input:checked { background: var(--accent-strong); }
 .t-switch input:checked::after { transform: translateX(14px); }
+.t-switch[data-disabled] { opacity: 0.55; cursor: not-allowed; }
+.t-switch input:disabled { cursor: not-allowed; }
 
 /* ---------- Segmented control ---------- */
 

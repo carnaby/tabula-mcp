@@ -13,12 +13,12 @@ const { db, close } = createDb(config.databaseUrl);
 const store = new MediaStore(config.media.dir, config.media.maxBytes);
 const app = await buildApp({ config, db, store });
 
-// Without usable media storage Tabula still runs: only bug report uploads and new frames fail (503).
+// Without usable media storage Tabula still runs: only report uploads and new frames fail (503).
 const mediaProblem = await store.startup();
 if (mediaProblem) {
   app.log.error(
     { dir: store.root, problem: mediaProblem },
-    'MEDIA STORAGE IS NOT USABLE: uploads to bug reports will fail until the directory exists and is writable (check TABULA_MEDIA_DIR and the volume)',
+    'MEDIA STORAGE IS NOT USABLE: uploads to reports will fail until the directory exists and is writable (check TABULA_MEDIA_DIR and the volume)',
   );
 }
 

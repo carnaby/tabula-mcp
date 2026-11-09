@@ -133,7 +133,7 @@ describe('tabula worker', () => {
     const r = await runWorker(home, ['--once', '--log']);
     expect(r.code).toBe(0);
     expect(r.stdout).toBe('');
-    expect(readFileSync(join(home, 'data', 'worker.log'), 'utf8')).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d tabula worker 1\.4\.0/);
+    expect(readFileSync(join(home, 'data', 'worker.log'), 'utf8')).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d tabula worker 1.4.1/);
     expect(JSON.parse(readFileSync(join(home, 'transcriber.log'), 'utf8').trim()).language).toBeNull();
   });
 
@@ -785,6 +785,30 @@ describe('tabula worker --events', () => {
   const ISO = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
   const transcribing = (e: WorkerEvent) => e.type === 'phase' && e.phase === 'transcribe';
 
+  it('sends a job of a report without a project with "no project" and a link without one', async () => {
+    const report = await (
+      await fetch(`${server.url}/api/reports`, {
+        method: 'POST', headers: { ...auth, 'content-type': 'application/json' }, body: JSON.stringify({ body: 'Standup' }),
+      })
+    ).json();
+    const up = await fetch(`${server.url}/api/reports/${report.id}/attachments`, {
+      method: 'POST', headers: { ...auth, 'content-type': 'audio/wav', 'x-file-name': 'voice.wav' }, body: new Uint8Array(silentWav(1)),
+    });
+    expect(up.status).toBe(201);
+    const home = workerHome({ initial_prompt: '' });
+    const run = startEvents(home, ['--once', '--events']);
+    expect((await run.done).code).toBe(0);
+    const events = run.events();
+    expect(events.find((e) => e.type === 'job')).toMatchObject({
+      report: { id: report.id, project: 'no project', title: 'Standup' },
+      report_url: `${server.url}/#/reports/${report.id}`,
+    });
+    const log = events.filter((e) => e.type === 'log').map((e) => e.text).join('\n');
+    expect(log).toMatch(/audio .*, no project, "Standup", attempt 1/);
+    expect(log).not.toMatch(/project null/);
+    expect(JSON.parse(readFileSync(join(home, 'transcriber.log'), 'utf8').trim()).initial_prompt).toBeNull();
+  });
+
   it('sends one JSON line per event for a transcribed job and nothing else on stdout', async () => {
     const { report } = await recording();
     const home = workerHome();
@@ -797,7 +821,7 @@ describe('tabula worker --events', () => {
     for (const e of events) expect(e.time).toMatch(ISO);
     expect(run.types()).toEqual(['started', 'idle', 'job', 'phase', 'phase', 'phase', 'progress', 'phase', 'done', 'idle', 'stopped']);
     const of = (type: string) => events.filter((e) => e.type === type);
-    expect(of('started')[0]).toMatchObject({ version: '1.4.0', once: true, server: server.url });
+    expect(of('started')[0]).toMatchObject({ version: '1.4.1', once: true, server: server.url });
     expect(of('job')[0]).toMatchObject({
       attempt: 1,
       attachment: { kind: 'audio', size: 32044, file_name: 'voice.wav' },

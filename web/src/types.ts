@@ -114,7 +114,9 @@ export const REPORT_STATUS_INFO: Record<ReportStatus, { label: string; hint: str
   done: { label: 'Done', hint: 'Fixed and closed' },
 };
 export type AttachmentKind = 'image' | 'video' | 'audio' | 'frame';
-export type TranscriptSegment = { start_ms: number; end_ms: number; text: string; speaker?: string };
+/** A line changed after the worker wrote it: who changed it last, when, and the worker's own text and speaker. */
+export type SegmentEdit = { by: 'user' | 'agent'; at: string; original: { text: string; speaker?: string } };
+export type TranscriptSegment = { start_ms: number; end_ms: number; text: string; speaker?: string; edit?: SegmentEdit };
 /** How the speakers were recognized: the model and how many speak, or why it failed. */
 export type Diarization = { model: string; speakers: number } | { error: string };
 export type SpeakerName = { name: string; by: 'user' | 'agent'; at: string };
@@ -159,7 +161,8 @@ export type Attachment = {
 };
 export type Report = {
   id: string;
-  projectId: string;
+  /** null: the report belongs to no project. */
+  projectId: string | null;
   title: string;
   body: string;
   triage: string;
@@ -168,9 +171,12 @@ export type Report = {
   editedBy: string;
   version: number;
   closedAt: string | null;
+  /** Video and audio stay after the report is closed. */
+  keepMedia: boolean;
   createdAt: string;
   updatedAt: string;
 };
 export type ReportSummary = Report & { counts: Record<AttachmentKind, number> };
-export type ReportDetail = Report & { attachments: Attachment[] };
+/** `purgeAfterHours`: how long after closing the server deletes video and audio (unless Keep media is on). */
+export type ReportDetail = Report & { attachments: Attachment[]; purgeAfterHours: number };
 export type ReportSort = 'createdAt' | 'updatedAt' | 'title' | 'status';

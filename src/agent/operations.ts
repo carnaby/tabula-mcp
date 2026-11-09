@@ -8,6 +8,7 @@ import { findNotes, type Note, type NoteHit } from '../domain/notes.js';
 import { listProjects, type ProjectSummary } from '../domain/projects.js';
 import { recall } from '../domain/recall.js';
 import { nameSpeakersAsAgent, speakerView } from '../domain/speakers.js';
+import { type AgentLineEdit, editTranscriptAsAgent } from '../domain/transcript-edits.js';
 import { parseIdRef } from '../domain/ids.js';
 import { refTarget, type ResolvedRecord, resolveRecord } from '../domain/records.js';
 import { search, type SearchHit, type SearchParams } from '../domain/search.js';
@@ -21,7 +22,7 @@ import {
 } from '../domain/reports.js';
 import { clock, sliceLines, transcriptLines } from '../domain/transcripts.js';
 import { createThought, findThoughts, type Thought, type ThoughtHit, updateThought } from '../domain/thoughts.js';
-import type { MemoryKind } from '../domain/validation.js';
+import { type MemoryKind, NO_PROJECT } from '../domain/validation.js';
 import { refOf } from '../shared/refs.js';
 
 export type AgentMedia = {
@@ -118,12 +119,12 @@ function describeRecord(r: ResolvedRecord): { what: string; inactive?: string } 
     case 'thought':
       return { what: 'thought', inactive: r.record.archived ? 'archived' : undefined };
     case 'report':
-      return { what: 'bug report', inactive: r.record.status === 'done' ? 'closed' : undefined };
+      return { what: 'report', inactive: r.record.status === 'done' ? 'closed' : undefined };
     case 'file':
       return { what: 'project file', inactive: r.record.deletedAt ? `deleted ${isoDay(r.record.deletedAt)}` : undefined };
     case 'attachment':
       return {
-        what: `${ATTACHMENT_WORD[r.record.kind]} of bug report ${refOf(r.report.id)}`,
+        what: `${ATTACHMENT_WORD[r.record.kind]} of report ${refOf(r.report.id)}`,
         inactive: r.record.purgedAt ? 'recording deleted' : undefined,
       };
   }
@@ -196,9 +197,9 @@ async function attachmentBlocks(ctx: AgentContext, a: Attachment, report: Report
 async function requireAgentWritable(db: Db, id: string): Promise<Memory> {
   const r = await resolveRecord(db, id);
   if (r.type === 'thought') throw badRequest(`${r.record.id} is a thought, not a memory; use update_thought`);
-  if (r.type === 'report') throw badRequest(`${r.record.id} is a bug report, not a memory; use update_report`);
+  if (r.type === 'report') throw badRequest(`${r.record.id} is a report, not a memory; use update_report`);
   if (r.type === 'file' || r.type === 'attachment') {
-    throw badRequest(`${r.record.id} is a ${r.type === 'file' ? 'project file' : 'bug report attachment'}, not a memory`);
+    throw badRequest(`${r.record.id} is a ${r.type === 'file' ? 'project file' : 'report attachment'}, not a memory`);
   }
   if (r.type === 'note' || r.record.source === 'human') throw forbidden(AGENT_READ_ONLY);
   if (r.record.projectId !== 'global') throw badRequest(GLOBAL_ONLY);
@@ -339,7 +340,7 @@ export const agentFindThoughts = async (
   p: { query?: string; tag?: string; limit?: number },
 ): Promise<Array<ThoughtHit & { ref: string }>> => (await findThoughts(ctx.db, p)).map((h) => ({ ref: refOf(h.id), ...h }));
 
-// ---- Bug reports -------------------------------------------------------------------------------------------------
+// ---- Reports -------------------------------------------------------------------------------------------------
 
 /** Links in agent replies last a day: long enough to download in the same session. */
 const AGENT_LINK_TTL = 24 * 3600;
@@ -422,9 +423,11 @@ function transcriptForAgent(a: Attachment, s: TranscriptState | undefined, lastS
 const reportForAgent = (r: Report) => ({
   id: r.id,
   ref: refOf(r.id),
-  project: r.projectId,
+  project: r.projectId ?? NO_PROJECT,
   title: r.title,
   status: r.status,
+  /** The user keeps the video and audio after closing. */
+  keep_media: r.keepMedia,
   description: r.body,
   triage: r.triage,
   version: r.version,
@@ -444,7 +447,7 @@ export async function agentListReports(
   return {
     total: page.total,
     reports: page.items.map((r) => ({
-      id: r.id, ref: refOf(r.id), project: r.projectId, title: r.title, status: r.status, created_at: r.createdAt.toISOString(),
+      id: r.id, ref: refOf(r.id), project: r.projectId ?? NO_PROJECT, title: r.title, status: r.status, created_at: r.createdAt.toISOString(),
       attachments: r.counts, has_triage: r.triage.length > 0,
     })),
   };
@@ -454,10 +457,10 @@ async function requireReportRef(ctx: AgentContext, id: string): Promise<Report> 
   const r = await resolveRecord(ctx.db, id);
   if (r.type === 'attachment') {
     throw badRequest(
-      `${r.record.id} is an attachment of bug report ${refOf(r.report.id)}, not a bug report; use get with it to see the attachment, or pass the report's reference`,
+      `${r.record.id} is an attachment of report ${refOf(r.report.id)}, not a report; use get with it to see the attachment, or pass the report's reference`,
     );
   }
-  if (r.type !== 'report') throw badRequest(`${r.record.id} is ${aOrAn(r.type)}, not a bug report`);
+  if (r.type !== 'report') throw badRequest(`${r.record.id} is ${aOrAn(r.type)}, not a report`);
   return r.record;
 }
 
@@ -474,9 +477,10 @@ export async function agentGetReport(ctx: AgentContext, id: string) {
   };
 }
 
-export async function agentCreateReport(ctx: AgentContext, input: { project: string; title: string; description?: string }) {
-  const r = await createReport(ctx.db, { projectId: input.project, title: input.title, body: input.description }, agentEditorOf(ctx));
-  return { id: r.id, ref: refOf(r.id), version: r.version };
+/** create_report: every field is optional; the project is set only when the user named it. */
+export async function agentCreateReport(ctx: AgentContext, input: { project?: string; title?: string; description?: string }) {
+  const r = await createReport(ctx.db, { projectId: input.project ?? null, title: input.title, body: input.description }, agentEditorOf(ctx));
+  return { id: r.id, ref: refOf(r.id), version: r.version, project: r.projectId ?? NO_PROJECT, title: r.title };
 }
 
 export async function agentUpdateReport(
@@ -557,4 +561,13 @@ export async function agentNameSpeakers(ctx: AgentContext, input: { attachment_i
   const s = (await transcriptStates(ctx.db, [id])).get(id);
   const header = s?.status === 'done' ? speakerView(s.segments, s.diarization, s.speakers).header : null;
   return { attachment: refOf(id), written: r.written, skipped: r.skipped, ...(header ? { speakers: header } : {}) };
+}
+
+/** edit_transcript: Claude corrects misheard words or a line's speaker; a line the user edited stays as it is. */
+export async function agentEditTranscript(ctx: AgentContext, input: { attachment_id: string; edits: AgentLineEdit[] }) {
+  const id = await resolveAttachmentId(ctx, input.attachment_id);
+  const a = await requireAttachment(ctx.db, id);
+  if (!isRecording(a)) throw badRequest(`attachment ${id} is ${a.kind === 'image' ? 'a photo' : 'a frame'}; only video and audio have a transcript`);
+  const r = await editTranscriptAsAgent(ctx.db, id, input.edits);
+  return { attachment: refOf(id), written: r.written, skipped: r.skipped };
 }

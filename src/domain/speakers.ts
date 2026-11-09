@@ -121,12 +121,12 @@ export function cleanDiarization(input: Diarization | null | undefined): Diariza
   return { model: raw.model, speakers: raw.speakers };
 }
 
-type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
+export type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 
-/** The transcript's segments and names, locked: two people naming at once must not undo each other. */
-async function lockedTranscript(tx: Tx, attachmentId: string) {
+/** The transcript's segments, names and speaker recognition, locked: two people naming at once must not undo each other. */
+export async function lockedTranscript(tx: Tx, attachmentId: string) {
   const [t] = await tx
-    .select({ segments: reportTranscripts.segments, speakers: reportTranscripts.speakers })
+    .select({ segments: reportTranscripts.segments, speakers: reportTranscripts.speakers, diarization: reportTranscripts.diarization })
     .from(reportTranscripts)
     .where(eq(reportTranscripts.attachmentId, attachmentId))
     .for('update');
@@ -154,15 +154,16 @@ export async function nameSpeakersAsAgent(db: Db, attachmentId: string, names: R
   });
 }
 
-/** Names used in the transcripts of this report, then of its project (see rankNames). */
+/** Names used in the transcripts of this report, then of its project (see rankNames); a report without a project has only its own. */
 export async function speakerNameSuggestions(db: Db, reportId: string): Promise<string[]> {
   const [report] = await db.select({ projectId: reports.projectId }).from(reports).where(eq(reports.id, reportId));
   if (!report) throw notFound(`report ${reportId} does not exist`);
+  const scope = report.projectId === null ? eq(reports.id, reportId) : eq(reports.projectId, report.projectId);
   const rows = await db
     .select({ reportId: reportAttachments.reportId, speakers: reportTranscripts.speakers })
     .from(reportTranscripts)
     .innerJoin(reportAttachments, eq(reportAttachments.id, reportTranscripts.attachmentId))
     .innerJoin(reports, eq(reports.id, reportAttachments.reportId))
-    .where(and(eq(reports.projectId, report.projectId), sql`${reportTranscripts.speakers} <> '{}'::jsonb`));
+    .where(and(scope, sql`${reportTranscripts.speakers} <> '{}'::jsonb`));
   return rankNames(rows, reportId);
 }

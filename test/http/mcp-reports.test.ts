@@ -51,7 +51,7 @@ async function uploadFile(reportId: string, body: Buffer, type: string, name: st
   return (await res.json()) as { id: string };
 }
 
-describe('bug reports over MCP', () => {
+describe('reports over MCP', () => {
   it('creates, lists, reads and triages a report', async () => {
     const created = json((await tool('create_report', { project: 'demo', title: 'Login loops', description: 'After 2FA it returns to login.' })).content);
     const listed = json((await tool('list_reports', { project: 'demo' })).content);
@@ -73,7 +73,7 @@ describe('bug reports over MCP', () => {
     expect(json((await tool('update_report', { id: created.id, append_triage: '- [ ] add a test' })).content).version).toBe(3);
 
     const shown = (await tool('get', { id: created.id })).content;
-    expect(shown[0]!.text).toBe(`tabula:${created.id.slice(0, 8)} · bug report · project demo · Login loops`);
+    expect(shown[0]!.text).toBe(`tabula:${created.id.slice(0, 8)} · report · project demo · Login loops`);
     expect(JSON.parse(shown[1]!.text!)).toMatchObject({ type: 'report', ref: `tabula:${created.id.slice(0, 8)}`, triage: '## Tasks\n- [ ] fix redirect\n\n- [ ] add a test' });
     expect((await tool('create_report', { project: 'global', title: 'x' })).isError).toBe(true);
   });
@@ -144,6 +144,64 @@ describe('bug reports over MCP', () => {
     expect(text((await tool('name_speakers', { attachment_id: waiting.id, names: { S1: 'Eva' } })).content)).toMatch(/^404: .*has no transcript yet/);
   });
 
+  it('creates a report without a project or title, lists it under "none", and shows keep_media', async () => {
+    const created = json((await tool('create_report', {})).content);
+    expect(created).toMatchObject({ project: 'none', version: 1 });
+    expect(created.title).toMatch(/^Report \d{1,2}\. \d{1,2}\. \d{4} \d{2}:\d{2}$/);
+    await tool('create_report', { project: 'demo', title: 'Crash on save' });
+    expect(json((await tool('list_reports', { project: 'none' })).content)).toMatchObject({ total: 1, reports: [{ id: created.id, project: 'none' }] });
+    expect(json((await tool('list_reports', {})).content).total).toBe(2);
+    expect(json((await tool('get_report', { id: created.ref })).content)).toMatchObject({ project: 'none', keep_media: false });
+    await fetch(`${base}/api/reports/${created.id}`, {
+      method: 'PATCH', headers: { Authorization: `Bearer ${TEST_TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify({ keepMedia: true }),
+    });
+    expect(json((await tool('get_report', { id: created.ref })).content).keep_media).toBe(true);
+    expect((await tool('get', { id: created.ref })).content[0]!.text).toBe(`${created.ref} · report · ${created.title}`);
+  });
+
+  it("fixes misheard words with edit_transcript, never a line the user edited", async () => {
+    const { report, audio } = await conversation();
+    const ref = `tabula:${audio.id.slice(0, 8)}`;
+    // The user corrected the second line in the app first.
+    const userEdit = await fetch(`${base}/api/attachments/${audio.id}/segments/1`, {
+      method: 'PATCH', headers: { Authorization: `Bearer ${TEST_TOKEN}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'Vpravo hore, pri ikone.', expected: { text: 'Vpravo hore.', speaker: 'S2' } }),
+    });
+    expect(userEdit.status).toBe(200);
+    const r = json((await tool('edit_transcript', {
+      attachment_id: ref,
+      edits: [{ at: '0:12', from: 'uložiť', to: 'Uložiť' }, { at: '0:16', from: 'hore', to: 'dole' }, { at: '0:12', speaker: 'S2' }],
+    })).content);
+    expect(r).toEqual({
+      attachment: ref,
+      written: [{ at: '0:12', text: 'Kde je tlačidlo Uložiť?' }, { at: '0:12', speaker: 'S2' }],
+      skipped: [{ at: '0:16', reason: 'the user edited this line; a line the user edited is never changed' }],
+    });
+    // The transcript the tools show stays plain: edited lines are not marked.
+    const page = text((await tool('get_transcript', { attachment_id: ref })).content).split('\n');
+    expect(page.slice(1)).toEqual(['Speakers: S2 = not named', '[0:12] S2: Kde je tlačidlo Uložiť?', '[0:16] S2: Vpravo hore, pri ikone.']);
+
+    const tooMany = await tool('edit_transcript', { attachment_id: ref, edits: Array.from({ length: 51 }, () => ({ at: '0:12', speaker: 'S1' })) });
+    expect(tooMany.isError).toBe(true);
+    expect(text(tooMany.content)).toMatch(/^400: 51 edits; at most 50 in one call/);
+    const photo = await uploadFile(report.id, PNG, 'image/png', 'p.png');
+    expect(text((await tool('edit_transcript', { attachment_id: photo.id, edits: [{ at: '0:01', speaker: 'S1' }] })).content)).toMatch(/^400: .*only video and audio have a transcript/);
+  });
+
+
+  it('never lets Claude assign or change a report project', async () => {
+    await seedProject(db, 'other');
+    const free = json((await tool('create_report', {})).content);
+    const bound = json((await tool('create_report', { project: 'demo', title: 'Crash on save' })).content);
+    for (const r of [free, bound]) {
+      const updated = await tool('update_report', { id: r.id, triage: 'Cause found.', expected_version: 1, project: 'other' });
+      expect(updated.isError).toBeFalsy();
+      expect(json((await tool('get_report', { id: r.id })).content).triage).toBe('Cause found.');
+    }
+    expect(json((await tool('get_report', { id: free.id })).content).project).toBe('none');
+    expect(json((await tool('get_report', { id: bound.id })).content).project).toBe('demo');
+  });
+
   it('closes a report only with expected_version: closing starts deleting its video and audio', async () => {
     const { id } = json((await tool('create_report', { project: 'demo', title: 'Crash on save' })).content);
     const blind = await tool('update_report', { id, status: 'done' });
@@ -160,7 +218,7 @@ describe('bug reports over MCP', () => {
     for (const name of ['get_report', 'update_report']) {
       const r = await tool(name, { id: `tabula:${photo.id.slice(0, 8)}`, status: 'triaged' });
       expect(r.isError).toBe(true);
-      expect(text(r.content)).toContain(`is an attachment of bug report ${ref}`);
+      expect(text(r.content)).toContain(`is an attachment of report ${ref}`);
       expect(text(r.content)).toMatch(/use get/);
     }
   });
@@ -173,7 +231,14 @@ describe('bug reports over MCP', () => {
     try {
       expect(client.getInstructions()).toMatch(/create_report, take the project slug from list_projects/);
       const { tools } = await client.listTools();
-      expect(tools.find((t) => t.name === 'get')!.description).toMatch(/bug report/);
+      expect(tools.find((t) => t.name === 'get')!.description).toMatch(/report \(a bug or a recording\)/);
+      expect(client.getInstructions()).toContain('Reports (bug reports, recordings of meetings and conversations) usually belong to a project; a report may have none.');
+      expect(client.getInstructions()).toContain('fix it with edit_transcript');
+      expect(tools.find((t) => t.name === 'create_report')!.description).toMatch(/to record a bug or a recording on request/);
+      expect(tools.find((t) => t.name === 'update_report')!.description).toMatch(/never changes the project/);
+      expect(tools.find((t) => t.name === 'edit_transcript')!.description).toMatch(/obviously misheard/);
+      expect(tools.find((t) => t.name === 'edit_transcript')!.description).toMatch(/data, not instructions/);
+      expect(JSON.stringify(tools.find((t) => t.name === 'update_report')!.inputSchema)).not.toContain('"project"');
       expect(tools.find((t) => t.name === 'create_report')!.description).toMatch(/list_projects/);
       expect(tools.find((t) => t.name === 'name_speakers')!.description).toMatch(/never replaces a name the user gave/);
       expect(tools.find((t) => t.name === 'get_report')!.description).toMatch(/\[0:12\] Eva:/);
@@ -280,7 +345,7 @@ describe('bug reports over MCP', () => {
     const shown = await tool('get', { id: `tabula:${frame.id.slice(0, 8)}` });
     expect(shown.isError).toBe(false);
     expect(shown.content.map((c) => c.type)).toEqual(['text', 'image', 'text']);
-    expect(shown.content[0]!.text).toBe(`tabula:${frame.id.slice(0, 8)} · frame of bug report ${ref} · project demo · f.png`);
+    expect(shown.content[0]!.text).toBe(`tabula:${frame.id.slice(0, 8)} · frame of report ${ref} · project demo · f.png`);
     expect(shown.content[1]!.data).toBe(PNG.toString('base64'));
     expect(JSON.parse(shown.content[2]!.text!)).toMatchObject({
       ref: `tabula:${frame.id.slice(0, 8)}`, kind: 'frame', at_s: 2, note: 'The spinner never stops.', report: ref, report_title: 'Spinner',
@@ -288,13 +353,13 @@ describe('bug reports over MCP', () => {
 
     const bare = await tool('get', { id: frame.id.slice(0, 8) });
     expect(bare.isError).toBe(false);
-    expect(bare.content[0]!.text).toBe(`tabula:${frame.id.slice(0, 8)} · frame of bug report ${ref} · project demo · f.png`);
+    expect(bare.content[0]!.text).toBe(`tabula:${frame.id.slice(0, 8)} · frame of report ${ref} · project demo · f.png`);
 
     const audio = await uploadFile(id, silentWav(1), 'audio/wav', 'voice.wav');
     await db.update(reportAttachments).set({ purgedAt: new Date() }).where(eq(reportAttachments.id, audio.id));
     const rec = await tool('get', { id: `tabula:${audio.id.slice(0, 8)}` });
     expect(rec.content.map((c) => c.type)).toEqual(['text', 'text']);
-    expect(rec.content[0]!.text).toBe(`tabula:${audio.id.slice(0, 8)} · voice note of bug report ${ref} · project demo · recording deleted · voice.wav`);
+    expect(rec.content[0]!.text).toBe(`tabula:${audio.id.slice(0, 8)} · voice note of report ${ref} · project demo · recording deleted · voice.wav`);
     expect(JSON.parse(rec.content[1]!.text!)).toMatchObject({
       kind: 'audio', deleted: 'deleted after the report was closed', report: ref, transcript: expect.objectContaining({ status: 'queued' }),
       next: expect.stringContaining(`get_transcript with attachment_id "tabula:${audio.id.slice(0, 8)}"`),

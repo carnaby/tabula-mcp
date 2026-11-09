@@ -21,7 +21,7 @@ const SEGMENTS = [
 const PYANNOTE = { model: 'pyannote/speaker-diarization-community-1', speakers: 2 };
 
 /** A report with one voice note, queued and transcribed by a worker with speakers. */
-async function transcribed(project = 'demo') {
+async function transcribed(project: string | null = 'demo') {
   const [r] = await db.insert(reports).values({ projectId: project, title: 'Login loops', source: 'human', editedBy: 'human' }).returning();
   const id = randomUUID();
   await db.insert(reportAttachments).values({
@@ -41,6 +41,14 @@ async function finish(t: Pick<TranscriptInput, 'segments' | 'diarization'>) {
 const stateOf = async (id: string) => (await transcriptStates(db, [id])).get(id)!;
 
 describe('speakers', () => {
+  it('suggests the names of a report without a project from that report only', async () => {
+    const { reportId, attachmentId } = await transcribed(null);
+    await setSpeakerNames(db, attachmentId, { S1: 'Eva' });
+    const other = await transcribed(null);
+    await setSpeakerNames(db, other.attachmentId, { S1: 'Marek' });
+    expect(await speakerNameSuggestions(db, reportId)).toEqual(['Eva']);
+  });
+
   it('stores the speakers and the diarization with the transcript', async () => {
     const { attachmentId } = await transcribed();
     expect(await stateOf(attachmentId)).toMatchObject({ status: 'done', segments: SEGMENTS, diarization: PYANNOTE, speakers: {}, again: null });

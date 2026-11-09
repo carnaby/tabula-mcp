@@ -33,7 +33,7 @@ export type Config = {
   host: string;
   webDist: string;
   media: {
-    /** Where attachments of bug reports are stored (a volume in Docker). */
+    /** Where attachments of reports are stored (a volume in Docker). */
     dir: string;
     maxBytes: number;
     /** Video and audio of a closed report are deleted this many hours after it was closed. */

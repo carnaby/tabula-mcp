@@ -23,7 +23,7 @@ const query = (params: Record<string, string | undefined>) => {
 
 /**
  * Editor links take an optional `from`: the address of the page the link is on, so the editor's back button returns
- * there (a project's bug reports, a search with its query). It travels in the address, so a reloaded or shared link
+ * there (a project's reports, a search with its query). It travels in the address, so a reloaded or shared link
  * keeps it; without it the back button goes to the record type's own list.
  */
 export const href = {
@@ -107,12 +107,12 @@ function backLabel(route: Route, name: (slug: string) => string): string | null 
   switch (route.name) {
     case 'thoughts': return 'Back to Thoughts';
     case 'notes': return 'Back to Notes';
-    case 'reports': return 'Back to Bug reports';
+    case 'reports': return 'Back to Reports';
     case 'global': return 'Back to Global';
     case 'search': return route.q ? `Back to search “${route.q}”` : 'Back to Search';
     case 'project':
       if (route.path) return null;
-      if (route.tab === 'reports') return `Back to ${name(route.project)} bug reports`;
+      if (route.tab === 'reports') return `Back to ${name(route.project)} reports`;
       if (route.tab === 'files') return `Back to ${name(route.project)} files`;
       return `Back to ${name(route.project)}`;
     default: return null;

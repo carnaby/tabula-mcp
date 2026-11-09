@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '../api';
+import { dateTitle } from '../../../src/shared/report-title';
 import { AuthorMeta, authorInfo, authorOf, ProjectSelect } from '../features/common';
 import { CopyRefButton } from '../features/CopyRefButton';
 import { EditorBar, SaveButton } from '../features/EditorBar';
@@ -11,8 +12,13 @@ import { invalidate, usePersistentState, useQuery, useSaveShortcut, useUnsavedGu
 import { backTarget, href, navigate } from '../router';
 import { type Attachment, type Project, type Report, REPORT_STATUS_INFO, type ReportStatus } from '../types';
 import {
-  Alert, Badge, Button, EmptyState, Field, IconButton, Input, Markdown, MarkdownEditor, Segmented, Skeleton, Textarea, useConfirm, useToast,
+  Alert, Badge, Button, EmptyState, Field, IconButton, Input, Markdown, MarkdownEditor, Segmented, Skeleton, Switch, Textarea, useConfirm, useToast,
 } from '../ui';
+
+/** TABULA_MEDIA_PURGE_HOURS until the server has said it (a report not created yet). */
+const DEFAULT_PURGE_HOURS = 24;
+
+const isRecording = (a: Attachment) => a.kind === 'video' || a.kind === 'audio';
 
 export function ReportPage({
   id, project, from, attachment, projects,
@@ -23,18 +29,19 @@ export function ReportPage({
   if (!isNew && loaded.error) {
     return (
       <main className="content">
-        <EmptyState icon="bug" title="Report not found" action={<Button onClick={() => navigate(back.href)}>{back.label}</Button>}>
+        <EmptyState icon="inbox" title="Report not found" action={<Button onClick={() => navigate(back.href)}>{back.label}</Button>}>
           {loaded.error instanceof ApiError && loaded.error.status === 404 ? 'It may have been deleted.' : loaded.error.message}
         </EmptyState>
       </main>
     );
   }
   if (!isNew && !loaded.data) return <main className="content"><Skeleton height={36} width="50%" /><Skeleton height={240} /></main>;
-  const { attachments, ...report } = loaded.data ?? { attachments: [] as Attachment[] };
+  const { attachments, purgeAfterHours, ...report } = loaded.data ?? { attachments: [] as Attachment[], purgeAfterHours: DEFAULT_PURGE_HOURS };
   return (
     <Editor
       initial={isNew ? null : (report as Report)}
       initialAttachments={attachments}
+      purgeAfterHours={purgeAfterHours}
       defaultProject={project}
       from={from}
       back={back}
@@ -47,10 +54,12 @@ export function ReportPage({
 type Draft = { projectId: string; title: string; body: string };
 
 function Editor({
-  initial, initialAttachments, defaultProject, from, back, focus, projects,
+  initial, initialAttachments, purgeAfterHours, defaultProject, from, back, focus, projects,
 }: {
   initial: Report | null;
   initialAttachments: Attachment[];
+  /** How long after closing the server deletes video and audio. */
+  purgeAfterHours: number;
   defaultProject?: string;
   from?: string;
   back: { href: string; label: string };
@@ -61,7 +70,8 @@ function Editor({
   const [lastProject, setLastProject] = usePersistentState('tabula.report.project', { id: '' });
   const [base, setBase] = useState<Report | null>(initial);
   const [draft, setDraft] = useState<Draft>({
-    projectId: initial?.projectId ?? defaultProject ?? lastProject.id ?? '',
+    // An existing report shows its own project (or none); a new one starts with the link's or the last used one.
+    projectId: initial ? (initial.projectId ?? '') : defaultProject === 'none' ? '' : (defaultProject ?? lastProject.id ?? ''),
     title: initial?.title ?? '',
     body: initial?.body ?? '',
   });
@@ -121,18 +131,20 @@ function Editor({
   const guard = useUnsavedGuard(dirty);
 
   /**
-   * A new report is created the moment it gets text or a file, so uploads can start right away. One creation at a
-   * time: two quick picks (or a pick and a save) must not create two reports.
+   * A new report is created the moment it gets text or a file, so uploads can start right away. No field is required:
+   * without a project it has none, without a title the server takes the description's first line or the date.
+   * One creation at a time: two quick picks (or a pick and a save) must not create two reports.
    */
   const creating = useRef<Promise<Report> | null>(null);
   const ensureReport = (): Promise<Report> => {
     if (base) return Promise.resolve(base);
-    if (!draft.projectId) return Promise.reject(new Error('Pick the project first.'));
     creating.current ??= (async () => {
-      const r = await api.createReport({ projectId: draft.projectId, title: draft.title.trim() || undefined, body: draft.body });
+      // Neither title nor description: the browser names it, in the author's local time (Plan decision 2).
+      const title = draft.title.trim() || (draft.body.trim() ? undefined : dateTitle(new Date()));
+      const r = await api.createReport({ projectId: draft.projectId || null, title, body: draft.body });
       setBase(r);
       setDraft((d) => ({ ...d, title: r.title }));
-      setLastProject({ id: r.projectId });
+      setLastProject({ id: r.projectId ?? '' });
       invalidate('reports');
       // Swap the address without remounting: uploads in progress keep going.
       history.replaceState(null, '', href.report(r.id, undefined, from));
@@ -188,7 +200,7 @@ function Editor({
         setAttachments(files);
         if (r.version !== base.version && !textDirty && !editTriage) {
           setBase(r);
-          setDraft((d) => ({ ...d, title: r.title, body: r.body, projectId: r.projectId }));
+          setDraft((d) => ({ ...d, title: r.title, body: r.body, projectId: r.projectId ?? '' }));
           setTriageDraft(r.triage);
           if (r.editedBy !== 'human') notify(`Updated by ${authorInfo('agent', r.editedBy).name}`);
         }
@@ -202,15 +214,66 @@ function Editor({
     };
   }, [base, textDirty, editTriage, notify]);
 
+  /** The project of an existing report changes at once; '' means no project. */
+  const changeProject = async (projectId: string) => {
+    const before = draft.projectId;
+    setDraft((d) => ({ ...d, projectId }));
+    try {
+      if (!base) {
+        // The report is being created with the project chosen before: wait for it, then save the picked one.
+        const pending = creating.current;
+        if (!pending) return;
+        const created = await pending;
+        if ((created.projectId ?? '') === projectId) return;
+        setBase(await api.updateReport(created.id, { projectId: projectId || null }));
+        setLastProject({ id: projectId });
+        invalidate('reports');
+        return;
+      }
+      const r = await api.updateReport(base.id, { projectId: projectId || null });
+      setBase(r);
+      invalidate('reports');
+    } catch (e) {
+      setDraft((d) => ({ ...d, projectId: before }));
+      notify((e as Error).message, { tone: 'danger' });
+    }
+  };
+
+  const recordings = attachments.filter(isRecording);
+  const mediaGone = recordings.length > 0 && recordings.every((a) => a.purgedAt);
+
+  const setKeepMedia = async (keepMedia: boolean) => {
+    if (!base) return;
+    const graceOver = !!base.closedAt && Date.parse(base.closedAt) + purgeAfterHours * 3600_000 <= Date.now();
+    if (!keepMedia && base.status === 'done' && graceOver && recordings.some((a) => !a.purgedAt)) {
+      const ok = await confirm({
+        title: 'Stop keeping the media?',
+        message: 'Video and audio will be deleted within 15 minutes.',
+        confirmLabel: 'Stop keeping',
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    try {
+      const r = await api.updateReport(base.id, { keepMedia });
+      setBase(r);
+      invalidate('reports');
+    } catch (e) {
+      notify((e as Error).message, { tone: 'danger' });
+    }
+  };
+
   const setStatus = async (status: ReportStatus) => {
     if (!base || status === base.status) return;
     if (status === 'done') {
-      const media = attachments.filter((a) => (a.kind === 'video' || a.kind === 'audio') && !a.purgedAt).length;
+      const media = recordings.filter((a) => !a.purgedAt).length;
       const ok = await confirm({
         title: 'Close this report?',
-        message: media
-          ? `Its ${media} video/audio file(s) will be deleted about a day after closing. Photos, saved frames and the text stay. Reopen before then to keep them.`
-          : 'You can reopen it later.',
+        message: !media
+          ? 'You can reopen it later.'
+          : base.keepMedia
+            ? `Keep media is on: its ${media} video/audio file(s) stay after closing. You can reopen it later.`
+            : `Its ${media} video/audio file(s) will be deleted ${purgeAfterHours === 0 ? 'within 15 minutes of' : `${purgeAfterHours} ${purgeAfterHours === 1 ? 'hour' : 'hours'} after`} closing. Photos, saved frames and the text stay. Reopen before then, or turn on Keep media, to keep them.`,
         confirmLabel: 'Close report',
       });
       if (!ok) return;
@@ -256,7 +319,7 @@ function Editor({
           base ? (
             <AuthorMeta author={authorOf(base.editedBy)} iso={base.updatedAt} />
           ) : (
-            <span className="t-truncate">New bug report</span>
+            <span className="t-truncate">New report</span>
           )
         }
       >
@@ -272,28 +335,33 @@ function Editor({
       {error && <Alert tone="danger">{error}</Alert>}
 
       <div className="editor">
+        <Field label="Title">
+          {(fid) => (
+            <Input
+              id={fid}
+              value={draft.title}
+              placeholder={base ? undefined : 'Optional — the description’s first line, or the date'}
+              onChange={(e) => setDraft({ ...draft, title: e.target.value })}
+            />
+          )}
+        </Field>
+
+        <Field label="Description" hint="Steps, what you expected, what happened. The first line becomes the title if you leave it empty.">
+          {(fid) => (
+            <Textarea
+              id={fid}
+              rows={5}
+              autoFocus={!base}
+              value={draft.body}
+              placeholder="e.g. On the song page the play button does nothing after switching tabs…"
+              onChange={(e) => setDraft({ ...draft, body: e.target.value })}
+            />
+          )}
+        </Field>
+
         <div className="editor__grid">
           <Field label="Project">
-            {(fid) =>
-              projects && projects.length === 0 ? (
-                <Alert>Create a project first — every report belongs to one.</Alert>
-              ) : (
-                <ProjectSelect
-                  id={fid}
-                  projects={projects}
-                  placeholder
-                  value={draft.projectId}
-                  onChange={async (projectId) => {
-                    setDraft({ ...draft, projectId });
-                    if (base && projectId) {
-                      const r = await api.updateReport(base.id, { projectId });
-                      setBase(r);
-                      invalidate('reports');
-                    }
-                  }}
-                />
-              )
-            }
+            {(fid) => <ProjectSelect id={fid} projects={projects} noProject="" value={draft.projectId} onChange={(v) => void changeProject(v)} />}
           </Field>
           {base && (
             <Field label="Status">
@@ -307,25 +375,12 @@ function Editor({
               )}
             </Field>
           )}
-        </div>
-
-        <Field label="What's wrong?" hint="Steps, what you expected, what happened. The first line becomes the title if you leave it empty.">
-          {(fid) => (
-            <Textarea
-              id={fid}
-              rows={5}
-              autoFocus={!base}
-              value={draft.body}
-              placeholder="e.g. On the song page the play button does nothing after switching tabs…"
-              onChange={(e) => setDraft({ ...draft, body: e.target.value })}
-            />
+          {base && (
+            <Field label="Media" hint={mediaGone ? 'Media already deleted' : 'Video and audio stay after the report is closed'}>
+              {() => <Switch checked={base.keepMedia} disabled={mediaGone} onChange={(v) => void setKeepMedia(v)} label="Keep media" />}
+            </Field>
           )}
-        </Field>
-        {base && (
-          <Field label="Title">
-            {(fid) => <Input id={fid} value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} />}
-          </Field>
-        )}
+        </div>
 
         <section className="t-stack">
           <div className="section-head">
@@ -345,11 +400,10 @@ function Editor({
             />
           ) : (
             <div className="capture-bar">
-              <Button icon="camera" onClick={() => camera.current?.click()} disabled={!draft.projectId}>Camera</Button>
-              <Button icon="image" onClick={() => gallery.current?.click()} disabled={!draft.projectId}>Photo / video</Button>
-              {canRecordVoice() && <Button icon="mic" onClick={() => setRecording('voice')} disabled={!draft.projectId}>Voice</Button>}
-              {canRecordScreen() && <Button icon="screen" onClick={() => setRecording('screen')} disabled={!draft.projectId}>Record screen</Button>}
-              {!draft.projectId && <span className="t-subtle">Pick a project first.</span>}
+              <Button icon="camera" onClick={() => camera.current?.click()}>Camera</Button>
+              <Button icon="image" onClick={() => gallery.current?.click()}>Photo / video</Button>
+              {canRecordVoice() && <Button icon="mic" onClick={() => setRecording('voice')}>Voice</Button>}
+              {canRecordScreen() && <Button icon="screen" onClick={() => setRecording('screen')}>Record screen</Button>}
             </div>
           )}
           <input ref={camera} type="file" accept="image/*,video/*" capture="environment" hidden onChange={(e) => { void addFiles([...(e.target.files ?? [])]); e.target.value = ''; }} />
@@ -377,7 +431,7 @@ function Editor({
               <div className="t-card t-card--pad"><Markdown source={base.triage} /></div>
             ) : (
               <Alert icon="bot">
-                No tasks yet. In Claude Code or claude.ai say <em>“process the bug reports for {base.projectId}”</em> — the agent reads the text, looks at the photos and video frames, and writes the analysis and tasks here.
+                No triage yet. In Claude Code or claude.ai say <em>“process the reports{base.projectId ? ` for ${base.projectId}` : ''}”</em> — Claude reads the text and the transcripts, looks at the photos and video frames, and writes the tasks here (for a recording: a summary, the decisions and the tasks).
               </Alert>
             )}
           </section>

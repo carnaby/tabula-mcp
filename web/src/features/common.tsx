@@ -96,7 +96,7 @@ export function TimeAgo({ iso }: { iso: string }) {
 }
 
 export function ProjectSelect({
-  projects, value, onChange, allowAll, placeholder, size, id,
+  projects, value, onChange, allowAll, placeholder, noProject, size, id,
 }: {
   projects: Project[] | undefined;
   value: string;
@@ -104,6 +104,8 @@ export function ProjectSelect({
   allowAll?: boolean;
   /** An empty first option ("Pick a project…") for a value that is not chosen yet. */
   placeholder?: boolean;
+  /** A "No project" option with this value (reports: '' in the form, 'none' in the list filter). */
+  noProject?: string;
   size?: 'sm';
   id?: string;
 }) {
@@ -120,6 +122,7 @@ export function ProjectSelect({
       options={[
         ...(allowAll ? [{ value: '', label: 'All projects' }] : []),
         ...(placeholder ? [{ value: '', label: 'Pick a project…' }] : []),
+        ...(noProject !== undefined ? [{ value: noProject, label: 'No project' }] : []),
         ...sorted.map((p) => ({ value: p.id, label: p.id === 'global' ? 'Global' : p.id })),
       ]}
     />

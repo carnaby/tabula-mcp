@@ -20,7 +20,7 @@ export const MEDIA_GONE = 'the recording was deleted before it was transcribed';
 
 export type Job = typeof reportJobs.$inferSelect;
 type Attachment = typeof reportAttachments.$inferSelect;
-export type ClaimedJob = { job: Job; attachment: Attachment; report: { id: string; projectId: string; title: string } };
+export type ClaimedJob = { job: Job; attachment: Attachment; report: { id: string; projectId: string | null; title: string } };
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 
 /** Video and audio are transcribed; photos and frames are not. */
@@ -283,7 +283,7 @@ export async function transcribeAgain(db: Db, attachmentId: string, now = new Da
 }
 
 /** Recordings deleted before the worker got to them: their jobs fail with the reason instead of waiting forever. */
-export async function failPendingJobs(db: Db, attachmentIds: string[], now = new Date()): Promise<void> {
+export async function failPendingJobs(db: Pick<Db, 'update'>, attachmentIds: string[], now = new Date()): Promise<void> {
   if (!attachmentIds.length) return;
   await db
     .update(reportJobs)

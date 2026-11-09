@@ -6,6 +6,7 @@ import {
   addAttachment, type Attachment, CLOSED_REPORT, createReport, deleteAttachment, deleteReport, frameAt, listAttachments, openReportCounts,
   pageReports, parseTimestamp, REPORT_SORTS, REPORT_STATUSES, requireAttachment, requireReport, setFrameNote, updateReport,
 } from '../domain/reports.js';
+import { editSegmentAsUser, restoreSegment, SegmentChangedError } from '../domain/transcript-edits.js';
 import { isRecording, retryTranscription, transcribeAgain, transcriptionStatus, transcriptStates } from '../domain/jobs.js';
 import { setSpeakerNames, speakerNameSuggestions } from '../domain/speakers.js';
 import { MAX_PAGE_SIZE } from '../domain/paging.js';
@@ -18,6 +19,8 @@ const HUMAN = { source: 'human' as const, label: 'human' };
 /** Links handed to the UI stay valid for half a day. */
 const UI_LINK_TTL = 12 * 3600;
 
+/** A line of a recording's transcript: its position in the list the UI shows. */
+const segmentParams = z.object({ id: z.uuid(), index: z.string().regex(/^[0-9]+$/).transform(Number).pipe(z.number().int().max(Number.MAX_SAFE_INTEGER)) });
 const idParams = z.object({ id: z.uuid() });
 
 export const attachmentView = (a: Attachment, token: string, ttl = UI_LINK_TTL) => ({
@@ -72,14 +75,16 @@ export const reportRoutes: FastifyPluginAsync<MediaDeps> = async (app, { db, con
   app.get('/reports/counts', () => openReportCounts(db));
 
   app.post('/reports', async (req, reply) => {
-    const b = parse(z.object({ projectId: z.string(), title: z.string().optional(), body: z.string().optional() }), req.body);
+    // Every field is optional: an empty body creates a report titled with the date and time.
+    const b = parse(z.object({ projectId: z.string().nullish(), title: z.string().optional(), body: z.string().optional() }), req.body ?? {});
     return reply.code(201).send(await createReport(db, b, HUMAN));
   });
 
   app.get('/reports/:id', async (req) => {
     const { id } = parse(idParams, req.params);
     const report = await requireReport(db, id);
-    return { ...report, attachments: await withTranscripts(db, await listAttachments(db, id), token) };
+    // purgeAfterHours: the UI warns before Keep media is turned off on a report whose grace period is over.
+    return { ...report, attachments: await withTranscripts(db, await listAttachments(db, id), token), purgeAfterHours: config.media.purgeAfterHours };
   });
 
   app.patch('/reports/:id', (req) => {
@@ -90,7 +95,8 @@ export const reportRoutes: FastifyPluginAsync<MediaDeps> = async (app, { db, con
         body: z.string().optional(),
         triage: z.string().optional(),
         status: z.enum(REPORT_STATUSES).optional(),
-        projectId: z.string().optional(),
+        projectId: z.string().nullable().optional(),
+        keepMedia: z.boolean().optional(),
         expectedVersion: z.number().int().positive().optional(),
       }),
       req.body,
@@ -148,6 +154,35 @@ export const reportRoutes: FastifyPluginAsync<MediaDeps> = async (app, { db, con
     const { id } = parse(idParams, req.params);
     await transcribeAgain(db, id);
     return (await transcriptStates(db, [id])).get(id) ?? { status: 'none' };
+  });
+
+  /** The user's correction of one transcript line; 409 with the current line when it changed since the user saw it. */
+  app.patch('/attachments/:id/segments/:index', async (req, reply) => {
+    const { id, index } = parse(segmentParams, req.params);
+    const b = parse(
+      z.object({
+        text: z.string().optional(),
+        speaker: z.string().max(10).optional(),
+        expected: z.object({ text: z.string(), speaker: z.string().nullable().optional() }),
+      }),
+      req.body,
+    );
+    await requireAttachment(db, id);
+    try {
+      await editSegmentAsUser(db, id, index, b);
+    } catch (e) {
+      if (e instanceof SegmentChangedError) return reply.code(409).send({ error: e.code, message: e.message, current: e.current });
+      throw e;
+    }
+    return (await transcriptStates(db, [id])).get(id);
+  });
+
+  /** "Restore original": the worker's text and speaker of one line. */
+  app.post('/attachments/:id/segments/:index/restore', async (req) => {
+    const { id, index } = parse(segmentParams, req.params);
+    await requireAttachment(db, id);
+    await restoreSegment(db, id, index);
+    return (await transcriptStates(db, [id])).get(id);
   });
 
   /** When the worker was last seen and how many recordings of open reports wait. */

@@ -1,5 +1,5 @@
 import { refOf } from '@tabula/shared/refs';
-import { and, asc, desc, eq, gt, inArray, isNull } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNull, ne } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { projectFiles, reportAttachments, reportJobs, reports, reportTranscripts } from '../db/schema.js';
 import type { TrimStep } from './digest.js';
@@ -53,13 +53,20 @@ export type DashboardProject = {
   recall_tokens: number;
 };
 
-export type Dashboard = { waiting: WaitingItem[]; warnings: DashboardWarning[]; projects: DashboardProject[]; recall_budget: number };
+export type Dashboard = {
+  waiting: WaitingItem[];
+  warnings: DashboardWarning[];
+  projects: DashboardProject[];
+  recall_budget: number;
+  /** False on a server without a worker token: recordings are queued but nothing will transcribe them. */
+  transcription_enabled: boolean;
+};
 
 const OPEN = ['new', 'triaged'] as const;
 const RANK: Record<WaitingTranscript, number> = { done: 1, failed: 2, queued: 3, running: 4 };
 
 /** What the Home page shows besides the timeline. */
-export async function dashboard(db: Db, now = new Date()): Promise<Dashboard> {
+export async function dashboard(db: Db, now = new Date(), { workerEnabled = true }: { workerEnabled?: boolean } = {}): Promise<Dashboard> {
   const [open, recordings, large, projectList, openCounts] = await Promise.all([
     db
       .select({
@@ -83,7 +90,8 @@ export async function dashboard(db: Db, now = new Date()): Promise<Dashboard> {
     db
       .select({ id: projectFiles.id, projectId: projectFiles.projectId, path: projectFiles.path, size: projectFiles.size })
       .from(projectFiles)
-      .where(and(isNull(projectFiles.deletedAt), gt(projectFiles.size, LARGE_FILE_BYTES)))
+      // `global` is left out like everywhere on Home: the web has no file view for it.
+      .where(and(isNull(projectFiles.deletedAt), ne(projectFiles.projectId, 'global'), gt(projectFiles.size, LARGE_FILE_BYTES)))
       .orderBy(desc(projectFiles.size), asc(projectFiles.projectId), asc(projectFiles.path)),
     listProjects(db),
     openReportCounts(db),
@@ -129,7 +137,8 @@ export async function dashboard(db: Db, now = new Date()): Promise<Dashboard> {
   const warnings: DashboardWarning[] = [];
   const cutoff = now.getTime() - RECORDING_WAIT_MS;
   const stuck = recordings.filter((a) => a.job === 'queued' && !a.purgedAt && a.runAfter !== null && a.runAfter.getTime() < cutoff);
-  if (stuck.length) {
+  // Without a worker nothing is expected to transcribe: a waiting recording is no alarm.
+  if (workerEnabled && stuck.length) {
     const oldest = Math.min(...stuck.map((a) => a.runAfter!.getTime()));
     warnings.push({ type: 'recordings_waiting', project: null, count: stuck.length, oldest: new Date(oldest).toISOString() });
   }
@@ -149,5 +158,6 @@ export async function dashboard(db: Db, now = new Date()): Promise<Dashboard> {
       recall_tokens: digests.get(p.id)?.tokens ?? 0,
     })),
     recall_budget: DIGEST_BUDGET,
+    transcription_enabled: workerEnabled,
   };
 }

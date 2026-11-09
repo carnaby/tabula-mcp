@@ -25,8 +25,8 @@ const TRANSCRIPT: Record<WaitingTranscript, { tone: BadgeTone; label: string }> 
 
 /** Reports that wait for the user, oldest first, with what can be done about them right here. */
 export function WaitingBlock({
-  dashboard, projects, onChanged,
-}: { dashboard: Dashboard | undefined; projects: Project[] | undefined; onChanged: () => void }) {
+  dashboard, failed, projects, onChanged,
+}: { dashboard: Dashboard | undefined; failed?: boolean; projects: Project[] | undefined; onChanged: () => void }) {
   const prompt = useQuery((s) => api.copyPrompt(s), []);
   const [editing, setEditing] = useState(false);
   // Until the saved text has loaded there is none: copying or editing the default would be the wrong text.
@@ -43,7 +43,7 @@ export function WaitingBlock({
         <IconButton size="sm" icon="gear" label="Copy for Claude text" disabled={text === undefined} onClick={() => setEditing(true)} />
       </div>
       {!dashboard ? (
-        <div className="t-stack">{[0, 1].map((i) => <Skeleton key={i} height={52} />)}</div>
+        failed ? <p className="home-block__empty">Could not load.</p> : <div className="t-stack">{[0, 1].map((i) => <Skeleton key={i} height={52} />)}</div>
       ) : !items?.length ? (
         <p className="home-block__empty">Nothing waits for you.</p>
       ) : (
@@ -54,6 +54,7 @@ export function WaitingBlock({
               item={w}
               prompt={text}
               purgeAfterHours={dashboard.purge_after_hours}
+              transcriptionEnabled={dashboard.transcription_enabled}
               projects={projects}
               onChanged={onChanged}
             />
@@ -74,8 +75,9 @@ export function WaitingBlock({
 }
 
 function WaitingRow({
-  item: w, prompt, purgeAfterHours, projects, onChanged,
-}: { item: WaitingItem; prompt: string | undefined; purgeAfterHours: number; projects: Project[] | undefined; onChanged: () => void }) {
+  item: w, prompt, purgeAfterHours, transcriptionEnabled, projects, onChanged,
+}: {
+  item: WaitingItem; prompt: string | undefined; purgeAfterHours: number; transcriptionEnabled: boolean; projects: Project[] | undefined; onChanged: () => void }) {
   const notify = useToast();
   const { confirm } = useConfirm();
   const [busy, setBusy] = useState(false);
@@ -131,7 +133,11 @@ function WaitingRow({
         <div className="waiting-row__meta">
           <span className="waiting-row__kind">{kind.label}</span>
           <ProjectTag id={w.project} projects={projects} />
-          {w.type === 'new_report' && w.transcript && <Badge tone={TRANSCRIPT[w.transcript].tone}>{TRANSCRIPT[w.transcript].label}</Badge>}
+          {w.type === 'new_report' && w.transcript && (
+            w.transcript === 'queued' && !transcriptionEnabled
+              ? <Badge tone="neutral">Transcription not enabled</Badge>
+              : <Badge tone={TRANSCRIPT[w.transcript].tone}>{TRANSCRIPT[w.transcript].label}</Badge>
+          )}
           {w.type === 'transcription_failed' && <span className="t-subtle t-truncate" title={w.error ?? undefined}>{w.file_name}</span>}
           <time className="t-subtle t-nowrap" dateTime={w.since} title={fullDate(w.since)}>{age(w.since)}</time>
         </div>

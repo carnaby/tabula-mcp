@@ -164,6 +164,23 @@ describe('dashboard: warnings', () => {
     ]);
   });
 
+  it('has no recordings warning on a server without a worker, and says so', async () => {
+    await seedProject(db, 'demo');
+    const r = await report({ title: 'Meeting', created: ago(60) });
+    await recording(r.id, { job: { status: 'queued', runAfter: ago(25) } });
+    const off = await dashboard(db, new Date(), { workerEnabled: false });
+    expect(off.warnings.filter((w) => w.type === 'recordings_waiting')).toEqual([]);
+    expect(off.transcription_enabled).toBe(false);
+    const on = await dashboard(db);
+    expect(on.warnings.filter((w) => w.type === 'recordings_waiting')).toHaveLength(1);
+    expect(on.transcription_enabled).toBe(true);
+  });
+
+  it('does not warn about a large file of global: the web has no file view for it', async () => {
+    await putFile(db, 'global', { path: 'rules/big.md', content: 'a'.repeat(LARGE_FILE_BYTES + 1), baseSha256: null }, 'cli');
+    expect((await dashboard(db)).warnings.filter((w) => w.type === 'large_file')).toEqual([]);
+  });
+
   it('does not warn about a purged recording that waited more than 24 hours: the worker skips it', async () => {
     await seedProject(db, 'demo');
     const r = await report({ title: 'Meeting', created: ago(60) });

@@ -19,12 +19,12 @@ export function HomePage({ projects }: { projects: Project[] | undefined }) {
       {dash.error && <Alert tone="danger">{dash.error.message}</Alert>}
       <div className="home">
         <div className="home__main">
-          <WaitingBlock dashboard={dash.data} projects={projects} onChanged={dash.reload} />
+          <WaitingBlock dashboard={dash.data} failed={!!dash.error} projects={projects} onChanged={dash.reload} />
           <ActivityBlock projects={projects} />
         </div>
         <div className="home__side">
           {dash.data && <WarningsBlock warnings={dash.data.warnings} projects={projects} />}
-          <ProjectsBlock dashboard={dash.data} />
+          <ProjectsBlock dashboard={dash.data} failed={!!dash.error} />
         </div>
       </div>
     </main>

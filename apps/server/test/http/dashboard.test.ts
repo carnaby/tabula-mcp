@@ -30,6 +30,17 @@ describe('GET /api/dashboard', () => {
     expect(body.projects).toEqual([expect.objectContaining({ id: 'demo', name: 'demo', file_count: 0, open_reports: 1 })]);
   });
 
+  it('says whether transcription is enabled: it is not without a worker token', async () => {
+    expect((await call('GET', '/api/dashboard')).json().transcription_enabled).toBe(true);
+    const bare = await buildApp({ config: testConfig({ workerToken: undefined }), db });
+    try {
+      const res = await bare.inject({ method: 'GET', url: '/api/dashboard', headers: as(TEST_TOKEN) });
+      expect(res.json().transcription_enabled).toBe(false);
+    } finally {
+      await bare.close();
+    }
+  });
+
   it('refuses a stale Mark done: the report changed after the dashboard was read', async () => {
     await seedProject(db, 'demo');
     const created = (await call('POST', '/api/reports', { projectId: 'demo', title: 'Player freezes' })).json();

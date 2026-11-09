@@ -11,14 +11,14 @@ const active = (iso: string) => {
 };
 
 /** The projects by last activity, with their files, open reports and how full their recall is. */
-export function ProjectsBlock({ dashboard }: { dashboard: Dashboard | undefined }) {
+export function ProjectsBlock({ dashboard, failed }: { dashboard: Dashboard | undefined; failed?: boolean }) {
   return (
     <section className="t-card home-block home-block--projects" aria-labelledby="home-projects">
       <div className="home-block__head">
         <h2 id="home-projects">Projects</h2>
       </div>
       {!dashboard ? (
-        <Skeleton height={120} />
+        failed ? <p className="home-block__empty">Could not load.</p> : <Skeleton height={120} />
       ) : dashboard.projects.length === 0 ? (
         <p className="home-block__empty">No projects yet.</p>
       ) : (

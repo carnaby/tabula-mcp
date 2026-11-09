@@ -20,7 +20,7 @@ const BEFORE_FORMAT = 'must be an ISO 8601 date and time with Z or an offset (e.
  */
 export const homeRoutes: FastifyPluginAsync<{ db: Db; config: Config }> = async (app, { db, config }) => {
   // purge_after_hours: Mark done shows the same confirmation as the report page.
-  app.get('/dashboard', async () => ({ ...(await dashboard(db)), purge_after_hours: config.media.purgeAfterHours }));
+  app.get('/dashboard', async () => ({ ...(await dashboard(db, new Date(), { workerEnabled: !!config.workerToken })), purge_after_hours: config.media.purgeAfterHours }));
 
   // The timeline: 14 days before `before` (default now) in the browser's time zone.
   app.get('/activity', (req) => {

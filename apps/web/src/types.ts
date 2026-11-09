@@ -216,6 +216,8 @@ export type Dashboard = {
   warnings: DashboardWarning[];
   projects: DashboardProject[];
   recall_budget: number;
+  /** False when the server has no worker token: recordings stay queued by design. */
+  transcription_enabled: boolean;
   /** TABULA_MEDIA_PURGE_HOURS, for the Mark done confirmation. */
   purge_after_hours: number;
 };

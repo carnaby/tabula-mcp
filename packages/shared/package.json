@@ -9,7 +9,8 @@
     "./refs": { "types": "./dist/refs.d.ts", "default": "./dist/refs.js" },
     "./file-groups": { "types": "./dist/file-groups.d.ts", "default": "./dist/file-groups.js" },
     "./report-title": { "types": "./dist/report-title.d.ts", "default": "./dist/report-title.js" },
-    "./copy-prompt": { "types": "./dist/copy-prompt.d.ts", "default": "./dist/copy-prompt.js" }
+    "./copy-prompt": { "types": "./dist/copy-prompt.d.ts", "default": "./dist/copy-prompt.js" },
+    "./activity": { "types": "./dist/activity.d.ts", "default": "./dist/activity.js" }
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

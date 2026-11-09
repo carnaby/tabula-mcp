@@ -1,3 +1,4 @@
+import { ACTIVITY_DAYS } from '@tabula/shared/activity';
 import { refOf } from '@tabula/shared/refs';
 import { and, eq, gte, isNull, lt, or, sql } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
@@ -9,8 +10,6 @@ import { badRequest } from './errors.js';
 
 export const ACTIVITY_TYPES = ['files', 'reports', 'thoughts', 'notes'] as const;
 export type ActivityType = (typeof ACTIVITY_TYPES)[number];
-/** Days per page of the timeline. */
-export const ACTIVITY_DAYS = 14;
 /** File versions of one project and author whose neighbours are at most this far apart make one row. */
 export const FILE_BATCH_GAP_MS = 5 * 60_000;
 /** Changes of one record by one author within this time of the group's first change make one row. */

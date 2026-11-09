@@ -1,3 +1,4 @@
+import { ACTIVITY_DAYS } from '@tabula/shared/activity';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../../api';
 import { fullDate } from '../../format';
@@ -19,8 +20,6 @@ const FILTERS: { value: Filter; label: string }[] = [
 ];
 /** The browser's time zone: the server cuts the days where the user's days begin. */
 const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
-/** Days per page (the server's ACTIVITY_DAYS). */
-const PAGE_DAYS = 14;
 /** One Show more goes through at most this many pages (about half a year) when they are empty. */
 const MAX_PAGES_PER_CLICK = 12;
 
@@ -51,15 +50,38 @@ function targetOf(it: ActivityItem): string {
   }
 }
 
-/** The pages' days in order; a day split by a page border (the first page moved past midnight) is joined. */
+/** Identifies a row for the merge of overlapping pages. */
+const sameRow = (it: ActivityItem) => `${it.type}:${it.ref}:${it.id}:${it.attachment_id ?? ''}:${it.action}:${it.at}`;
+
+/**
+ * The pages' days in order. Pages loaded earlier can overlap the first page (it moves with the clock, the
+ * older pages do not), so a day found twice becomes one heading and a row found twice one row.
+ */
 function joinDays(pages: ActivityPage[]): ActivityDay[] {
-  const out: ActivityDay[] = [];
+  const byDate = new Map<string, ActivityItem[]>();
   for (const day of pages.flatMap((p) => p.days)) {
-    const prev = out[out.length - 1];
-    if (prev?.date === day.date) out[out.length - 1] = { date: day.date, items: [...prev.items, ...day.items] };
-    else out.push(day);
+    const items = byDate.get(day.date) ?? [];
+    const seen = new Set(items.map(sameRow));
+    byDate.set(day.date, [...items, ...day.items.filter((it) => !seen.has(sameRow(it)))]);
   }
-  return out;
+  return [...byDate].map(([date, items]) => ({ date, items: items.sort((x, y) => y.at.localeCompare(x.at)) }));
+}
+
+/**
+ * React keys for one day's rows that survive a refresh: a batch of files is known by its oldest file (it grows
+ * at the top), any other row by its record and label. Rows alike get a number counted from the oldest.
+ */
+function rowKeys(items: ActivityItem[]): string[] {
+  const used = new Map<string, number>();
+  const keys = items.map(() => '');
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i]!;
+    const base = it.children?.length ? `batch:${it.project}:${it.by}:${it.children[it.children.length - 1]!.id}` : `${it.type}:${it.id}:${it.attachment_id ?? ''}:${it.action}`;
+    const n = used.get(base) ?? 0;
+    used.set(base, n + 1);
+    keys[i] = `${base}:${n}`;
+  }
+  return keys;
 }
 
 /** The timeline by day: 14 days, Show more for 14 older ones, a filter by type. */
@@ -68,17 +90,16 @@ export function ActivityBlock({ projects }: { projects: Project[] | undefined })
   const type = filter === 'all' ? undefined : filter;
   const first = useQuery((s) => api.activity({ type, tz: TZ }, s), [type], { topics: ['reports', 'files', 'notes', 'thoughts'] });
   useInterval(first.reload, REFRESH_MS);
-  // Older pages from Show more; they belong to the first page whose next_before they continue.
-  const [older, setOlder] = useState<{ after: string; pages: ActivityPage[] } | null>(null);
+  // Pages loaded with Show more stay across refreshes; only another filter drops them.
+  const [older, setOlder] = useState<{ filter: Filter; pages: ActivityPage[] }>({ filter: 'all', pages: [] });
   const [loadingMore, setLoadingMore] = useState(false);
   const [moreError, setMoreError] = useState<string | null>(null);
   const filterRef = useRef(filter);
   filterRef.current = filter;
   useEffect(() => {
-    setOlder(null);
+    setOlder({ filter, pages: [] });
     setMoreError(null);
   }, [filter]);
-
   // Fade only while a newly chosen filter's first page loads, never on a refresh.
   const [shown, setShown] = useState<Filter>('all');
   useEffect(() => {
@@ -88,19 +109,22 @@ export function ActivityBlock({ projects }: { projects: Project[] | undefined })
   const switching = first.loading && shown !== filter;
 
   const head = first.data;
-  const pages = head ? [head, ...(older && older.after === head.next_before ? older.pages : [])] : [];
+  const loaded = older.filter === shown ? older.pages : [];
+  const pages = head ? [head, ...loaded] : [];
   const last = pages[pages.length - 1];
   const days = joinDays(pages);
 
   const showMore = async () => {
-    const after = head?.next_before;
     let before = last?.next_before ?? null;
-    if (!after || !before) return;
+    if (!before) return;
     const asked = filter;
     setLoadingMore(true);
     setMoreError(null);
+    const got: ActivityPage[] = [];
+    const keep = () => {
+      if (got.length && filterRef.current === asked) setOlder((o) => ({ filter: asked, pages: [...(o.filter === asked ? o.pages : []), ...got] }));
+    };
     try {
-      const got: ActivityPage[] = [];
       // A quiet stretch gives empty pages: go on until something shows up or nothing older is left.
       while (before && got.length < MAX_PAGES_PER_CLICK) {
         const page = await api.activity({ type: asked === 'all' ? undefined : asked, tz: TZ, before });
@@ -108,10 +132,11 @@ export function ActivityBlock({ projects }: { projects: Project[] | undefined })
         if (page.days.length) break;
         before = page.next_before;
       }
-      if (filterRef.current !== asked) return;
-      setOlder((o) => ({ after, pages: [...(o && o.after === after ? o.pages : []), ...got] }));
+      keep();
     } catch (e) {
-      setMoreError((e as Error).message);
+      // The pages fetched before the failure stay, so a retry goes on from them.
+      keep();
+      if (filterRef.current === asked) setMoreError((e as Error).message);
     } finally {
       setLoadingMore(false);
     }
@@ -128,18 +153,21 @@ export function ActivityBlock({ projects }: { projects: Project[] | undefined })
         <div className="t-stack">{[0, 1, 2].map((i) => <Skeleton key={i} height={40} />)}</div>
       ) : (
         <div className="activity" style={{ opacity: switching ? 0.6 : 1 }}>
-          {days.length === 0 && <p className="home-block__empty">No activity in the last {PAGE_DAYS * pages.length} days.</p>}
+          {days.length === 0 && <p className="home-block__empty">No activity in the last {ACTIVITY_DAYS * pages.length} days.</p>}
           {days.map((d) => (
             <div key={d.date} className="activity-day">
               <h3 className="activity-day__label">{dayLabel(d.date)}</h3>
               <ul className="activity-list">
-                {d.items.map((it) => <ActivityRow key={`${it.type}:${it.ref}:${it.at}:${it.action}`} item={it} projects={projects} />)}
+                {(() => {
+                  const keys = rowKeys(d.items);
+                  return d.items.map((it, i) => <ActivityRow key={keys[i]} item={it} projects={projects} />);
+                })()}
               </ul>
             </div>
           ))}
           {moreError && <Alert tone="danger">{moreError}</Alert>}
           {last?.next_before && (
-            <Button className="activity-more" loading={loadingMore} onClick={() => void showMore()}>Show more</Button>
+            <Button className="activity-more" loading={loadingMore} disabled={switching} onClick={() => void showMore()}>Show more</Button>
           )}
         </div>
       )}

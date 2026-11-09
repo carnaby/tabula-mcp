@@ -407,7 +407,7 @@ Any client that speaks Streamable HTTP with the classic `initialize` handshake (
 | `HOST` | no | `0.0.0.0` | Interface to bind |
 | `WEB_DIST` | no | `web/dist` | Path to the UI build (in the image `/app/web/dist`; for `pnpm dev` see `.env.example`) |
 | `LOG_LEVEL` | no | `info` | `debug`, `info`, `warn` or `error` |
-| `TABULA_MEDIA_DIR` | no | `data/media` (`/data/media` in the image) | Where report attachments are stored; mount a volume there (writable by uid 1000 in the image) and back it up with the database |
+| `TABULA_MEDIA_DIR` | no | `data/media` (`/data/media` in the image; for `pnpm dev` see `.env.example`: the server runs from `apps/server`) | Where report attachments are stored; mount a volume there (writable by uid 1000 in the image) and back it up with the database |
 | `TABULA_MEDIA_MAX_MB` | no | `1024` | Largest accepted upload (a reverse proxy in front needs a body limit at least this big) |
 | `TABULA_MEDIA_PURGE_HOURS` | no | `24` | Video and audio of a closed report are deleted this many hours after closing (`0` = at the next check, every 15 minutes), unless the report has *Keep media* on |
 | `FFMPEG_PATH` / `FFPROBE_PATH` | no | `ffmpeg` / `ffprobe` | Used for video frames, image previews for agents and durations; included in the Docker image |
@@ -428,6 +428,8 @@ pnpm dev:server             # only the server
 pnpm dev:web                # only the UI; proxies /api to TABULA_API (default http://localhost:3000)
 ```
 
+Nx passes the root `.env` to every task (dev, build, test) and expands `$` in its values; the tests do not depend on it.
+
 A `502 Bad Gateway` on `/api` in the browser means the server isn't running — usually because the database isn't. After changing `packages/shared`, restart `pnpm dev` (the server and the UI use its build).
 
 ```bash
@@ -437,7 +439,7 @@ TEST_DATABASE_URL=postgres://… pnpm test   # or use an existing throwaway data
 pnpm build                  # shared, server and UI (the tray builds on its own, below)
 pnpm affected               # typecheck, test and build only what changed against main
 pnpm graph                  # the project graph in the browser
-pnpm --filter @tabula/server exec vitest run test/unit/digest.test.ts   # one test file
+pnpm --filter @tabula/server exec vitest run test/unit/digest.test.ts   # one test file (run `pnpm build` once on a fresh clone: shared must be built first)
 pnpm db:generate --name <name>                                          # a new migration in apps/server/drizzle
 ```
 

@@ -5,7 +5,7 @@ import { CLI_FILE, DIARIZE_FILE, TRANSCRIBE_FILE } from '../cli-package.js';
 /** The single source of the CLI version is its VERSION line, so the served file and /cli/version cannot drift. */
 export function readCliVersion(source: string): string {
   const m = /^export const VERSION = '([^']+)';\r?$/m.exec(source);
-  if (!m) throw new Error('cli/tabula.mjs has no VERSION constant');
+  if (!m) throw new Error('apps/cli/tabula.mjs has no VERSION constant');
   return m[1]!;
 }
 

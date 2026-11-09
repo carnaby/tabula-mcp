@@ -1,4 +1,4 @@
-// Stands in for cli/diarize.py in the worker tests (run by node). FAKE_DIARIZE: ok (default) | fail | env | garbage | slow.
+// Stands in for apps/cli/diarize.py in the worker tests (run by node). FAKE_DIARIZE: ok (default) | fail | env | garbage | slow.
 // --check answers like the real script: FAKE_DIARIZE_CUDA=0 no CUDA, FAKE_DIARIZE_TOKEN=0 no saved token,
 // FAKE_DIARIZE_CACHED=0 the model not downloaded. --load offline (HF_HUB_OFFLINE=1) fails (exit 4) with
 // FAKE_DIARIZE_COMPLETE=0 (a cache that holds only part of the model), online with FAKE_DIARIZE_TOKEN=0.

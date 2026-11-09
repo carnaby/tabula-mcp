@@ -6,3 +6,5 @@ dist/
 .env
 .env.compose
 apps/cli/__pycache__/
+data/
+.claude/

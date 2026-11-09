@@ -10,7 +10,7 @@
     "db:dev": "docker start tabula-dev-db || docker run -d --name tabula-dev-db -e POSTGRES_DB=tabula -e POSTGRES_USER=tabula -e POSTGRES_PASSWORD=change-me -p 5432:5432 -v tabula-dev-pg17:/var/lib/postgresql/data postgres:17-alpine",
     "build": "nx run-many -t build --output-style=static",
     "typecheck": "nx run-many -t typecheck --output-style=static",
-    "test": "nx run-many -t test --parallel=1 --output-style=static",
+    "test": "nx run-many -t test --parallel=1 --output-style=stream",
     "affected": "nx affected -t typecheck test build --parallel=1 --output-style=static",
     "graph": "nx graph",
     "db:generate": "pnpm --filter @tabula/server db:generate"

@@ -1,5 +1,5 @@
 //! Where the tray finds Node.js and the tabula command: `<data>/tray.json`, optional. `<data>` is the worker's data
-//! folder, the same as the CLI's (`dataHome` in cli/tabula.mjs); the worker writes worker.log there.
+//! folder, the same as the CLI's (`dataHome` in apps/cli/tabula.mjs); the worker writes worker.log there.
 
 use std::path::{Path, PathBuf};
 

@@ -4,9 +4,9 @@ on:
     branches: [main]
     # Path filters are not applied to tag pushes: a tray-v* tag always builds and releases.
     tags: ['tray-v*']
-    paths: ['apps/tray/**', 'apps/web/src/ui/tokens.css', 'pnpm-lock.yaml', '.github/workflows/tray.yml']
+    paths: ['apps/tray/**', 'tsconfig.base.json', 'pnpm-workspace.yaml', 'package.json', 'apps/web/src/ui/tokens.css', 'pnpm-lock.yaml', '.github/workflows/tray.yml']
   pull_request:
-    paths: ['apps/tray/**', 'apps/web/src/ui/tokens.css', 'pnpm-lock.yaml', '.github/workflows/tray.yml']
+    paths: ['apps/tray/**', 'tsconfig.base.json', 'pnpm-workspace.yaml', 'package.json', 'apps/web/src/ui/tokens.css', 'pnpm-lock.yaml', '.github/workflows/tray.yml']
   workflow_dispatch:
 
 permissions: { contents: read }

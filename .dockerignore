@@ -8,3 +8,5 @@ apps/tray
 .env
 .env.*
 !.env.example
+**/data
+.claude

@@ -1,4 +1,4 @@
-// Stands in for cli/transcribe.py in the worker tests (run by node). FAKE_TRANSCRIBE: ok (default) | fail | noisy | env | slow.
+// Stands in for apps/cli/transcribe.py in the worker tests (run by node). FAKE_TRANSCRIBE: ok (default) | fail | noisy | env | slow.
 // --check answers like the real script; FAKE_TRANSCRIBE_CUDA=0 reports no CUDA device. FAKE_TRANSCRIBE_LOG gets the
 // options of every run as one JSON line.
 import { appendFileSync, existsSync } from 'node:fs';

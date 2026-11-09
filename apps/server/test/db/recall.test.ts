@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { deleteFile, putFile, setStatePaths } from '../../src/domain/files.js';
 import { createMemory, deprecateMemory } from '../../src/domain/memories.js';
 import { createNote } from '../../src/domain/notes.js';
-import { recall } from '../../src/domain/recall.js';
+import { recall, recallDigests } from '../../src/domain/recall.js';
 import { seedProject, useTestDb } from '../helpers.js';
 
 const db = useTestDb();
@@ -39,6 +39,24 @@ describe('recall', () => {
     const lean = await recall(db, 'alpha', { includeState: false });
     expect(lean.text).not.toContain('Next: ship it');
     expect(lean.text).toMatch(/^docs\/handoff\/ — state\.md \(\d{2}-\d{2}, 13 B, state\)$/m);
+  });
+
+  it('builds the same digest for many projects at once as recall() does for one', async () => {
+    await seedProject(db, 'alpha');
+    await seedProject(db, 'beta');
+    await rule('global', 'Global rule');
+    await file('alpha', 'docs/handoff/state.md', 'Next: ship it');
+    await file('alpha', 'docs/plan.md', 'plan');
+    await file('alpha', 'docs/gone.md', 'gone');
+    await deleteFile(db, 'alpha', 'docs/gone.md');
+    await file('beta', 'docs/beta.md', 'beta');
+    await setStatePaths(db, 'alpha', ['docs/handoff/state.md']);
+
+    const now = new Date('2026-11-09T10:00:00Z');
+    const all = await recallDigests(db, ['alpha', 'beta', 'global'], now);
+    for (const id of ['alpha', 'beta', 'global']) expect(all.get(id)).toEqual(await recall(db, id, { now }));
+    expect(all.get('alpha')!.text).toContain('Next: ship it');
+    expect(all.get('alpha')!.text).not.toContain('gone.md');
   });
 
   it('fails for an unknown project', async () => {

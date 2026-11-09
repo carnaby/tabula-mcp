@@ -7,6 +7,7 @@ settings:
 overrides:
   '@esbuild-kit/core-utils>esbuild': ^0.25.0
   archiver-utils>glob: ^14.0.2
+  nx>minimatch: ^11.0.1
 
 importers:
 
@@ -1745,10 +1746,6 @@ packages:
   mimic-fn@2.1.0:
     resolution: {integrity: sha512-OqbOk5oEQeAZ8WXWydlu9HJjz9WVdEIvamMCcXmuqUYjTknH/sqsWvhQ3vgwKFRR1HpjvNBKQ37nbJgYzGqGcg==}
     engines: {node: '>=6'}
-
-  minimatch@10.2.5:
-    resolution: {integrity: sha512-MULkVLfKGYDFYejP07QOurDLLQpcjk7Fw+7jXS2R2czRQzR56yHRveU5NDJEOviH+hETZKSkIk5c+T23GjFUMg==}
-    engines: {node: 18 || 20 || >=22}
 
   minimatch@11.0.5:
     resolution: {integrity: sha512-snPlVppFcYWfLLFQGhDxUyBcHNtMlWmn3jtj7pEaO+DP8pqL0IvAzXhMYmn1z9ASNtgmwLBdFxSf4tMUB0OTKA==}
@@ -3496,10 +3493,6 @@ snapshots:
 
   mimic-fn@2.1.0: {}
 
-  minimatch@10.2.5:
-    dependencies:
-      brace-expansion: 5.0.12
-
   minimatch@11.0.5:
     dependencies:
       '@isaacs/nonrecursive-glob-match': 1.1.0
@@ -3584,7 +3577,7 @@ snapshots:
       lines-and-columns: 2.0.3
       log-symbols: 4.1.0
       mimic-fn: 2.1.0
-      minimatch: 10.2.5
+      minimatch: 11.0.5
       minimist: 1.2.8
       npm-run-path: 4.0.1
       once: 1.4.0

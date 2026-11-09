@@ -1841,18 +1841,31 @@ function runVisible(command, args, what) {
   if (r.status !== 0) throw new CliError(`${what} failed (exit ${r.status}); see the output above`);
 }
 
+/** Errors of a request that went out on a connection the server had already closed. */
+const STALE_SOCKET_CODES = new Set(['UND_ERR_SOCKET', 'UND_ERR_CLOSED', 'ECONNRESET', 'EPIPE']);
+
 /**
  * A script of cli/ (transcribe.py, diarize.py) into `dest`: copied from next to this file when it is there (a
  * repository checkout) and `preferLocal`, otherwise downloaded from the server.
  */
-async function fetchScript(url, name, dest, { preferLocal = true } = {}) {
+export async function fetchScript(url, name, dest, { preferLocal = true } = {}) {
   const sibling = join(dirname(realpathSync(fileURLToPath(import.meta.url))), name);
   let source;
   if (preferLocal && existsSync(sibling)) source = readFileSync(sibling);
   else {
+    // A keep-alive connection from an earlier request (the token check, minutes ago) may be closed by the server in
+    // the meantime: the request then dies on the dead socket. Try once more, on a fresh connection; a timeout, an
+    // HTTP status or any other failure is not retried.
+    const get = () => fetch(`${url}/cli/${name}`, { signal: AbortSignal.timeout(30000) });
     let res;
     try {
-      res = await fetch(`${url}/cli/${name}`, { signal: AbortSignal.timeout(30000) });
+      try {
+        res = await get();
+      } catch (e) {
+        if (!(e instanceof TypeError) || !STALE_SOCKET_CODES.has(e.cause?.code)) throw e;
+        await new Promise((r) => setTimeout(r, 500));
+        res = await get();
+      }
     } catch (e) {
       throw new CliError(`cannot reach ${url}: ${e.cause?.code ?? e.message}`);
     }

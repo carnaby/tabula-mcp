@@ -1,4 +1,4 @@
-import { refOf } from '../../../src/shared/refs';
+import { refOf } from '@tabula/shared/refs';
 import { copyText } from '../format';
 import { IconButton, useToast } from '../ui';
 

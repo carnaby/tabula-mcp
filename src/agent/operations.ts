@@ -23,7 +23,7 @@ import {
 import { clock, sliceLines, transcriptLines } from '../domain/transcripts.js';
 import { createThought, findThoughts, type Thought, type ThoughtHit, updateThought } from '../domain/thoughts.js';
 import { type MemoryKind, NO_PROJECT } from '../domain/validation.js';
-import { refOf } from '../shared/refs.js';
+import { refOf } from '@tabula/shared/refs';
 
 export type AgentMedia = {
   store: MediaStore;

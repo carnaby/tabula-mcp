@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { refOf, refQuery } from '../../src/shared/refs.js';
+import { refOf, refQuery } from '../src/refs.js';
 
 const ID = 'd86d86e7-1234-4000-8000-000000000000';
 

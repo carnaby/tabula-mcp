@@ -1,4 +1,4 @@
-import { REF_PREFIX } from '../shared/refs.js';
+import { REF_PREFIX } from '@tabula/shared/refs';
 import { badRequest } from './errors.js';
 
 /**

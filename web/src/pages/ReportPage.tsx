@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '../api';
-import { dateTitle } from '../../../src/shared/report-title';
+import { dateTitle } from '@tabula/shared/report-title';
 import { AuthorMeta, authorInfo, authorOf, ProjectSelect } from '../features/common';
 import { CopyRefButton } from '../features/CopyRefButton';
 import { EditorBar, SaveButton } from '../features/EditorBar';

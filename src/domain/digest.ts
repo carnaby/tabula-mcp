@@ -1,4 +1,4 @@
-import { groupFiles, ROOT_GROUP } from '../shared/file-groups.js';
+import { groupFiles, ROOT_GROUP } from '@tabula/shared/file-groups';
 import { shortIds } from './ids.js';
 import { DIGEST_BUDGET, estimateTokens } from './tokens.js';
 import type { MemoryKind } from './validation.js';

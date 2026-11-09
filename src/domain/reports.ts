@@ -7,7 +7,7 @@ import type { MediaStore, StoredFile } from '../media/store.js';
 import { badRequest, conflict, notFound, unavailable } from './errors.js';
 import { enqueueTranscription, failPendingJobs } from './jobs.js';
 import { matchesPrefix, type Page, type PageQuery, pageWindow, prefixTsQuery } from './paging.js';
-import { dateTitle } from '../shared/report-title.js';
+import { dateTitle } from '@tabula/shared/report-title';
 import { requireProject } from './projects.js';
 import { charCount, NO_PROJECT, rejectNul } from './validation.js';
 

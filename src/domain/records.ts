@@ -1,6 +1,6 @@
 import { sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
-import { REF_PREFIX, refOf } from '../shared/refs.js';
+import { REF_PREFIX, refOf } from '@tabula/shared/refs';
 import { DomainError, notFound } from './errors.js';
 import { getFileById, type ProjectFile } from './files.js';
 import { parseIdRef, shortIds } from './ids.js';

@@ -7,7 +7,7 @@ import type { ProjectFile } from '../types';
 import { Alert, Badge, type Column, DataTable, EmptyState, Icon, SearchInput, Switch } from '../ui';
 import { Author, authorOf, TimeAgo } from './common';
 import { CopyRefButton } from './CopyRefButton';
-import { type FileGroup, groupFiles, ROOT_GROUP } from '../../../src/shared/file-groups';
+import { type FileGroup, groupFiles, ROOT_GROUP } from '@tabula/shared/file-groups';
 import { ListToolbar } from './ListToolbar';
 
 type Row = FileGroup<ProjectFile>['files'][number];

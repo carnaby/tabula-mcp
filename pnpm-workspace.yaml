@@ -1,6 +1,11 @@
+packages:
+  - apps/*
+  - packages/*
+
 allowBuilds:
   cpu-features: true
   esbuild: true
+  nx: true
   protobufjs: true
   ssh2: true
 

@@ -6,7 +6,7 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { reportAttachments, reports } from '../../src/db/schema.js';
 import { createReport, openReportCounts, pageReports, purgeClosedMedia, updateReport } from '../../src/domain/reports.js';
-import { dateTitle } from '../../src/shared/report-title.js';
+import { dateTitle } from '@tabula/shared/report-title';
 import { MediaStore } from '../../src/media/store.js';
 import { seedProject, useTestDb } from '../helpers.js';
 

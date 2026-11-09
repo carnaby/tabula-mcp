@@ -1,4 +1,4 @@
-// References to Tabula records ("tabula:d86d86e7"). No imports: the web UI builds this file too.
+// References to Tabula records ("tabula:d86d86e7"). No imports: @tabula/shared stays dependency-free.
 
 export const REF_PREFIX = 'tabula:';
 

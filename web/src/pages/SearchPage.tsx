@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { REF_PREFIX, refQuery } from '../../../src/shared/refs';
+import { REF_PREFIX, refQuery } from '@tabula/shared/refs';
 import { api, ApiError } from '../api';
 import { Highlighted, KindBadge, TimeAgo } from '../features/common';
 import { MemoryDialog, type MemoryDialogState } from '../features/MemoryDialog';

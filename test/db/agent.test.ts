@@ -10,7 +10,7 @@ import { createMemory, getMemory, pageMemories } from '../../src/domain/memories
 import { createNote } from '../../src/domain/notes.js';
 import { setSyncConfig } from '../../src/domain/sync-config.js';
 import { createThought, HUMAN } from '../../src/domain/thoughts.js';
-import { refOf } from '../../src/shared/refs.js';
+import { refOf } from '@tabula/shared/refs';
 import { seedProject, useTestDb } from '../helpers.js';
 
 const db = useTestDb();

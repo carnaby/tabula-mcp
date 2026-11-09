@@ -7,7 +7,7 @@ import { createNote } from '../../src/domain/notes.js';
 import { AmbiguousRefError, refTarget, resolveRecord } from '../../src/domain/records.js';
 import { createReport, updateReport } from '../../src/domain/reports.js';
 import { createThought, HUMAN, updateThought } from '../../src/domain/thoughts.js';
-import { refOf } from '../../src/shared/refs.js';
+import { refOf } from '@tabula/shared/refs';
 import { seedProject, useTestDb } from '../helpers.js';
 
 const db = useTestDb();

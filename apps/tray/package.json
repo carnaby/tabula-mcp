@@ -1,11 +1,10 @@
 {
-  "name": "tabula-tray",
+  "name": "@tabula/tray",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
-  "description": "Tray app for tabula worker (Tauri 2). Not part of the server's workspace: it has its own lockfile.",
+  "description": "Tray app for tabula worker (Tauri 2).",
   "license": "MIT",
-  "packageManager": "pnpm@10.33.2",
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",
@@ -23,5 +22,6 @@
     "@tauri-apps/cli": "2.12.4",
     "typescript": "7.0.2",
     "vite": "8.3.6"
-  }
+  },
+  "nx": { "includedScripts": ["typecheck"] }
 }

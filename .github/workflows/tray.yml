@@ -4,9 +4,9 @@ on:
     branches: [main]
     # Path filters are not applied to tag pushes: a tray-v* tag always builds and releases.
     tags: ['tray-v*']
-    paths: ['tray/**', '.github/workflows/tray.yml']
+    paths: ['apps/tray/**', 'apps/web/src/ui/tokens.css', 'pnpm-lock.yaml', '.github/workflows/tray.yml']
   pull_request:
-    paths: ['tray/**', '.github/workflows/tray.yml']
+    paths: ['apps/tray/**', 'apps/web/src/ui/tokens.css', 'pnpm-lock.yaml', '.github/workflows/tray.yml']
   workflow_dispatch:
 
 permissions: { contents: read }
@@ -19,7 +19,7 @@ jobs:
         os: [windows-latest, ubuntu-22.04]
     runs-on: ${{ matrix.os }}
     defaults:
-      run: { working-directory: tray }
+      run: { working-directory: apps/tray }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Linux packages for Tauri
@@ -29,13 +29,15 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev build-essential file patchelf libfuse2
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with: { node-version: 22, cache: pnpm, cache-dependency-path: tray/pnpm-lock.yaml }
+        with: { node-version: 22, cache: pnpm, cache-dependency-path: pnpm-lock.yaml }
       - name: Rust
         run: rustup toolchain install stable --profile minimal && rustup default stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with: { workspaces: 'tray/src-tauri -> target' }
+        with: { workspaces: 'apps/tray/src-tauri -> target' }
+      # One workspace, one lockfile: install from the repository root.
       - run: pnpm install --frozen-lockfile
-      # Type-checks and builds the window into tray/dist (gitignored): the Rust core embeds it at compile time.
+        working-directory: .
+      # Type-checks and builds the window into apps/tray/dist (gitignored): the Rust core embeds it at compile time.
       - run: pnpm build:web
       - run: cargo test --manifest-path src-tauri/Cargo.toml --locked
       - run: pnpm tauri build --ci
@@ -43,9 +45,9 @@ jobs:
         with:
           name: tray-${{ runner.os }}
           path: |
-            tray/src-tauri/target/release/bundle/msi/*.msi
-            tray/src-tauri/target/release/bundle/deb/*.deb
-            tray/src-tauri/target/release/bundle/appimage/*.AppImage
+            apps/tray/src-tauri/target/release/bundle/msi/*.msi
+            apps/tray/src-tauri/target/release/bundle/deb/*.deb
+            apps/tray/src-tauri/target/release/bundle/appimage/*.AppImage
           if-no-files-found: error
 
   release:

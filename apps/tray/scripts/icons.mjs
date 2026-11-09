@@ -1,6 +1,6 @@
 // Generates the tray's icons from icons/tray.svg with the Tauri CLI (`tauri icon`, which rasterizes SVG with resvg):
 // one 32 px PNG per state for a light and for a dark taskbar (src-tauri/icons/tray/), and the app icons of the
-// installers (src-tauri/icons/). Run it after changing the SVG: pnpm --dir tray icons. The PNGs are committed, so a
+// installers (src-tauri/icons/). Run it after changing the SVG: pnpm --filter @tabula/tray icons. The PNGs are committed, so a
 // build never needs this script.
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -12,7 +12,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const tauri = join(root, 'node_modules', '@tauri-apps', 'cli', 'tauri.js');
 const template = readFileSync(join(root, 'icons', 'tray.svg'), 'utf8');
 
-// State colours from web/src/ui/tokens.css: the light theme's on a light taskbar, the dark theme's on a dark one.
+// State colours from apps/web/src/ui/tokens.css: the light theme's on a light taskbar, the dark theme's on a dark one.
 const COLORS = {
   light: { stopped: '#57534e', idle: '#15803d', busy: '#1d4ed8', error: '#b91c1c', dot: '#d97706' },
   dark: { stopped: '#c4bfbb', idle: '#4ade80', busy: '#93c5fd', error: '#f87171', dot: '#f59e0b' },

@@ -207,7 +207,7 @@ pub struct QueueView {
 }
 
 /// Everything the tray and the window show, made from the model.
-/// `tray/src/types.ts` mirrors these field names (camelCase) and the lowercase `Icon` values; change them together.
+/// `apps/tray/src/types.ts` mirrors these field names (camelCase) and the lowercase `Icon` values; change them together.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {

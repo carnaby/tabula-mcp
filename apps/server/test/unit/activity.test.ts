@@ -39,6 +39,7 @@ describe('activity days', () => {
 
   it('refuses a time zone it does not know', () => {
     expect(checkTimeZone('Europe/Bratislava')).toBe('Europe/Bratislava');
+    expect(checkTimeZone('europe/bratislava')).toBe('Europe/Bratislava');
     expect(() => checkTimeZone('Mars/Base')).toThrow('tz "Mars/Base" is not a time zone name such as Europe/Bratislava');
   });
 });

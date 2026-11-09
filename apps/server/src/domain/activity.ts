@@ -1,6 +1,6 @@
 import { ACTIVITY_DAYS } from '@tabula/shared/activity';
 import { refOf } from '@tabula/shared/refs';
-import { and, eq, gte, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, eq, gte, isNull, lt, or, type SQL, sql } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import type { Db } from '../db/client.js';
 import {
@@ -71,13 +71,14 @@ export type ActivityPage = { days: ActivityDay[]; next_before: string | null };
 /** The zone name, or a 400 when the runtime doesn't know it. */
 export function checkTimeZone(tz: string): string {
   try {
-    new Intl.DateTimeFormat('en-US', { timeZone: tz });
-    return tz;
+    // The canonical name, so differently spelled names share one cached formatter.
+    return new Intl.DateTimeFormat('en-US', { timeZone: tz }).resolvedOptions().timeZone;
   } catch {
     throw badRequest(`tz "${tz}" is not a time zone name such as Europe/Bratislava`);
   }
 }
 
+/** Keyed by the canonical zone name that checkTimeZone returns, so the cache holds one entry per real zone. */
 const formatters = new Map<string, Intl.DateTimeFormat>();
 function wallClock(at: Date, tz: string) {
   let f = formatters.get(tz);
@@ -368,13 +369,14 @@ async function collect(db: Db, from: Date, to: Date, type: ActivityType | undefi
   return events;
 }
 
-/** Whether anything of the asked type happened before `before` (then the page has a next_before). */
+/** Whether anything of the asked type happened before `before` (then the page has a next_before). One statement, one connection. */
 async function hasOlder(db: Db, before: Date, type: ActivityType | undefined): Promise<boolean> {
   const want = (t: ActivityType) => !type || type === t;
-  const checks: Promise<unknown[]>[] = [];
+  const exists: SQL[] = [];
+  const add = (q: SQL | { getSQL(): SQL }) => exists.push(sql`exists (${q})`);
   if (want('files')) {
-    checks.push(db.select({ id: projectFiles.id }).from(projectFiles).where(and(isNull(projectFiles.deletedAt), lt(projectFiles.updatedAt, before))).limit(1));
-    checks.push(
+    add(db.select({ id: projectFiles.id }).from(projectFiles).where(and(isNull(projectFiles.deletedAt), lt(projectFiles.updatedAt, before))).limit(1));
+    add(
       db
         .select({ id: projectFileRevisions.id })
         .from(projectFileRevisions)
@@ -383,11 +385,11 @@ async function hasOlder(db: Db, before: Date, type: ActivityType | undefined): P
         .limit(1),
     );
   }
-  if (want('reports')) checks.push(db.select({ id: reports.id }).from(reports).where(lt(reports.createdAt, before)).limit(1));
+  if (want('reports')) add(db.select({ id: reports.id }).from(reports).where(lt(reports.createdAt, before)).limit(1));
   if (want('thoughts')) {
     // The versions, not created_at: the oldest versions of a much-edited thought are no longer kept.
-    checks.push(db.select({ id: thoughts.id }).from(thoughts).where(and(eq(thoughts.archived, false), lt(thoughts.updatedAt, before))).limit(1));
-    checks.push(
+    add(db.select({ id: thoughts.id }).from(thoughts).where(and(eq(thoughts.archived, false), lt(thoughts.updatedAt, before))).limit(1));
+    add(
       db
         .select({ id: thoughtRevisions.id })
         .from(thoughtRevisions)
@@ -396,8 +398,10 @@ async function hasOlder(db: Db, before: Date, type: ActivityType | undefined): P
         .limit(1),
     );
   }
-  if (want('notes')) checks.push(db.select({ id: notes.id }).from(notes).where(lt(notes.createdAt, before)).limit(1));
-  return (await Promise.all(checks)).some((rows) => rows.length > 0);
+  if (want('notes')) add(db.select({ id: notes.id }).from(notes).where(lt(notes.createdAt, before)).limit(1));
+  if (!exists.length) return false;
+  const rows = await db.execute<{ older: boolean }>(sql`select ${sql.join(exists, sql` or `)} as older`);
+  return rows[0]!.older;
 }
 
 /** One page of the timeline: 14 local days before `before` (default now), grouped by day, newest first. */

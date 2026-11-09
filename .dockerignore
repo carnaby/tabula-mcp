@@ -1,10 +1,10 @@
-node_modules
-dist
-web/dist
-docs
+**/node_modules
+**/dist
+.nx
 .git
 .superpowers
-tray
+docs
+apps/tray
 .env
 .env.*
 !.env.example

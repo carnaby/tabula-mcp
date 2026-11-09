@@ -1,4 +1,4 @@
-import { DEFAULT_COPY_PROMPT, fillCopyPrompt } from '@tabula/shared/copy-prompt';
+import { fillCopyPrompt } from '@tabula/shared/copy-prompt';
 import { useState } from 'react';
 import { api, ApiError } from '../../api';
 import { age, copyText, fullDate } from '../../format';
@@ -29,7 +29,8 @@ export function WaitingBlock({
 }: { dashboard: Dashboard | undefined; projects: Project[] | undefined; onChanged: () => void }) {
   const prompt = useQuery((s) => api.copyPrompt(s), []);
   const [editing, setEditing] = useState(false);
-  const text = prompt.data?.text ?? DEFAULT_COPY_PROMPT;
+  // Until the saved text has loaded there is none: copying or editing the default would be the wrong text.
+  const text = prompt.data?.text;
   const items = dashboard?.waiting;
 
   return (
@@ -38,7 +39,8 @@ export function WaitingBlock({
         <h2 id="home-waiting">Waiting for you</h2>
         {items && items.length > 0 && <span className="home-block__count">{items.length}</span>}
         <span className="t-spacer" />
-        <IconButton size="sm" icon="gear" label="Copy for Claude text" onClick={() => setEditing(true)} />
+        {prompt.error && !text && <span className="t-subtle">The Copy for Claude text did not load.</span>}
+        <IconButton size="sm" icon="gear" label="Copy for Claude text" disabled={text === undefined} onClick={() => setEditing(true)} />
       </div>
       {!dashboard ? (
         <div className="t-stack">{[0, 1].map((i) => <Skeleton key={i} height={52} />)}</div>
@@ -59,8 +61,8 @@ export function WaitingBlock({
         </ul>
       )}
       <CopyPromptDialog
-        open={editing}
-        text={text}
+        open={editing && text !== undefined}
+        text={text ?? ''}
         onClose={() => setEditing(false)}
         onSaved={() => {
           setEditing(false);
@@ -73,7 +75,7 @@ export function WaitingBlock({
 
 function WaitingRow({
   item: w, prompt, purgeAfterHours, projects, onChanged,
-}: { item: WaitingItem; prompt: string; purgeAfterHours: number; projects: Project[] | undefined; onChanged: () => void }) {
+}: { item: WaitingItem; prompt: string | undefined; purgeAfterHours: number; projects: Project[] | undefined; onChanged: () => void }) {
   const notify = useToast();
   const { confirm } = useConfirm();
   const [busy, setBusy] = useState(false);
@@ -81,6 +83,7 @@ function WaitingRow({
   const open = w.type === 'transcription_failed' && w.attachment_id ? href.attachment(w.id, w.attachment_id, href.home()) : href.report(w.id, undefined, href.home());
 
   const copy = async () => {
+    if (prompt === undefined) return;
     const text = fillCopyPrompt(prompt, w.ref);
     if (await copyText(text)) notify('Copied');
     else notify(`Copy failed — the text is: ${text}`, { tone: 'danger' });
@@ -135,7 +138,7 @@ function WaitingRow({
       </div>
       <div className="waiting-row__actions">
         <ButtonLink size="sm" href={open}>Open</ButtonLink>
-        {w.type === 'new_report' && <Button size="sm" icon="copy" onClick={() => void copy()}>Copy for Claude</Button>}
+        {w.type === 'new_report' && <Button size="sm" icon="copy" disabled={prompt === undefined} onClick={() => void copy()}>Copy for Claude</Button>}
         {w.type === 'triaged' && <Button size="sm" icon="check" loading={busy} onClick={() => void markDone()}>Mark done</Button>}
         {w.type === 'transcription_failed' && <Button size="sm" icon="refresh" loading={busy} onClick={() => void retry()}>Try again</Button>}
       </div>

@@ -1,5 +1,8 @@
 import { api } from '../api';
+import { ActivityBlock } from '../features/home/ActivityBlock';
+import { ProjectsBlock } from '../features/home/ProjectsBlock';
 import { WaitingBlock } from '../features/home/WaitingBlock';
+import { WarningsBlock } from '../features/home/WarningsBlock';
 import { PageHeader } from '../features/PageHeader';
 import { REFRESH_MS, useInterval, useQuery } from '../hooks/data';
 import type { Project } from '../types';
@@ -17,8 +20,12 @@ export function HomePage({ projects }: { projects: Project[] | undefined }) {
       <div className="home">
         <div className="home__main">
           <WaitingBlock dashboard={dash.data} projects={projects} onChanged={dash.reload} />
+          <ActivityBlock projects={projects} />
         </div>
-        <div className="home__side" />
+        <div className="home__side">
+          {dash.data && <WarningsBlock warnings={dash.data.warnings} projects={projects} />}
+          <ProjectsBlock dashboard={dash.data} />
+        </div>
       </div>
     </main>
   );

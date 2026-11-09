@@ -219,3 +219,29 @@ export type Dashboard = {
   /** TABULA_MEDIA_PURGE_HOURS, for the Mark done confirmation. */
   purge_after_hours: number;
 };
+
+export type ActivityType = 'files' | 'reports' | 'thoughts' | 'notes';
+export type ActivityChild = { id: string; path: string; ref: string };
+/** One row of the Home timeline (GET /api/activity). */
+export type ActivityItem = {
+  type: 'file' | 'report' | 'thought' | 'note';
+  /** "Pushed 12 files", "New report", "Triage written", "Transcribed", "Saved thought", "Edited note", … */
+  action: string;
+  ref: string;
+  /** The record to open: the file (the newest of a batch), report, thought or note. */
+  id: string;
+  title: string;
+  project: string | null;
+  /** 'human', 'cli', an agent's label, or 'worker'. */
+  by: string;
+  at: string;
+  count?: number;
+  /** One file: its path. */
+  path?: string;
+  /** "Transcribed": the recording. */
+  attachment_id?: string;
+  /** A batch of two or more files, newest first. */
+  children?: ActivityChild[];
+};
+export type ActivityDay = { date: string; items: ActivityItem[] };
+export type ActivityPage = { days: ActivityDay[]; next_before: string | null };

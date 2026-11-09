@@ -93,7 +93,8 @@ export async function dashboard(db: Db, now = new Date()): Promise<Dashboard> {
 
   type Recording = (typeof recordings)[number];
   const stateOf = (a: Recording): WaitingTranscript | null =>
-    a.job === 'queued' || a.job === 'running' || a.job === 'failed' ? a.job : a.transcribed ? 'done' : null;
+    // A purged recording is never worked on (the worker skips it, Try again refuses it): its job state means nothing.
+    !a.purgedAt && (a.job === 'queued' || a.job === 'running' || a.job === 'failed') ? a.job : a.transcribed ? 'done' : null;
   const recordingsOf = new Map<string, Recording[]>();
   for (const a of recordings) {
     const list = recordingsOf.get(a.reportId);
@@ -127,7 +128,7 @@ export async function dashboard(db: Db, now = new Date()): Promise<Dashboard> {
 
   const warnings: DashboardWarning[] = [];
   const cutoff = now.getTime() - RECORDING_WAIT_MS;
-  const stuck = recordings.filter((a) => a.job === 'queued' && a.runAfter !== null && a.runAfter.getTime() < cutoff);
+  const stuck = recordings.filter((a) => a.job === 'queued' && !a.purgedAt && a.runAfter !== null && a.runAfter.getTime() < cutoff);
   if (stuck.length) {
     const oldest = Math.min(...stuck.map((a) => a.runAfter!.getTime()));
     warnings.push({ type: 'recordings_waiting', project: null, count: stuck.length, oldest: new Date(oldest).toISOString() });

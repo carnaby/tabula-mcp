@@ -98,6 +98,22 @@ describe('dashboard: waiting for you', () => {
     expect(by.Running).toMatchObject({ transcript: 'running', recordings: 1 });
     expect(by['Text only']).toMatchObject({ transcript: null, recordings: 0 });
   });
+
+  it('does not count a purged recording in a report', async () => {
+    await seedProject(db, 'demo');
+    const r = await report({ title: 'Reopened', created: ago(60) });
+    await recording(r.id, { job: { status: 'done' }, transcribed: true, purged: true });
+    await recording(r.id, { job: { status: 'done' }, transcribed: true });
+    expect((await dashboard(db)).waiting).toEqual([expect.objectContaining({ title: 'Reopened', recordings: 1 })]);
+  });
+
+  it('does not call a report failed because of a purged recording', async () => {
+    await seedProject(db, 'demo');
+    const r = await report({ title: 'Reopened', created: ago(60) });
+    await recording(r.id, { job: { status: 'failed', finishedAt: ago(5) }, purged: true });
+    await recording(r.id, { job: { status: 'done' }, transcribed: true });
+    expect((await dashboard(db)).waiting).toEqual([expect.objectContaining({ type: 'new_report', transcript: 'done' })]);
+  });
 });
 
 describe('dashboard: warnings', () => {
@@ -146,6 +162,13 @@ describe('dashboard: warnings', () => {
     expect((await dashboard(db)).warnings.filter((w) => w.type === 'recordings_waiting')).toEqual([
       { type: 'recordings_waiting', project: null, count: 2, oldest: oldest.toISOString() },
     ]);
+  });
+
+  it('does not warn about a purged recording that waited more than 24 hours: the worker skips it', async () => {
+    await seedProject(db, 'demo');
+    const r = await report({ title: 'Meeting', created: ago(60) });
+    await recording(r.id, { job: { status: 'queued', runAfter: ago(40) }, purged: true });
+    expect((await dashboard(db)).warnings.filter((x) => x.type === 'recordings_waiting')).toEqual([]);
   });
 });
 

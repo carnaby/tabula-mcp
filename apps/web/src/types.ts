@@ -180,3 +180,42 @@ export type ReportSummary = Report & { counts: Record<AttachmentKind, number> };
 /** `purgeAfterHours`: how long after closing the server deletes video and audio (unless Keep media is on). */
 export type ReportDetail = Report & { attachments: Attachment[]; purgeAfterHours: number };
 export type ReportSort = 'createdAt' | 'updatedAt' | 'title' | 'status';
+
+/** How the recordings of a waiting report stand, taken together. */
+export type WaitingTranscript = 'running' | 'queued' | 'failed' | 'done';
+/** Something that waits for the user on Home (GET /api/dashboard), oldest first. */
+export type WaitingItem = {
+  type: 'new_report' | 'triaged' | 'transcription_failed';
+  /** The report. */
+  id: string;
+  ref: string;
+  title: string;
+  project: string | null;
+  since: string;
+  /** For Mark done (expectedVersion). */
+  version: number;
+  keep_media: boolean;
+  /** Video and audio still on disk: the close confirmation names them. */
+  recordings: number;
+  transcript: WaitingTranscript | null;
+  /** transcription_failed: the recording, its file name and the error. */
+  attachment_id?: string;
+  file_name?: string;
+  error?: string | null;
+};
+export type TrimStep = 'files-collapsed' | 'facts-omitted' | 'gotchas-first-sentence' | 'rules-first-sentence' | 'state-truncated';
+export type DashboardWarning =
+  | { type: 'recall_trimmed'; project: string; steps: TrimStep[]; tokens: number }
+  | { type: 'large_file'; project: string; id: string; ref: string; path: string; size: number; limit: number }
+  | { type: 'recordings_waiting'; project: null; count: number; oldest: string };
+export type DashboardProject = {
+  id: string; name: string; last_activity_at: string; file_count: number; open_reports: number; recall_tokens: number;
+};
+export type Dashboard = {
+  waiting: WaitingItem[];
+  warnings: DashboardWarning[];
+  projects: DashboardProject[];
+  recall_budget: number;
+  /** TABULA_MEDIA_PURGE_HOURS, for the Mark done confirmation. */
+  purge_after_hours: number;
+};

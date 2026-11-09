@@ -786,3 +786,71 @@ span.transcript__time { color: var(--text-subtle); }
   .capture-bar .t-btn { flex: 1 1 calc(50% - 4px); }
   .att-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+/* ---------- Home ---------- */
+
+/* Desktop: Waiting and Recent activity on the left; a narrower column with Warnings and Projects on the right. */
+.home { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); gap: 18px; align-items: start; }
+.home__main, .home__side { display: grid; gap: 18px; min-width: 0; align-content: start; }
+.home-block { display: grid; gap: 12px; padding: 16px; min-width: 0; }
+.home-block__head { display: flex; align-items: center; gap: 8px; min-height: 28px; }
+.home-block__head h2 { font-size: var(--text-lg); font-weight: 650; }
+.home-block__count {
+  padding: 1px 8px;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.home-block__empty { color: var(--text-muted); }
+
+.waiting-list { display: grid; margin: 0; padding: 0; list-style: none; }
+.waiting-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--border); min-width: 0; }
+.waiting-row:first-child { border-top: 0; padding-top: 0; }
+.waiting-row__icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text-muted);
+}
+.waiting-row__icon[data-type='new_report'] { background: var(--accent-soft); color: var(--accent-soft-fg); }
+.waiting-row__icon[data-type='transcription_failed'] { background: var(--danger-soft); color: var(--danger-soft-fg); }
+.waiting-row__body { flex: 1; min-width: 0; display: grid; gap: 4px; }
+.waiting-row__title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: inherit; text-decoration: none; }
+.waiting-row__title:hover { text-decoration: underline; }
+.waiting-row__meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; font-size: var(--text-sm); }
+.waiting-row__kind { color: var(--text-muted); }
+.waiting-row__actions { display: flex; gap: 6px; flex: none; }
+
+.copy-preview { display: grid; gap: 4px; margin-top: 12px; }
+.copy-preview pre {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 960px) {
+  /* One column: Warnings (only when there are any), Waiting, Recent activity, Projects. */
+  .home { display: flex; flex-direction: column; gap: 14px; }
+  .home__main, .home__side { display: contents; }
+  .home-block--warnings { order: 1; }
+  .home-block--waiting { order: 2; }
+  .home-block--activity { order: 3; }
+  .home-block--projects { order: 4; }
+}
+
+@media (max-width: 640px) {
+  .waiting-row { flex-wrap: wrap; }
+  .waiting-row__actions { width: 100%; padding-left: 44px; }
+}
+.topbar__logo { display: flex; }

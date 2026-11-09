@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '../api';
 import { dateTitle } from '@tabula/shared/report-title';
+import { closeReportMessage } from '../features/reports/closeReport';
 import { AuthorMeta, authorInfo, authorOf, ProjectSelect } from '../features/common';
 import { CopyRefButton } from '../features/CopyRefButton';
 import { EditorBar, SaveButton } from '../features/EditorBar';
@@ -269,11 +270,7 @@ function Editor({
       const media = recordings.filter((a) => !a.purgedAt).length;
       const ok = await confirm({
         title: 'Close this report?',
-        message: !media
-          ? 'You can reopen it later.'
-          : base.keepMedia
-            ? `Keep media is on: its ${media} video/audio file(s) stay after closing. You can reopen it later.`
-            : `Its ${media} video/audio file(s) will be deleted ${purgeAfterHours === 0 ? 'within 15 minutes of' : `${purgeAfterHours} ${purgeAfterHours === 1 ? 'hour' : 'hours'} after`} closing. Photos, saved frames and the text stay. Reopen before then, or turn on Keep media, to keep them.`,
+        message: closeReportMessage(media, base.keepMedia, purgeAfterHours),
         confirmLabel: 'Close report',
       });
       if (!ok) return;

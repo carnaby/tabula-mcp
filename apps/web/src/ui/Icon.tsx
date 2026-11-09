@@ -3,6 +3,13 @@ import type { ReactNode, SVGProps } from 'react';
 /** Stroke icons on a 24px grid, 2px stroke, round caps. Drawn for Tabula; add new ones here. */
 const ICONS = {
   menu: <path d="M4 6h16M4 12h16M4 18h16" />,
+  home: <path d="M3 11.5 12 4l9 7.5M5.5 9.5V20h5v-6h3v6h5V9.5" />,
+  gear: (
+    <>
+      <path d="M9.9 5.1L10 2.7L14 2.7L14.1 5.1L15.4 5.7L17.1 4L20 6.9L18.3 8.6L18.9 9.9L21.3 10L21.3 14L18.9 14.1L18.3 15.4L20 17.1L17.1 20L15.4 18.3L14.1 18.9L14 21.3L10 21.3L9.9 18.9L8.6 18.3L6.9 20L4 17.1L5.7 15.4L5.1 14.1L2.7 14L2.7 10L5.1 9.9L5.7 8.6L4 6.9L6.9 4L8.6 5.7Z" />
+      <circle cx="12" cy="12" r="3" />
+    </>
+  ),
   x: <path d="M18 6 6 18M6 6l12 12" />,
   search: (
     <>

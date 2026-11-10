@@ -143,10 +143,10 @@ function WaitingRow({
         </div>
       </div>
       <div className="waiting-row__actions">
-        <ButtonLink size="sm" href={open}>Open</ButtonLink>
-        {w.type === 'new_report' && <Button size="sm" icon="copy" disabled={prompt === undefined} onClick={() => void copy()}>Copy for Claude</Button>}
-        {w.type === 'triaged' && <Button size="sm" icon="check" loading={busy} onClick={() => void markDone()}>Mark done</Button>}
-        {w.type === 'transcription_failed' && <Button size="sm" icon="refresh" loading={busy} onClick={() => void retry()}>Try again</Button>}
+        <ButtonLink size="sm" href={open} aria-label={`Open: ${w.title}`}>Open</ButtonLink>
+        {w.type === 'new_report' && <Button size="sm" icon="copy" disabled={prompt === undefined} aria-label={`Copy for Claude: ${w.title}`} onClick={() => void copy()}>Copy for Claude</Button>}
+        {w.type === 'triaged' && <Button size="sm" icon="check" loading={busy} aria-label={`Mark done: ${w.title}`} onClick={() => void markDone()}>Mark done</Button>}
+        {w.type === 'transcription_failed' && <Button size="sm" icon="refresh" loading={busy} aria-label={`Try again: ${w.title}${w.file_name ? ` (${w.file_name})` : ''}`} onClick={() => void retry()}>Try again</Button>}
       </div>
     </li>
   );

@@ -100,13 +100,13 @@ export function ActivityBlock({ projects }: { projects: Project[] | undefined })
     setOlder({ filter, pages: [] });
     setMoreError(null);
   }, [filter]);
-  // Fade only while a newly chosen filter's first page loads, never on a refresh.
+  // Fade while a newly chosen filter's first page loads or has failed (the rows are still the old filter's), never on a refresh.
   const [shown, setShown] = useState<Filter>('all');
   useEffect(() => {
     if (first.data) setShown(filter);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [first.data]);
-  const switching = first.loading && shown !== filter;
+  const switching = (first.loading || !!first.error) && shown !== filter;
 
   const head = first.data;
   const loaded = older.filter === shown ? older.pages : [];

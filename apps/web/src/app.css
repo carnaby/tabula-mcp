@@ -112,6 +112,7 @@
 
 .shell__main { min-width: 0; display: flex; flex-direction: column; }
 .topbar { display: none; }
+.topbar__logo { display: flex; }
 .content {
   width: 100%;
   max-width: var(--content-max);
@@ -914,4 +915,3 @@ span.transcript__time { color: var(--text-subtle); }
   .waiting-row { flex-wrap: wrap; }
   .waiting-row__actions { width: 100%; padding-left: 44px; }
 }
-.topbar__logo { display: flex; }

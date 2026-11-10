@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '../api';
 import { dateTitle } from '@tabula/shared/report-title';
-import { closeReportMessage } from '../features/reports/closeReport';
 import { AuthorMeta, authorInfo, authorOf, ProjectSelect } from '../features/common';
+import { closeReportMessage } from '../features/reports/closeReport';
 import { CopyRefButton } from '../features/CopyRefButton';
 import { EditorBar, SaveButton } from '../features/EditorBar';
 import { Attachments } from '../features/reports/Attachments';

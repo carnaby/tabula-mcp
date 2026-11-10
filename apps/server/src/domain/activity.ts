@@ -238,7 +238,10 @@ function recordRows(events: ActivityEvent[]): ActivityItem[] {
   return rows;
 }
 
-/** The timeline's rows, newest first. */
+/**
+ * The timeline's rows, newest first. A file batch or record group that crosses a page boundary (a local midnight) is
+ * split into a row on each page, on purpose: the halves sit under different day headings anyway.
+ */
 export function mergeActivity(events: ActivityEvent[]): ActivityItem[] {
   const rows = [...fileRows(events.filter((e) => e.kind === 'file')), ...recordRows(events.filter((e) => e.kind !== 'file'))];
   return rows.sort((a, b) => b.at.localeCompare(a.at) || a.ref.localeCompare(b.ref));

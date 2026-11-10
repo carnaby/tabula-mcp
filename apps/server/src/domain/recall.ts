@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, type SQL } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { memories, projectFiles } from '../db/schema.js';
 import { buildDigest, type Digest } from './digest.js';
@@ -11,6 +11,21 @@ const globalMemories = (db: Db) =>
     .from(memories)
     .where(and(eq(memories.projectId, 'global'), eq(memories.status, 'active')));
 
+/** The metadata of the files matching a condition (the file list of a digest). */
+const fileMetadata = (db: Db, where: SQL | undefined) =>
+  db
+    .select({ projectId: projectFiles.projectId, path: projectFiles.path, size: projectFiles.size, updatedAt: projectFiles.updatedAt, isState: projectFiles.isState })
+    .from(projectFiles)
+    .where(where);
+
+/** The state files matching a condition, newest first (the state of a digest). */
+const stateFiles = (db: Db, where: SQL | undefined) =>
+  db
+    .select({ projectId: projectFiles.projectId, path: projectFiles.path, content: projectFiles.content, updatedAt: projectFiles.updatedAt })
+    .from(projectFiles)
+    .where(and(where, eq(projectFiles.isState, true)))
+    .orderBy(desc(projectFiles.updatedAt), asc(projectFiles.path));
+
 /** The digest an agent reads at session start: global rules, the project state (optional) and the file list. */
 export async function recall(
   db: Db,
@@ -21,17 +36,8 @@ export async function recall(
   const alive = and(eq(projectFiles.projectId, projectId), isNull(projectFiles.deletedAt));
   const [rules, files, state] = await Promise.all([
     globalMemories(db),
-    db
-      .select({ path: projectFiles.path, size: projectFiles.size, updatedAt: projectFiles.updatedAt, isState: projectFiles.isState })
-      .from(projectFiles)
-      .where(alive),
-    opts.includeState === false
-      ? Promise.resolve([])
-      : db
-          .select({ path: projectFiles.path, content: projectFiles.content, updatedAt: projectFiles.updatedAt })
-          .from(projectFiles)
-          .where(and(alive, eq(projectFiles.isState, true)))
-          .orderBy(desc(projectFiles.updatedAt), asc(projectFiles.path)),
+    fileMetadata(db, alive),
+    opts.includeState === false ? Promise.resolve([]) : stateFiles(db, alive),
   ]);
   return buildDigest({
     project: projectId, date: (opts.now ?? new Date()).toISOString().slice(0, 10), memories: rules, files, state,
@@ -57,21 +63,7 @@ export async function recallDigests(db: Db, projectIds: readonly string[], now =
   const ids = [...projectIds];
   if (!ids.length) return new Map();
   const alive = and(inArray(projectFiles.projectId, ids), isNull(projectFiles.deletedAt));
-  const [rules, files, state] = await Promise.all([
-    globalMemories(db),
-    db
-      .select({
-        projectId: projectFiles.projectId, path: projectFiles.path, size: projectFiles.size, updatedAt: projectFiles.updatedAt,
-        isState: projectFiles.isState,
-      })
-      .from(projectFiles)
-      .where(alive),
-    db
-      .select({ projectId: projectFiles.projectId, path: projectFiles.path, content: projectFiles.content, updatedAt: projectFiles.updatedAt })
-      .from(projectFiles)
-      .where(and(alive, eq(projectFiles.isState, true)))
-      .orderBy(desc(projectFiles.updatedAt), asc(projectFiles.path)),
-  ]);
+  const [rules, files, state] = await Promise.all([globalMemories(db), fileMetadata(db, alive), stateFiles(db, alive)]);
   const filesOf = byProject(files);
   const stateOf = byProject(state);
   const date = now.toISOString().slice(0, 10);

@@ -145,8 +145,11 @@ export class MediaStore {
           body.unpipe(meter);
           body.resume();
           meter.destroy();
+          // The file is opened asynchronously: reject only after the stream is closed, or the open can still create
+          // the file after the caller removed it and leave a stray temporary file behind.
+          if (out.closed) return fail(e);
+          out.once('close', () => fail(e));
           out.destroy();
-          fail(e);
         };
         body.on('error', stop);
         body.on('aborted', () => stop(badRequest('the upload was interrupted')));

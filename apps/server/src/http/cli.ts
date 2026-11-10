@@ -11,10 +11,6 @@ export function readCliVersion(source: string): string {
 
 /** The CLI is public code from the repository, so it is served without the token. */
 export function registerCliRoutes(app: FastifyInstance, file = CLI_FILE, transcriber = TRANSCRIBE_FILE, diarizer = DIARIZE_FILE): void {
-  if (!existsSync(file)) {
-    app.log.warn({ file }, 'CLI file not found; /cli is not served');
-    return;
-  }
   const source = readFileSync(file, 'utf8');
   const version = readCliVersion(source);
   app.get('/cli/tabula.mjs', (_req, reply) =>

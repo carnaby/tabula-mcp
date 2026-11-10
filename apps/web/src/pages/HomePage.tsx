@@ -1,4 +1,5 @@
 import { api } from '../api';
+import { TZ } from '../format';
 import { ActivityBlock } from '../features/home/ActivityBlock';
 import { ProjectsBlock } from '../features/home/ProjectsBlock';
 import { WaitingBlock } from '../features/home/WaitingBlock';
@@ -10,7 +11,7 @@ import { Alert } from '../ui';
 
 /** Home reloads every minute and when the window regains focus (useQuery), like the worker indicator. */
 export function HomePage({ projects }: { projects: Project[] | undefined }) {
-  const dash = useQuery((s) => api.dashboard(s), [], { topics: ['reports', 'files', 'projects', 'memories'] });
+  const dash = useQuery((s) => api.dashboard(TZ, s), [], { topics: ['reports', 'files', 'projects', 'memories'] });
   useInterval(dash.reload, REFRESH_MS);
 
   return (

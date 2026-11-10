@@ -30,6 +30,14 @@ describe('GET /api/dashboard', () => {
     expect(body.projects).toEqual([expect.objectContaining({ id: 'demo', name: 'demo', file_count: 0, open_reports: 1 })]);
   });
 
+  it('gives each project 14 daily counts and checks tz', async () => {
+    await seedProject(db, 'demo');
+    const ok = await call('GET', '/api/dashboard?tz=Europe%2FBratislava');
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().projects[0].activity).toEqual(Array(14).fill(0));
+    expect((await call('GET', '/api/dashboard?tz=Mars%2FBase')).statusCode).toBe(400);
+  });
+
   it('says whether transcription is enabled: it is not without a worker token', async () => {
     expect((await call('GET', '/api/dashboard')).json().transcription_enabled).toBe(true);
     const bare = await buildApp({ config: testConfig({ workerToken: undefined }), db });

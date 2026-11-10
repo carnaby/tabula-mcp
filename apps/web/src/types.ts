@@ -210,6 +210,8 @@ export type DashboardWarning =
   | { type: 'recordings_waiting'; project: null; count: number; oldest: string };
 export type DashboardProject = {
   id: string; name: string; last_activity_at: string; file_count: number; open_reports: number; recall_tokens: number;
+  /** Changes per local day over the last 14 days, oldest first, today last. */
+  activity: number[];
 };
 export type Dashboard = {
   waiting: WaitingItem[];

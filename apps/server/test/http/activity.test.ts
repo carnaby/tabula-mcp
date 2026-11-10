@@ -36,6 +36,17 @@ describe('GET /api/activity', () => {
     expect((await get(`?before=${encodeURIComponent('2026-11-10T00:00:00+01:00')}`)).statusCode).toBe(200);
   });
 
+  it('takes after like before, and not both', async () => {
+    const after = encodeURIComponent('2026-11-09T00:00:00Z');
+    expect((await get(`?after=${after}`)).statusCode).toBe(200);
+    for (const bad of ['yesterday', '2026-11-09T10:00:00', '1999-12-31T23:59:59Z', '9999-01-01T00:00:00Z']) {
+      const r = await get(`?after=${encodeURIComponent(bad)}`);
+      expect([bad, r.statusCode, r.json().message]).toEqual([bad, 400, expect.stringContaining('after')]);
+    }
+    const both = await get(`?after=${after}&before=${encodeURIComponent('2026-11-10T00:00:00Z')}`);
+    expect([both.statusCode, both.json().message]).toEqual([400, expect.stringContaining('together')]);
+  });
+
   it('needs the user token; the worker token is refused', async () => {
     for (const headers of [{}, as(TEST_WORKER_TOKEN)]) {
       expect((await app.inject({ method: 'GET', url: '/api/activity', headers })).statusCode).toBe(401);

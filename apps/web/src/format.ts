@@ -58,3 +58,19 @@ export function age(iso: string, now = Date.now()): string {
   const days = Math.floor(hours / 24);
   return `${days} ${days === 1 ? 'day' : 'days'}`;
 }
+
+/** The browser's time zone: the server cuts the days of Home where the user's days begin. */
+export const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+const pad = (n: number) => String(n).padStart(2, '0');
+
+/** A date as YYYY-MM-DD in the browser's zone. */
+export const isoDay = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+/** "Today", "Yesterday", "7. 11.", or "7. 11. 2025" in another year. `date` is YYYY-MM-DD. */
+export function dayLabel(date: string, now = new Date()): string {
+  if (date === isoDay(now)) return 'Today';
+  if (date === isoDay(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1))) return 'Yesterday';
+  const [y, m, d] = date.split('-').map(Number);
+  return y === now.getFullYear() ? `${d}. ${m}.` : `${d}. ${m}. ${y}`;
+}

@@ -19,7 +19,7 @@ export function ProjectPage({
   if (projects && !p) {
     return (
       <main className="content">
-        <EmptyState icon="folder" title={`No project “${project}”`} action={<ButtonLink href={href.thoughts()}>Back</ButtonLink>}>
+        <EmptyState icon="folder" title={`No project “${project}”`} action={<ButtonLink href={href.home()}>Back</ButtonLink>}>
           It may have been renamed, or the link is wrong.
         </EmptyState>
       </main>

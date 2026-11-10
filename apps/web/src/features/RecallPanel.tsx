@@ -4,7 +4,7 @@ import { copyText } from '../format';
 import { Alert, Badge, Button, Skeleton, useToast } from '../ui';
 import { InfoLine } from './PageHeader';
 
-const TRIM_LABELS: Record<string, string> = {
+export const TRIM_LABELS: Record<string, string> = {
   'files-collapsed': 'file list collapsed',
   'facts-omitted': 'facts collapsed',
   'gotchas-first-sentence': 'gotchas shortened',
@@ -12,12 +12,17 @@ const TRIM_LABELS: Record<string, string> = {
   'state-truncated': 'state shortened',
 };
 
+/** The meter's fill (percent of the budget) and colour; shared by the Recall preview and Home's project rows. */
+export function recallMeter(tokens: number, budget: number, over = false): { pct: number; level: 'ok' | 'warn' | 'over' } {
+  const pct = Math.min(100, Math.round((tokens / budget) * 100));
+  return { pct, level: over || tokens > budget ? 'over' : pct > 80 ? 'warn' : 'ok' };
+}
+
 export function RecallPanel({ project }: { project: string }) {
   const q = useQuery((s) => api.recall(project, s), [project], { topics: ['memories', 'files'] });
   const notify = useToast();
   const d = q.data;
-  const pct = d ? Math.min(100, Math.round((d.tokens / d.budget) * 100)) : 0;
-  const level = !d ? 'ok' : d.overBudget || d.tokens > d.budget ? 'over' : pct > 80 ? 'warn' : 'ok';
+  const { pct, level } = d ? recallMeter(d.tokens, d.budget, d.overBudget) : { pct: 0, level: 'ok' as const };
 
   return (
     <div className="t-stack">

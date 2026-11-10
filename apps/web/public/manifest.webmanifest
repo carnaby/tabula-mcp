@@ -3,7 +3,7 @@
   "name": "Tabula",
   "short_name": "Tabula",
   "description": "Memory for AI agents and your personal notebook.",
-  "start_url": "/#/thoughts",
+  "start_url": "/#/",
   "scope": "/",
   "display": "standalone",
   "background_color": "#0f0e0d",

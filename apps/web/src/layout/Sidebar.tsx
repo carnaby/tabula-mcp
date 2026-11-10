@@ -39,7 +39,7 @@ export function Sidebar({
   return (
     <aside className="sidebar" aria-label="Navigation">
       <div className="sidebar__head">
-        <a href={href.thoughts()} aria-label="Tabula home"><Logo /></a>
+        <a href={href.home()} aria-label="Tabula home"><Logo /></a>
         <WorkerIndicator status={worker} className="worker-ind--sidebar" />
         <IconButton className="sidebar__close" icon="x" label="Close menu" onClick={onClose} />
       </div>
@@ -50,6 +50,8 @@ export function Sidebar({
           <span>Search everything</span>
           <Kbd>{isMac ? '⌘K' : 'Ctrl K'}</Kbd>
         </button>
+
+        <NavItem to={href.home()} icon="home" label="Home" active={section.name === 'home'} />
 
         <div className="nav-section">Notebook</div>
         <NavItem to={href.notes()} icon="fileText" label="Notes" active={section.name === 'notes' || section.name === 'note'} />

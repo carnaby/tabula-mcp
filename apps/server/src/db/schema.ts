@@ -360,3 +360,10 @@ export const workers = pgTable('workers', {
   version: text('version'),
   lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+/** Settings of the single user, one row per key (the Copy for Claude text). A missing row means the default. */
+export const settings = pgTable('settings', {
+  key: text('key').primaryKey(),
+  value: jsonb('value').$type<unknown>().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});

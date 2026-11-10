@@ -82,10 +82,10 @@ export function IconLink({
 }
 
 export function ButtonLink({
-  href, variant = 'default', size = 'md', icon, children, className,
-}: { href: string; variant?: ButtonVariant; size?: 'md' | 'sm'; icon?: IconName; children: ReactNode; className?: string }) {
+  href, variant = 'default', size = 'md', icon, children, className, 'aria-label': ariaLabel,
+}: { href: string; variant?: ButtonVariant; size?: 'md' | 'sm'; icon?: IconName; children: ReactNode; className?: string; 'aria-label'?: string }) {
   return (
-    <a href={href} className={classes(variant, size, className)} style={{ textDecoration: 'none' }}>
+    <a href={href} className={classes(variant, size, className)} style={{ textDecoration: 'none' }} aria-label={ariaLabel}>
       {icon && <Icon name={icon} />}
       {children}
     </a>

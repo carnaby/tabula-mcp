@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { api } from './api';
 import { WorkerIndicator } from './features/reports/WorkerIndicator';
-import { useQuery } from './hooks/data';
+import { REFRESH_MS, useInterval, useQuery } from './hooks/data';
 import { Sidebar } from './layout/Sidebar';
 import { GlobalPage } from './pages/GlobalPage';
+import { HomePage } from './pages/HomePage';
 import { NewProjectDialog } from './pages/NewProjectDialog';
 import { NoteEditorPage } from './pages/NoteEditorPage';
 import { NotesPage } from './pages/NotesPage';
@@ -19,6 +20,7 @@ import { ButtonLink, EmptyState, IconButton, LogoMark } from './ui';
 
 function title(route: Route, projects: Project[] | undefined): string {
   switch (route.name) {
+    case 'home': return 'Home';
     case 'thoughts': return 'Thoughts';
     case 'thought': return route.id === 'new' ? 'New thought' : 'Thought';
     case 'notes': return 'Notes';
@@ -37,11 +39,7 @@ export function App() {
   const projects = useQuery((s) => api.projects(s), [], { topics: ['projects', 'memories', 'files'] });
   // The transcription worker for the header: one request for the top bar and the sidebar, again every minute.
   const worker = useQuery((s) => api.transcriptionStatus(s), [], { topics: ['reports'] });
-  const reloadWorker = worker.reload;
-  useEffect(() => {
-    const timer = setInterval(reloadWorker, 60_000);
-    return () => clearInterval(timer);
-  }, [reloadWorker]);
+  useInterval(worker.reload, REFRESH_MS);
   const [navOpen, setNavOpen] = useState(false);
   const [newProject, setNewProject] = useState(false);
   const routeKey = JSON.stringify(route);
@@ -70,7 +68,7 @@ export function App() {
       <div className="shell__main">
         <header className="topbar">
           <IconButton icon="menu" label="Open menu" onClick={() => setNavOpen(true)} />
-          <LogoMark size={24} />
+          <a href={href.home()} aria-label="Tabula home" className="topbar__logo"><LogoMark size={24} /></a>
           <span className="topbar__title">{title(route, projects.data)}</span>
           <WorkerIndicator status={worker.data} align="end" className="worker-ind--topbar" />
           <IconButton icon="search" label="Search" onClick={() => navigate(href.search())} />
@@ -91,6 +89,7 @@ export function App() {
 
 function Page({ route, projects }: { route: Route; projects: Project[] | undefined }) {
   switch (route.name) {
+    case 'home': return <HomePage projects={projects} />;
     case 'thoughts': return <ThoughtsPage />;
     case 'thought': return <ThoughtEditorPage id={route.id} from={route.from} />;
     case 'notes': return <NotesPage />;
@@ -103,7 +102,7 @@ function Page({ route, projects }: { route: Route; projects: Project[] | undefin
     default:
       return (
         <main className="content">
-          <EmptyState icon="alert" title="Page not found" action={<ButtonLink href={href.thoughts()}>Go to Thoughts</ButtonLink>}>
+          <EmptyState icon="alert" title="Page not found" action={<ButtonLink href={href.home()}>Go to Home</ButtonLink>}>
             This address doesn't lead anywhere in Tabula.
           </EmptyState>
         </main>

@@ -180,3 +180,70 @@ export type ReportSummary = Report & { counts: Record<AttachmentKind, number> };
 /** `purgeAfterHours`: how long after closing the server deletes video and audio (unless Keep media is on). */
 export type ReportDetail = Report & { attachments: Attachment[]; purgeAfterHours: number };
 export type ReportSort = 'createdAt' | 'updatedAt' | 'title' | 'status';
+
+/** How the recordings of a waiting report stand, taken together. */
+export type WaitingTranscript = 'running' | 'queued' | 'failed' | 'done';
+/** Something that waits for the user on Home (GET /api/dashboard), oldest first. */
+export type WaitingItem = {
+  type: 'new_report' | 'triaged' | 'transcription_failed';
+  /** The report. */
+  id: string;
+  ref: string;
+  title: string;
+  project: string | null;
+  since: string;
+  /** For Mark done (expectedVersion). */
+  version: number;
+  keep_media: boolean;
+  /** Video and audio still on disk: the close confirmation names them. */
+  recordings: number;
+  transcript: WaitingTranscript | null;
+  /** transcription_failed: the recording, its file name and the error. */
+  attachment_id?: string;
+  file_name?: string;
+  error?: string | null;
+};
+export type TrimStep = 'files-collapsed' | 'facts-omitted' | 'gotchas-first-sentence' | 'rules-first-sentence' | 'state-truncated';
+export type DashboardWarning =
+  | { type: 'recall_trimmed'; project: string; steps: TrimStep[]; tokens: number }
+  | { type: 'large_file'; project: string; id: string; ref: string; path: string; size: number; limit: number }
+  | { type: 'recordings_waiting'; project: null; count: number; oldest: string };
+export type DashboardProject = {
+  id: string; name: string; last_activity_at: string; file_count: number; open_reports: number; recall_tokens: number;
+};
+export type Dashboard = {
+  waiting: WaitingItem[];
+  warnings: DashboardWarning[];
+  projects: DashboardProject[];
+  recall_budget: number;
+  /** False when the server has no worker token: recordings stay queued by design. */
+  transcription_enabled: boolean;
+  /** TABULA_MEDIA_PURGE_HOURS, for the Mark done confirmation. */
+  purge_after_hours: number;
+};
+
+export type ActivityType = 'files' | 'reports' | 'thoughts' | 'notes';
+export type ActivityChild = { id: string; path: string; ref: string };
+/** One row of the Home timeline (GET /api/activity). */
+export type ActivityItem = {
+  type: 'file' | 'report' | 'thought' | 'note';
+  /** "Pushed 12 files", "New report", "Triage written", "Transcribed", "Saved thought", "Edited note", … */
+  action: string;
+  ref: string;
+  /** The record to open: the file (the newest of a batch), report, thought or note. */
+  id: string;
+  title: string;
+  project: string | null;
+  /** 'human', 'cli', an agent's label, or 'worker'. */
+  by: string;
+  at: string;
+  count?: number;
+  /** One file: its path. */
+  path?: string;
+  /** "Transcribed": the recording. */
+  attachment_id?: string;
+  /** A batch of two or more files, newest first. */
+  children?: ActivityChild[];
+};
+export type ActivityDay = { date: string; items: ActivityItem[] };
+export type ActivityPage = { days: ActivityDay[]; next_before: string | null };

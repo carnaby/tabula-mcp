@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 export type ProjectTab = 'state' | 'reports' | 'files' | 'recall' | 'setup';
 export type GlobalTab = 'rules' | 'recall';
 export type Route =
+  | { name: 'home' }
   | { name: 'thoughts' }
   | { name: 'thought'; id: string | 'new'; from?: string }
   | { name: 'notes' }
@@ -27,6 +28,7 @@ const query = (params: Record<string, string | undefined>) => {
  * keeps it; without it the back button goes to the record type's own list.
  */
 export const href = {
+  home: () => '#/',
   thoughts: () => '#/thoughts',
   thought: (id: string, from?: string) => `#/thoughts/${id}${query({ from })}`,
   notes: () => '#/notes',
@@ -41,7 +43,7 @@ export const href = {
   /** A global rule in its dialog over the Global page: where a rule's reference leads. */
   memory: (id: string) => `#/global${query({ memory: id })}`,
   /** A report opened on one attachment: a frame is selected and its video waits at that moment. */
-  attachment: (reportId: string, id: string) => `#/reports/${reportId}${query({ attachment: id })}`,
+  attachment: (reportId: string, id: string, from?: string) => `#/reports/${reportId}${query({ attachment: id, from })}`,
 };
 
 export function parse(hash: string): Route {
@@ -55,7 +57,9 @@ export function parse(hash: string): Route {
   const params = new URLSearchParams(query);
   const [a, b, c, d] = parts;
   const from = params.get('from') ?? undefined;
-  if (!a || a === 'thoughts') return b ? { name: 'thought', id: b, from } : { name: 'thoughts' };
+  // The start page; Thoughts keep their own address, so old links still open them.
+  if (!a) return { name: 'home' };
+  if (a === 'thoughts') return b ? { name: 'thought', id: b, from } : { name: 'thoughts' };
   if (a === 'notes') return b ? { name: 'note', id: b, from } : { name: 'notes' };
   if (a === 'global') return { name: 'global', tab: b === 'recall' ? 'recall' : 'rules', memory: params.get('memory') ?? undefined };
   if (a === 'search') return { name: 'search', q: params.get('q') ?? '' };
@@ -105,6 +109,7 @@ export function sectionOf(route: Route): Route {
 
 function backLabel(route: Route, name: (slug: string) => string): string | null {
   switch (route.name) {
+    case 'home': return 'Back to Home';
     case 'thoughts': return 'Back to Thoughts';
     case 'notes': return 'Back to Notes';
     case 'reports': return 'Back to Reports';

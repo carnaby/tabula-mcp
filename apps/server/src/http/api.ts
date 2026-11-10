@@ -22,6 +22,7 @@ import { MEMORY_KINDS } from '../domain/validation.js';
 import { requireBearer } from './auth.js';
 import { fileRoutes } from './files-api.js';
 import { reportRoutes } from './reports-api.js';
+import { homeRoutes } from './home-api.js';
 import type { MediaStore } from '../media/store.js';
 import { parse } from './parse.js';
 
@@ -43,6 +44,7 @@ export const apiRoutes: FastifyPluginAsync<{ db: Db; config: Config; store: Medi
   // Child plugin: inherits the bearer preHandler above.
   await app.register(fileRoutes, { db });
   await app.register(reportRoutes, { db, config, store });
+  await app.register(homeRoutes, { db, config });
 
   // Projects
   app.get('/projects', () => listProjects(db));

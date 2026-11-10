@@ -193,3 +193,19 @@ export function useSaveShortcut(save: () => void, enabled = true) {
     return () => window.removeEventListener('keydown', onKey);
   }, [enabled]);
 }
+
+/** How often Home and the worker indicator reload on their own (they also reload when the window regains focus). */
+export const REFRESH_MS = 60_000;
+
+/** Calls the latest `fn` every `ms` while the component is mounted and the tab is visible. */
+export function useInterval(fn: () => void, ms: number) {
+  const ref = useRef(fn);
+  ref.current = fn;
+  useEffect(() => {
+    // A hidden tab does not refresh; useQuery reloads when the user comes back.
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') ref.current();
+    }, ms);
+    return () => clearInterval(timer);
+  }, [ms]);
+}

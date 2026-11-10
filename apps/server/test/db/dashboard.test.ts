@@ -70,6 +70,24 @@ describe('dashboard: waiting for you', () => {
     });
   });
 
+  it('shows the strongest transcript state across the recordings: running, queued, failed, done', async () => {
+    await seedProject(db, 'demo');
+    const mixedRunning = await report({ title: 'Running and queued', created: ago(9) });
+    await recording(mixedRunning.id, { job: { status: 'queued' } });
+    await recording(mixedRunning.id, { job: { status: 'running' } });
+    const mixedFailed = await report({ title: 'Failed and done', created: ago(8) });
+    await recording(mixedFailed.id, { job: { status: 'done' }, transcribed: true });
+    await recording(mixedFailed.id, { job: { status: 'failed', finishedAt: ago(1) } });
+    const queuedFailed = await report({ title: 'Queued and failed', created: ago(7) });
+    await recording(queuedFailed.id, { job: { status: 'failed', finishedAt: ago(1) } });
+    await recording(queuedFailed.id, { job: { status: 'queued' } });
+
+    const by = Object.fromEntries((await dashboard(db)).waiting.filter((w) => w.type === 'new_report').map((w) => [w.title, w]));
+    expect(by['Running and queued']).toMatchObject({ transcript: 'running', recordings: 2 });
+    expect(by['Failed and done']).toMatchObject({ transcript: 'failed', recordings: 2 });
+    expect(by['Queued and failed']).toMatchObject({ transcript: 'queued', recordings: 2 });
+  });
+
   it('leaves out closed reports, and failed transcriptions of closed reports or deleted recordings', async () => {
     await seedProject(db, 'demo');
     const closed = await report({ title: 'Closed one', status: 'done', created: ago(50), updated: ago(10), version: 2 });

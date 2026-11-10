@@ -79,6 +79,21 @@ describe('worker API', () => {
     expect(mcp.statusCode).toBe(401);
   });
 
+  it('keeps the worker token off the speaker and transcribe routes, and the user token off the worker routes', async () => {
+    const id = '00000000-0000-4000-8000-000000000001';
+    const userRoutes: [string, string][] = [
+      ['PUT', `/api/attachments/${id}/speakers`],
+      ['GET', `/api/reports/${id}/speaker-names`],
+      ['POST', `/api/attachments/${id}/transcribe`],
+    ];
+    for (const [method, url] of userRoutes) {
+      expect((await app.inject({ method: method as 'GET', url, headers: worker, payload: method === 'GET' ? undefined : {} })).statusCode, `${method} ${url}`).toBe(401);
+    }
+    const complete = { method: 'POST', url: `/api/worker/jobs/${id}/complete`, payload: { lease: 'x', language: 'sk', model: 'm', duration_ms: null, segments: [] } } as const;
+    expect((await app.inject({ ...complete, headers: main })).statusCode).toBe(401);
+    expect((await app.inject({ ...complete })).statusCode).toBe(401);
+  });
+
   it('answers 503 when no worker token is configured', async () => {
     const off = await buildApp({ config: testConfig({ workerToken: undefined }), db });
     try {

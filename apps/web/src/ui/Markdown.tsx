@@ -1,15 +1,36 @@
+import { findRef } from '@tabula/shared/refs';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import { useMemo, useState } from 'react';
 import { cx } from './Button';
 import { Textarea } from './Field';
+import { href } from '../router';
 import { Segmented } from './Segmented';
 
 marked.setOptions({ gfm: true, breaks: true });
 
-// Links in notes open in a new tab and never get access to this window.
+// A reference (tabula:xxxxxxxx) in running text becomes a link to the Search page, which opens the record.
+// It is an inline extension, so code spans and code blocks keep the text as is; inside a link's text it is left
+// alone (marked sets state.inLink while it reads the text), so there is never a link inside a link.
+marked.use({
+  extensions: [{
+    name: 'tabulaRef',
+    level: 'inline',
+    start: (src: string) => findRef(src)?.index,
+    tokenizer(src: string) {
+      if (this.lexer.state.inLink) return undefined;
+      const m = findRef(src);
+      if (!m || m.index !== 0) return undefined;
+      return { type: 'tabulaRef', raw: src.slice(0, m.length), ref: m.ref };
+    },
+    renderer: (token) => `<a class="ref-link" href="${href.search(token.ref as string)}">${token.ref as string}</a>`,
+  }],
+});
+
+// External links in notes open in a new tab and never get access to this window; internal ones (#/…) stay in this tab.
 DOMPurify.addHook('afterSanitizeAttributes', (node) => {
-  if (node.tagName === 'A' && node.getAttribute('href')) {
+  const target = node.tagName === 'A' ? node.getAttribute('href') : null;
+  if (target && !target.startsWith('#')) {
     node.setAttribute('target', '_blank');
     node.setAttribute('rel', 'noopener noreferrer');
   }

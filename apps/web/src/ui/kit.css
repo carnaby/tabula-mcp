@@ -800,6 +800,7 @@ a.t-btn { text-decoration: none; }
 .t-md ul, .t-md ol { padding-left: 1.4em; }
 .t-md li + li { margin-top: 0.25em; }
 .t-md a { color: var(--accent); text-underline-offset: 2px; }
+.t-md a.ref-link { font-family: var(--font-mono); font-size: 0.92em; }
 .t-md code {
   font-family: var(--font-mono);
   font-size: 0.88em;

@@ -898,8 +898,9 @@ span.transcript__time { color: var(--text-subtle); }
 .home-project:hover { background: var(--surface-hover); }
 .home-project__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .home-project__meta { font-size: var(--text-sm); color: var(--text-muted); }
-.home-project__meter, .home-project__meter .meter__bar, .home-project__meter .meter__fill { display: block; }
-.home-project__meter .meter__bar { height: 6px; }
+.activity-bars { display: block; flex: none; margin-top: 2px; }
+.activity-bars__bar { fill: var(--accent-strong); }
+.activity-bars__tick { fill: var(--border-strong); }
 
 @media (max-width: 960px) {
   /* One column: Warnings (only when there are any), Waiting, Recent activity, Projects. */

@@ -131,7 +131,7 @@ export const api = {
   search: (q: string, signal?: S) => request<SearchHit[]>('GET', `/search${qs({ q, limit: 30 })}`, undefined, signal),
   resolve: (ref: string, signal?: S) => request<RefTarget>('GET', `/resolve/${encodeURIComponent(ref)}`, undefined, signal),
   recall: (project: string, signal?: S) => request<RecallPreview>('GET', `/recall/${encodeURIComponent(project)}`, undefined, signal),
-  dashboard: (signal?: S) => request<Dashboard>('GET', '/dashboard', undefined, signal),
+  dashboard: (tz: string, signal?: S) => request<Dashboard>('GET', `/dashboard${qs({ tz })}`, undefined, signal),
   activity: (f: { before?: string; type?: ActivityType; tz?: string }, signal?: S) =>
     request<ActivityPage>('GET', `/activity${qs(f)}`, undefined, signal),
   copyPrompt: (signal?: S) => request<{ text: string }>('GET', '/settings/copy-prompt', undefined, signal),

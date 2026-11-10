@@ -8,9 +8,12 @@ import { REFRESH_MS, useInterval, useQuery } from '../hooks/data';
 import type { Project } from '../types';
 import { Alert } from '../ui';
 
+/** The browser's time zone: the activity bars count the user's days. */
+const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
 /** Home reloads every minute and when the window regains focus (useQuery), like the worker indicator. */
 export function HomePage({ projects }: { projects: Project[] | undefined }) {
-  const dash = useQuery((s) => api.dashboard(s), [], { topics: ['reports', 'files', 'projects', 'memories'] });
+  const dash = useQuery((s) => api.dashboard(TZ, s), [], { topics: ['reports', 'files', 'projects', 'memories'] });
   useInterval(dash.reload, REFRESH_MS);
 
   return (

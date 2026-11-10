@@ -1,4 +1,3 @@
-import { ACTIVITY_DAYS } from '@tabula/shared/activity';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../../api';
 import { fullDate } from '../../format';
@@ -84,7 +83,7 @@ function rowKeys(items: ActivityItem[]): string[] {
   return keys;
 }
 
-/** The timeline by day: 14 days, Show more for 14 older ones, a filter by type. */
+/** The timeline by day, a filter by type: the first page is the last 48 hours (at most 25 rows), Show more adds 25 older rows. */
 export function ActivityBlock({ projects }: { projects: Project[] | undefined }) {
   const [filter, setFilter] = useState<Filter>('all');
   const type = filter === 'all' ? undefined : filter;
@@ -153,7 +152,7 @@ export function ActivityBlock({ projects }: { projects: Project[] | undefined })
         <div className="t-stack">{[0, 1, 2].map((i) => <Skeleton key={i} height={40} />)}</div>
       ) : (
         <div className="activity" style={{ opacity: switching ? 0.6 : 1 }}>
-          {days.length === 0 && <p className="home-block__empty">No activity in the last {ACTIVITY_DAYS * pages.length} days.</p>}
+          {days.length === 0 && <p className="home-block__empty">No activity in the last 48 hours.</p>}
           {days.map((d) => (
             <div key={d.date} className="activity-day">
               <h3 className="activity-day__label">{dayLabel(d.date)}</h3>

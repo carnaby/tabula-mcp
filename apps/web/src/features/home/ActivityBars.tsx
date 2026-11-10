@@ -1,4 +1,4 @@
-import { dayLabel } from './ActivityBlock';
+import { dayLabel, isoDay } from '../../format';
 
 const BAR = 6;
 const GAP = 2;
@@ -7,8 +7,6 @@ const COLUMN = BAR + GAP;
 const HEIGHT = 24;
 const MIN_BAR = 2;
 const RADIUS = 1.5;
-
-const pad = (n: number) => String(n).padStart(2, '0');
 
 /** A bar anchored at the baseline with its top corners rounded. */
 function barPath(x: number, h: number): string {
@@ -35,7 +33,7 @@ export function ActivityBars({ counts, max, now = new Date() }: { counts: number
     >
       {counts.map((n, i) => {
         const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (counts.length - 1 - i));
-        const label = dayLabel(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`, now);
+        const label = dayLabel(isoDay(d), now);
         const x = i * COLUMN + GAP / 2;
         const h = n > 0 && max > 0 ? Math.max(MIN_BAR, Math.round((n / max) * HEIGHT)) : 0;
         return (

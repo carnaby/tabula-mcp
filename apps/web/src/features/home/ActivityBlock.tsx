@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../../api';
-import { fullDate } from '../../format';
+import { dayLabel, fullDate, TZ } from '../../format';
 import { REFRESH_MS, useInterval, useQuery } from '../../hooks/data';
 import { href } from '../../router';
 import type { ActivityDay, ActivityItem, ActivityPage, ActivityType, Project } from '../../types';
@@ -17,21 +17,8 @@ const FILTERS: { value: Filter; label: string }[] = [
   { value: 'thoughts', label: 'Thoughts' },
   { value: 'notes', label: 'Notes' },
 ];
-/** The browser's time zone: the server cuts the days where the user's days begin. */
-const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
 /** One Show more goes through at most this many pages (about half a year) when they are empty. */
 const MAX_PAGES_PER_CLICK = 12;
-
-const pad = (n: number) => String(n).padStart(2, '0');
-const isoDay = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-
-/** "Today", "Yesterday", "7. 11.", or "7. 11. 2025" in another year. */
-export function dayLabel(date: string, now = new Date()): string {
-  if (date === isoDay(now)) return 'Today';
-  if (date === isoDay(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1))) return 'Yesterday';
-  const [y, m, d] = date.split('-').map(Number);
-  return y === now.getFullYear() ? `${d}. ${m}.` : `${d}. ${m}. ${y}`;
-}
 
 function iconOf(it: ActivityItem): IconName {
   if (it.type === 'report') return it.attachment_id ? 'mic' : 'inbox';
@@ -53,8 +40,8 @@ function targetOf(it: ActivityItem): string {
 const sameRow = (it: ActivityItem) => `${it.type}:${it.ref}:${it.id}:${it.attachment_id ?? ''}:${it.action}:${it.at}`;
 
 /**
- * The pages' days in order. Pages loaded earlier can overlap the first page (it moves with the clock, the
- * older pages do not), so a day found twice becomes one heading and a row found twice one row.
+ * The pages' days in order. A day that spans two pages becomes one heading. The first page and the older pages
+ * partition the timeline (see `after` below), so the row dedupe is only a guard.
  */
 function joinDays(pages: ActivityPage[]): ActivityDay[] {
   const byDate = new Map<string, ActivityItem[]>();
@@ -87,16 +74,22 @@ function rowKeys(items: ActivityItem[]): string[] {
 export function ActivityBlock({ projects }: { projects: Project[] | undefined }) {
   const [filter, setFilter] = useState<Filter>('all');
   const type = filter === 'all' ? undefined : filter;
-  const first = useQuery((s) => api.activity({ type, tz: TZ }, s), [type], { topics: ['reports', 'files', 'notes', 'thoughts'] });
+  // Pages loaded with Show more stay across refreshes; only another filter drops them. `boundary` is where the first
+  // page ended when the first older page was loaded: from then on the first page is refreshed with `after=boundary`
+  // (every change since, no row limit), so it keeps meeting the older pages exactly, however many changes arrive and
+  // whatever the clock does at midnight.
+  const [older, setOlder] = useState<{ filter: Filter; pages: ActivityPage[]; boundary: string | null }>({ filter: 'all', pages: [], boundary: null });
+  const after = older.filter === filter ? older.boundary : null;
+  const first = useQuery((s) => api.activity({ type, tz: TZ, after: after ?? undefined }, s), [type, after], {
+    topics: ['reports', 'files', 'notes', 'thoughts'],
+  });
   useInterval(first.reload, REFRESH_MS);
-  // Pages loaded with Show more stay across refreshes; only another filter drops them.
-  const [older, setOlder] = useState<{ filter: Filter; pages: ActivityPage[] }>({ filter: 'all', pages: [] });
   const [loadingMore, setLoadingMore] = useState(false);
   const [moreError, setMoreError] = useState<string | null>(null);
   const filterRef = useRef(filter);
   filterRef.current = filter;
   useEffect(() => {
-    setOlder({ filter, pages: [] });
+    setOlder({ filter, pages: [], boundary: null });
     setMoreError(null);
   }, [filter]);
   // Fade while a newly chosen filter's first page loads or has failed (the rows are still the old filter's), never on a refresh.
@@ -117,11 +110,12 @@ export function ActivityBlock({ projects }: { projects: Project[] | undefined })
     let before = last?.next_before ?? null;
     if (!before) return;
     const asked = filter;
+    const boundary = (older.filter === asked && older.boundary) || head?.next_before || null;
     setLoadingMore(true);
     setMoreError(null);
     const got: ActivityPage[] = [];
     const keep = () => {
-      if (got.length && filterRef.current === asked) setOlder((o) => ({ filter: asked, pages: [...(o.filter === asked ? o.pages : []), ...got] }));
+      if (got.length && filterRef.current === asked) setOlder((o) => ({ filter: asked, pages: [...(o.filter === asked ? o.pages : []), ...got], boundary: (o.filter === asked && o.boundary) || boundary }));
     };
     try {
       // A quiet stretch gives empty pages: go on until something shows up or nothing older is left.

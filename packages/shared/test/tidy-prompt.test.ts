@@ -17,6 +17,8 @@ describe('tidy prompt', () => {
   it('has a default that passes the shared checks', () => {
     expect(copyPromptProblem(DEFAULT_TIDY_PROMPT)).toBeNull();
     expect([...DEFAULT_TIDY_PROMPT].length).toBeLessThanOrEqual(COPY_PROMPT_MAX);
+    // Both markers the recall digest prints when a state file did not fit (digest.ts stateSection).
     expect(DEFAULT_TIDY_PROMPT).toContain('[… truncated');
+    expect(DEFAULT_TIDY_PROMPT).toContain('[omitted to fit the budget');
   });
 });

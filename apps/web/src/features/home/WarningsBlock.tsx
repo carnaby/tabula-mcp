@@ -64,7 +64,8 @@ export function WarningsBlock({ warnings, projects }: { warnings: DashboardWarni
     if (text === undefined) return;
     const filled = fillTidyPrompt(text, project);
     if (await copyText(filled)) notify('Copied');
-    else notify(`Copy failed — the text is: ${filled}`, { tone: 'danger' });
+    // The text is long: point to the gear's dialog, where it can be selected and copied by hand.
+    else notify('Copy failed — open the gear next to Warnings and copy the text from there.', { tone: 'danger' });
   };
   const actions = { disabled: text === undefined, run: (project: string) => void copy(project) };
   return (

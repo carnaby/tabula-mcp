@@ -81,6 +81,8 @@ describe('MCP endpoint', () => {
     expect(desc('save_thought')).toContain('one thought per topic');
     expect(desc('save_thought')).toContain('shared tag');
     expect(desc('save_thought')).toContain('ONLY when the user explicitly asks');
+    expect(desc('update_thought')).toContain('archived');
+    expect(desc('find_thoughts')).toContain('offset');
     expect(desc('save_thought')).toContain('Call find_thoughts first');
     expect(desc('save_thought')).toContain('reread it months later');
     await client.close();
@@ -356,6 +358,19 @@ describe('MCP endpoint', () => {
     const ok = await client.callTool({ name: 'update_thought', arguments: { id: t.id, title: 'Mine, refined', expected_version: 1 } });
     expect(ok.isError).toBeFalsy();
     expect(await getThought(db, t.id)).toMatchObject({ title: 'Mine, refined', editedBy: 'claude-code', source: 'human' });
+    await client.close();
+  });
+
+  it('update_thought archives over MCP and find_thoughts takes an offset; a negative offset is an input error', async () => {
+    const client = await connect('/mcp', bearer);
+    const saved = await createThought(db, { title: 'Archive me', body: 'b' }, HUMAN);
+    const r = await client.callTool({ name: 'update_thought', arguments: { id: saved.id, archived: true } });
+    expect(r.isError).toBeFalsy();
+    expect((await getThought(db, saved.id))!.archived).toBe(true);
+    const page = JSON.parse(textOf(await client.callTool({ name: 'find_thoughts', arguments: { offset: 0 } })));
+    expect(page.map((h: { id: string }) => h.id)).not.toContain(saved.id);
+    const bad = await client.callTool({ name: 'find_thoughts', arguments: { offset: -1 } });
+    expect(bad.isError).toBe(true);
     await client.close();
   });
 

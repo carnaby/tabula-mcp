@@ -199,9 +199,10 @@ export type ThoughtHit = {
   id: string; title: string; tags: string[]; snippet: string; version: number; edited_by: string; updated_at: string;
 };
 
-/** For agents: newest first without a query, best match first with one. */
-export async function findThoughts(db: Db, p: { query?: string; tag?: string; limit?: number }): Promise<ThoughtHit[]> {
+/** For agents: newest first without a query, best match first with one; `offset` skips that many for the next page. */
+export async function findThoughts(db: Db, p: { query?: string; tag?: string; limit?: number; offset?: number }): Promise<ThoughtHit[]> {
   const limit = Math.min(Math.max(Math.trunc(p.limit ?? 10), 1), 50);
+  const offset = Math.max(Math.trunc(p.offset ?? 0), 0);
   const tsq = prefixTsQuery(p.query);
   const where = thoughtWhere({ q: p.query, tag: p.tag });
   const snippet = tsq
@@ -217,8 +218,10 @@ export async function findThoughts(db: Db, p: { query?: string; tag?: string; li
     .orderBy(
       ...(tsq ? [desc(sql`ts_rank(${thoughts.search}, to_tsquery('tabula', ${tsq}))`)] : []),
       desc(thoughts.updatedAt),
+      asc(thoughts.id),
     )
-    .limit(limit);
+    .limit(limit)
+    .offset(offset);
   return rows.map((r) => ({
     id: r.id, title: r.title, tags: r.tags, snippet: r.snippet, version: r.version, edited_by: r.editedBy, updated_at: r.updatedAt.toISOString(),
   }));

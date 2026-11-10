@@ -1,5 +1,6 @@
 import { api } from '../api';
 import { Author, authorOf, TimeAgo } from '../features/common';
+import { CompactThoughts } from '../features/CompactThoughts';
 import { ListToolbar } from '../features/ListToolbar';
 import { PageHeader } from '../features/PageHeader';
 import { TagChips } from '../features/TagChips';
@@ -71,7 +72,12 @@ export function ThoughtsPage() {
           />
         }
         active={[t.filters.source, t.filters.archived === 'true', !(t.sort === 'updatedAt' && t.dir === 'desc')].filter(Boolean).length}
-        action={<ButtonLink href={href.thought('new')} variant="primary" icon="plus">New thought</ButtonLink>}
+        action={
+          <>
+            <CompactThoughts tag={t.filters.tag || undefined} />
+            <ButtonLink href={href.thought('new')} variant="primary" icon="plus">New thought</ButtonLink>
+          </>
+        }
       />
 
       {(!!tags.data?.length || !!t.filters.tag) && (

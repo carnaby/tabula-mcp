@@ -1,15 +1,15 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
-  agentDeleteFile, agentDeprecate, agentFindNotes, agentGet, agentListFiles, agentReadFile, agentRemember, agentUpdateThought,
+  agentDeleteFile, agentDeprecate, agentFindNotes, agentFindThoughts, agentGet, agentListFiles, agentReadFile, agentRemember, agentUpdateThought,
   agentWriteFile, type AgentBlock, type AgentContext, GLOBAL_ONLY, READ_CHUNK,
 } from '../../src/agent/operations.js';
-import { memories } from '../../src/db/schema.js';
+import { memories, thoughts } from '../../src/db/schema.js';
 import { AGENT_READ_ONLY } from '../../src/domain/errors.js';
 import { deleteFile, getFile, listFiles, putFile, setStatePaths } from '../../src/domain/files.js';
 import { createMemory, getMemory, pageMemories } from '../../src/domain/memories.js';
 import { createNote } from '../../src/domain/notes.js';
 import { setSyncConfig } from '../../src/domain/sync-config.js';
-import { createThought, HUMAN } from '../../src/domain/thoughts.js';
+import { createThought, getThought, HUMAN } from '../../src/domain/thoughts.js';
 import { refOf } from '@tabula/shared/refs';
 import { seedProject, useTestDb } from '../helpers.js';
 
@@ -62,6 +62,34 @@ describe('agent operations', () => {
     expect(await agentUpdateThought(ctx, { id: t.id, append: 'more' })).toEqual({ id: t.id, ref: refOf(t.id), version: 2 });
     expect(await agentUpdateThought(ctx, { id: t.id, body: 'new', expected_version: 2 })).toEqual({ id: t.id, ref: refOf(t.id), version: 3 });
     await expect(agentUpdateThought(ctx, { id: t.id, body: 'stale', expected_version: 2 })).rejects.toMatchObject({ code: 'conflict' });
+  });
+
+  it('update_thought archives and restores without a version, and archived needs no expected_version', async () => {
+    const t = await createThought(db, { title: 'T', body: 'b' }, HUMAN);
+    expect(await agentUpdateThought(ctx, { id: t.id, archived: true })).toEqual({ id: t.id, ref: refOf(t.id), version: 1 });
+    const archived = await getThought(db, t.id);
+    expect(archived).toMatchObject({ archived: true, version: 1, body: 'b', editedBy: HUMAN.label });
+    expect(archived!.updatedAt).toEqual(t.updatedAt);
+    expect(await agentFindThoughts(ctx, {})).toEqual([]);
+    await agentUpdateThought(ctx, { id: t.id, archived: false });
+    expect((await getThought(db, t.id))!.archived).toBe(false);
+    await expect(agentUpdateThought(ctx, { id: t.id, body: 'x', archived: true })).rejects.toMatchObject({ code: 'bad_request' });
+    expect(await agentUpdateThought(ctx, { id: t.id, body: 'x', archived: true, expected_version: 1 })).toMatchObject({ version: 2 });
+    expect((await getThought(db, t.id))!.archived).toBe(true);
+  });
+
+  it('find_thoughts pages with offset, without overlap when thoughts share a time', async () => {
+    const made = [];
+    for (let i = 0; i < 5; i++) made.push(await createThought(db, { title: `T${i}` }, HUMAN));
+    // Same updated_at for all: the order must still be stable.
+    await db.update(thoughts).set({ updatedAt: new Date('2026-11-01T10:00:00Z') });
+    const first = await agentFindThoughts(ctx, { limit: 2 });
+    const second = await agentFindThoughts(ctx, { limit: 2, offset: 2 });
+    const third = await agentFindThoughts(ctx, { limit: 2, offset: 4 });
+    const ids = [...first, ...second, ...third].map((h) => h.id);
+    expect(ids).toHaveLength(5);
+    expect(new Set(ids)).toEqual(new Set(made.map((t) => t.id)));
+    expect(await agentFindThoughts(ctx, { limit: 2, offset: 6 })).toEqual([]);
   });
 
   it('update_thought rejects a memory or note id', async () => {

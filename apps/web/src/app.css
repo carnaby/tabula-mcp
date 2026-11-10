@@ -173,6 +173,7 @@
 .toolbar__toggle { display: none; }
 /* Right end of the row; when it wraps (narrow desktop), still on the right. */
 .toolbar__action { display: flex; gap: 8px; margin-left: auto; }
+.compact-thoughts { display: inline-flex; align-items: center; gap: 4px; }
 .toolbar .t-select { width: auto; }
 /* A table's own sort picker in the toolbar: only where the table is shown as cards (no column headers). */
 .toolbar .t-table-sort { display: none; flex: 0 1 auto; }
@@ -512,6 +513,9 @@ div.file-group__head { cursor: default; }
   .toolbar__filters > .t-seg button { flex: 1; }
   .toolbar__action { flex: 1 1 100%; }
   .toolbar__action > .t-btn { flex: 1; }
+  .toolbar__action { flex-wrap: wrap; }
+  .compact-thoughts { flex: 1 1 auto; min-width: 0; }
+  .compact-thoughts > .t-btn:not(.t-icon-btn) { flex: 1; }
   .file-group__latest { display: none; }
   .editor__title { font-size: 22px; }
   .editor__grid { grid-template-columns: minmax(0, 1fr); }

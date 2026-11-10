@@ -2,6 +2,7 @@ import { refOf } from '@tabula/shared/refs';
 import { and, asc, desc, eq, gt, inArray, isNull, ne } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { projectFiles, reportAttachments, reportJobs, reports, reportTranscripts } from '../db/schema.js';
+import { BAR_DAYS, checkTimeZone, projectActivity } from './activity.js';
 import type { TrimStep } from './digest.js';
 import { FILE_LIMITS } from './files.js';
 import { listProjects } from './projects.js';
@@ -51,6 +52,8 @@ export type DashboardProject = {
   open_reports: number;
   /** Estimated tokens of the project's recall digest with the state (what the Recall preview shows). */
   recall_tokens: number;
+  /** Changes per local day over the last 14 days (file versions, report changes, transcripts), oldest first, today last. */
+  activity: number[];
 };
 
 export type Dashboard = {
@@ -66,8 +69,9 @@ const OPEN = ['new', 'triaged'] as const;
 const RANK: Record<WaitingTranscript, number> = { done: 1, failed: 2, queued: 3, running: 4 };
 
 /** What the Home page shows besides the timeline. */
-export async function dashboard(db: Db, now = new Date(), { workerEnabled = true }: { workerEnabled?: boolean } = {}): Promise<Dashboard> {
-  const [open, recordings, large, projectList, openCounts] = await Promise.all([
+export async function dashboard(db: Db, now = new Date(), { workerEnabled = true, tz = Intl.DateTimeFormat().resolvedOptions().timeZone }: { workerEnabled?: boolean; tz?: string } = {}): Promise<Dashboard> {
+  const zone = checkTimeZone(tz);
+  const [open, recordings, large, projectList, openCounts, activity] = await Promise.all([
     db
       .select({
         id: reports.id, projectId: reports.projectId, title: reports.title, status: reports.status, version: reports.version,
@@ -95,6 +99,7 @@ export async function dashboard(db: Db, now = new Date(), { workerEnabled = true
       .orderBy(desc(projectFiles.size), asc(projectFiles.projectId), asc(projectFiles.path)),
     listProjects(db),
     openReportCounts(db),
+    projectActivity(db, now, zone),
   ]);
   const projects = projectList.filter((p) => p.id !== 'global');
   const digests = await recallDigests(db, projects.map((p) => p.id), now);
@@ -156,6 +161,7 @@ export async function dashboard(db: Db, now = new Date(), { workerEnabled = true
     projects: projects.map((p) => ({
       id: p.id, name: p.name, last_activity_at: p.last_activity_at, file_count: p.file_count, open_reports: openCounts[p.id] ?? 0,
       recall_tokens: digests.get(p.id)?.tokens ?? 0,
+      activity: activity.get(p.id) ?? Array(BAR_DAYS).fill(0),
     })),
     recall_budget: DIGEST_BUDGET,
     transcription_enabled: workerEnabled,

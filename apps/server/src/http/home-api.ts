@@ -19,10 +19,14 @@ const BEFORE_FORMAT = 'must be an ISO 8601 date and time with Z or an offset (e.
  * /api plugin, so only the user token opens it.
  */
 export const homeRoutes: FastifyPluginAsync<{ db: Db; config: Config }> = async (app, { db, config }) => {
-  // purge_after_hours: Mark done shows the same confirmation as the report page.
-  app.get('/dashboard', async () => ({ ...(await dashboard(db, new Date(), { workerEnabled: !!config.workerToken })), purge_after_hours: config.media.purgeAfterHours }));
+  // purge_after_hours: Mark done shows the same confirmation as the report page. tz: the days of the projects' activity bars.
+  app.get('/dashboard', async (req) => {
+    const q = parse(z.object({ tz: z.string().max(100).optional() }), req.query);
+    return { ...(await dashboard(db, new Date(), { workerEnabled: !!config.workerToken, tz: q.tz ?? SERVER_TZ })), purge_after_hours: config.media.purgeAfterHours };
+  });
 
-  // The timeline: 14 days before `before` (default now) in the browser's time zone.
+  // The timeline in the browser's time zone, at most 25 rows a page. Without `before`: yesterday and today. With it: rows
+  // strictly older than `before`, at any age. `next_before` is where the next page starts (null at the end).
   app.get('/activity', (req) => {
     const q = parse(
       z.object({

@@ -1,4 +1,4 @@
-import { ACTIVITY_DAYS } from '@tabula/shared/activity';
+import { ACTIVITY_FIRST_DAYS, ACTIVITY_ROWS } from '@tabula/shared/activity';
 import { refOf } from '@tabula/shared/refs';
 import { and, eq, gte, isNull, lt, or, type SQL, sql } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
@@ -16,6 +16,10 @@ export const FILE_BATCH_GAP_MS = 5 * 60_000;
 export const RECORD_MERGE_MS = 60 * 60_000;
 /** A report's updated_at this close to an upload or to closed_at was set by that upload or by closing. */
 const SAME_WRITE_MS = 2000;
+/** One scan step of a page: this many local days. */
+const WINDOW_DAYS = 14;
+/** Scan steps one request may take (about a year), so a quiet history cannot make it scan forever. */
+const MAX_WINDOWS = 27;
 /** Who transcribes recordings. */
 export const WORKER = 'worker';
 const HUMAN = 'human';
@@ -131,10 +135,10 @@ export function dayStart(date: string, tz: string): Date {
   return new Date(hi * 1000);
 }
 
-/** A page: the local day of the instant just before `end` and the 13 days before it. */
+/** A scan window: the local day of the instant just before `end` and the 13 days before it. */
 export function activityWindow(end: Date, tz: string): { from: Date; to: Date } {
   const lastDay = localDate(new Date(end.getTime() - 1), tz);
-  return { from: dayStart(addDays(lastDay, -(ACTIVITY_DAYS - 1)), tz), to: end };
+  return { from: dayStart(addDays(lastDay, -(WINDOW_DAYS - 1)), tz), to: end };
 }
 
 // ---------- Merging ----------
@@ -239,8 +243,9 @@ function recordRows(events: ActivityEvent[]): ActivityItem[] {
 }
 
 /**
- * The timeline's rows, newest first. A file batch or record group that crosses a page boundary (a local midnight) is
- * split into a row on each page, on purpose: the halves sit under different day headings anyway.
+ * The timeline's rows, newest first. A file batch or record group that crosses a page boundary (the cut between two
+ * pages, the start of the first page, or a scan window) becomes a row on each page, on purpose: no change is lost or
+ * shown twice.
  */
 export function mergeActivity(events: ActivityEvent[]): ActivityItem[] {
   const rows = [...fileRows(events.filter((e) => e.kind === 'file')), ...recordRows(events.filter((e) => e.kind !== 'file'))];
@@ -262,7 +267,7 @@ export function groupByDay(items: ActivityItem[], tz: string): ActivityDay[] {
 // ---------- Sources ----------
 
 /** Every change in [from, to) of the asked type. Deleted files and archived thoughts are left out with all their versions. */
-async function collect(db: Db, from: Date, to: Date, type: ActivityType | undefined): Promise<ActivityEvent[]> {
+export async function collect(db: Db, from: Date, to: Date, type: ActivityType | undefined): Promise<ActivityEvent[]> {
   const want = (t: ActivityType) => !type || type === t;
   const inWindow = (c: AnyPgColumn) => and(gte(c, from), lt(c, to));
   const none: Promise<never[]> = Promise.resolve([]);
@@ -407,13 +412,88 @@ async function hasOlder(db: Db, before: Date, type: ActivityType | undefined): P
   return rows[0]!.older;
 }
 
-/** One page of the timeline: 14 local days before `before` (default now), grouped by day, newest first. */
+/**
+ * The longest run of the newest events whose merged rows number at most `limit`. The cut falls between two different
+ * times, so events with one `at` stay together, and the newest time is always kept. `cut` says events were left out
+ * (or, when every event has one time, that more than `limit` rows were kept whole).
+ */
+function cutPage(events: ActivityEvent[], limit: number): { run: ActivityEvent[]; cut: boolean } {
+  const sorted = [...events].sort((a, b) => b.at.getTime() - a.at.getTime());
+  if (mergeActivity(sorted).length <= limit) return { run: sorted, cut: false };
+  // Positions between two different times; the first one keeps the newest time whole.
+  const cuts: number[] = [];
+  for (let k = 1; k < sorted.length; k++) if (sorted[k]!.at.getTime() !== sorted[k - 1]!.at.getTime()) cuts.push(k);
+  if (!cuts.length) return { run: sorted, cut: true };
+  // cuts[lo] is kept even when it is over the limit; cuts[hi] (beyond the end: all events) is known to be over it.
+  let lo = 0;
+  let hi = cuts.length;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (mergeActivity(sorted.slice(0, cuts[mid])).length <= limit) lo = mid;
+    else hi = mid;
+  }
+  return { run: sorted.slice(0, cuts[lo]), cut: true };
+}
+
+/**
+ * One page of the timeline, grouped by day, newest first, at most 25 rows. The first page (no `before`) is the events
+ * from the start of yesterday to now. A later page is the events strictly older than `before` at any age, scanned
+ * back in 14-day windows until there are more than 25 rows (then cut) or nothing is older, at most 27 windows.
+ * `next_before` is the time of the oldest event on the page when events were left out, else where the scan ended
+ * if something older exists, else null.
+ */
 export async function activityPage(
   db: Db,
-  opts: { before?: Date; type?: ActivityType; tz: string },
+  opts: { before?: Date; type?: ActivityType; tz: string; now?: Date },
 ): Promise<ActivityPage> {
   const tz = checkTimeZone(opts.tz);
-  const { from, to } = activityWindow(opts.before ?? new Date(), tz);
-  const [events, older] = await Promise.all([collect(db, from, to, opts.type), hasOlder(db, from, opts.type)]);
-  return { days: groupByDay(mergeActivity(events), tz), next_before: older ? from.toISOString() : null };
+  const events: ActivityEvent[] = [];
+  let scanEnd: Date | null;
+  if (!opts.before) {
+    const now = opts.now ?? new Date();
+    const from = dayStart(addDays(localDate(now, tz), -(ACTIVITY_FIRST_DAYS - 1)), tz);
+    // `to` is exclusive: one millisecond past now includes a change made at this very instant.
+    const [found, older] = await Promise.all([collect(db, from, new Date(now.getTime() + 1), opts.type), hasOlder(db, from, opts.type)]);
+    events.push(...found);
+    scanEnd = older ? from : null;
+  } else {
+    let end = opts.before;
+    scanEnd = null;
+    for (let i = 0; i < MAX_WINDOWS; i++) {
+      const { from, to } = activityWindow(end, tz);
+      const [found, older] = await Promise.all([collect(db, from, to, opts.type), hasOlder(db, from, opts.type)]);
+      events.push(...found);
+      scanEnd = older ? from : null;
+      if (!older || mergeActivity(events).length > ACTIVITY_ROWS) break;
+      end = from;
+    }
+  }
+  const { run, cut } = cutPage(events, ACTIVITY_ROWS);
+  const next = cut ? run[run.length - 1]!.at : scanEnd;
+  return { days: groupByDay(mergeActivity(run), tz), next_before: next ? next.toISOString() : null };
+}
+
+/** Days in a project's activity bars. */
+export const BAR_DAYS = 14;
+
+/**
+ * Changes per project and local day over the last 14 days, oldest first, today last: file versions, report changes and
+ * transcripts, counted as events (not merged rows). Thoughts and notes don't count; neither do deleted files.
+ */
+export async function projectActivity(db: Db, now: Date, tz: string): Promise<Map<string, number[]>> {
+  const today = localDate(now, tz);
+  const firstDay = addDays(today, -(BAR_DAYS - 1));
+  const from = dayStart(firstDay, tz);
+  const to = new Date(now.getTime() + 1);
+  const [files, reportEvents] = await Promise.all([collect(db, from, to, 'files'), collect(db, from, to, 'reports')]);
+  const counts = new Map<string, number[]>();
+  for (const e of [...files, ...reportEvents]) {
+    if (!e.project) continue;
+    const day = Math.round((Date.parse(localDate(e.at, tz)) - Date.parse(firstDay)) / 86_400_000);
+    if (day < 0 || day >= BAR_DAYS) continue;
+    let list = counts.get(e.project);
+    if (!list) counts.set(e.project, (list = Array(BAR_DAYS).fill(0)));
+    list[day]!++;
+  }
+  return counts;
 }

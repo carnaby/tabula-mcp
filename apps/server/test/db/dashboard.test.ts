@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { refOf } from '@tabula/shared/refs';
 import { describe, expect, it } from 'vitest';
-import { reportAttachments, reportJobs, reports, reportTranscripts } from '../../src/db/schema.js';
+import {
+  notes, projectFileRevisions, projectFiles, reportAttachments, reportJobs, reports, reportTranscripts, thoughts,
+} from '../../src/db/schema.js';
 import { dashboard, LARGE_FILE_BYTES } from '../../src/domain/dashboard.js';
 import { deleteFile, putFile, setStatePaths } from '../../src/domain/files.js';
 import { recallDigests } from '../../src/domain/recall.js';
@@ -226,5 +228,69 @@ describe('dashboard: projects', () => {
     const digests = await recallDigests(db, ['alpha', 'beta']);
     expect(d.projects.map((p) => p.recall_tokens)).toEqual([digests.get('alpha')!.tokens, digests.get('beta')!.tokens]);
     expect(d.recall_budget).toBe(3000);
+  });
+});
+
+describe('dashboard: activity bars', () => {
+  const NOW = new Date('2026-11-10T12:00:00Z');
+  const at = (iso: string) => new Date(iso);
+  async function fileAt(project: string, path: string, iso: string, o: { deleted?: boolean; version?: number } = {}) {
+    const [f] = await db
+      .insert(projectFiles)
+      .values({
+        projectId: project, path, content: 'x', sha256: 'x', size: 1, updatedBy: 'cli', version: o.version ?? 1,
+        createdAt: at(iso), updatedAt: at(iso), deletedAt: o.deleted ? at(iso) : null,
+      })
+      .returning();
+    return f!;
+  }
+  const activity = async (id: string, tz?: string) => (await dashboard(db, NOW, { tz })).projects.find((p) => p.id === id)!.activity;
+
+  it('counts the changes of each local day, oldest first, today last', async () => {
+    await seedProject(db, 'alpha');
+    await seedProject(db, 'beta');
+    // Bratislava is UTC+1 in November: local midnight is 23:00 UTC. 22:59:59 is still the 9th, 23:00:00 is the 10th.
+    await fileAt('alpha', 'docs/a.md', '2026-11-09T22:59:59Z');
+    await fileAt('alpha', 'docs/b.md', '2026-11-09T23:00:00Z');
+    await fileAt('alpha', 'docs/c.md', '2026-11-10T11:00:00Z');
+    // The oldest of the 14 days (28 October) and one second before it.
+    await fileAt('alpha', 'docs/d.md', '2026-10-27T23:00:00Z');
+    await fileAt('alpha', 'docs/e.md', '2026-10-27T22:59:59Z');
+    await fileAt('beta', 'docs/f.md', '2026-11-05T12:00:00Z');
+    // A report counts its creation and its later update, and its transcript: events, not merged rows.
+    const r = await report({ title: 'Bug', project: 'beta', created: at('2026-11-05T09:00:00Z'), updated: at('2026-11-05T10:00:00Z'), version: 2 });
+    const a = await recording(r.id);
+    await db.insert(reportTranscripts).values({ attachmentId: a, model: 'large-v3', text: 'Ahoj', segments: [], createdAt: at('2026-11-05T11:00:00Z') });
+
+    const alpha = await activity('alpha', 'Europe/Bratislava');
+    expect(alpha).toHaveLength(14);
+    expect(alpha[13]).toBe(2);
+    expect(alpha[12]).toBe(1);
+    expect(alpha[0]).toBe(1);
+    expect(alpha.reduce((s, n) => s + n, 0)).toBe(4);
+    const beta = await activity('beta', 'Europe/Bratislava');
+    expect(beta[8]).toBe(4);
+    expect(beta.reduce((s, n) => s + n, 0)).toBe(4);
+    // The same instants in UTC fall on other days.
+    const utc = await activity('alpha', 'UTC');
+    expect([utc[13], utc[12]]).toEqual([1, 2]);
+  });
+
+  it('does not count a deleted file with its versions, a report without a project, thoughts or notes', async () => {
+    await seedProject(db, 'alpha');
+    const gone = await fileAt('alpha', 'docs/gone.md', '2026-11-10T09:00:00Z', { deleted: true, version: 2 });
+    await db.insert(projectFileRevisions).values({ fileId: gone.id, version: 1, content: 'x', sha256: 'x', size: 1, updatedBy: 'cli', createdAt: at('2026-11-10T08:00:00Z') });
+    await report({ title: 'Meeting', project: null, created: at('2026-11-10T09:00:00Z') });
+    await db.insert(notes).values({ projectId: 'alpha', title: 'Note', createdAt: at('2026-11-10T09:00:00Z'), updatedAt: at('2026-11-10T09:00:00Z') });
+    await db.insert(thoughts).values({ title: 'Idea', source: 'human', editedBy: 'human', createdAt: at('2026-11-10T09:00:00Z'), updatedAt: at('2026-11-10T09:00:00Z') });
+    expect(await activity('alpha')).toEqual(Array(14).fill(0));
+  });
+
+  it('counts the earlier versions of a live file too', async () => {
+    await seedProject(db, 'alpha');
+    const f = await fileAt('alpha', 'docs/a.md', '2026-11-10T09:00:00Z', { version: 2 });
+    await db.insert(projectFileRevisions).values({ fileId: f.id, version: 1, content: 'x', sha256: 'x', size: 1, updatedBy: 'cli', createdAt: at('2026-11-09T09:00:00Z') });
+    const a = await activity('alpha', 'UTC');
+    expect([a[12], a[13]]).toEqual([1, 1]);
   });
 });

@@ -14,6 +14,10 @@ const T = (iso: string) => new Date(iso);
 const END = T('2026-11-10T00:00:00Z');
 const page = (o: { before?: Date; type?: ActivityType; tz?: string } = {}) =>
   activityPage(db, { before: o.before ?? END, type: o.type, tz: o.tz ?? 'UTC' });
+/** The first page (no `before`) at a given "now". */
+const first = (now: string, o: { type?: ActivityType; tz?: string } = {}) => activityPage(db, { type: o.type, tz: o.tz ?? 'UTC', now: T(now) });
+const titles = (p: { days: { items: { title: string }[] }[] }) => p.days.flatMap((d) => d.items.map((i) => i.title));
+const minutes = (base: string, n: number) => new Date(T(base).getTime() + n * 60_000).toISOString();
 const items = async (o?: { before?: Date; type?: ActivityType; tz?: string }) => (await page(o)).days.flatMap((d) => d.items);
 
 async function file(project: string, path: string, by: string, at: string, o: { version?: number; deleted?: boolean } = {}) {
@@ -131,20 +135,133 @@ describe('activity', () => {
     ]);
   });
 
-  it('pages by 14 days: next_before is the start of the oldest day, null when nothing is older', async () => {
+  it('shows today and yesterday on the first page, in the zone it is given', async () => {
+    await note({ title: 'Today', created: '2026-11-10T08:00:00Z' });
     await note({ title: 'Yesterday', created: '2026-11-09T12:00:00Z' });
-    await note({ title: 'At the edge', created: '2026-10-27T00:00:00Z' });
-    await note({ title: 'Long ago', created: '2026-10-05T12:00:00Z' });
+    // 23:30 on 8 November in Bratislava: the day before yesterday there.
+    await note({ title: 'Day before', created: '2026-11-08T22:30:00Z' });
+    // 00:30 on 9 November in Bratislava: yesterday there, the 8th in UTC.
+    await note({ title: 'Just yesterday', created: '2026-11-08T23:30:00Z' });
 
-    const first = await page();
-    expect(first.days.flatMap((d) => d.items.map((i) => i.title))).toEqual(['Yesterday', 'At the edge']);
-    expect(first.next_before).toBe('2026-10-27T00:00:00.000Z');
-    // A quiet stretch: an empty page still says that older activity exists.
-    const second = await page({ before: T(first.next_before!) });
-    expect(second).toEqual({ days: [], next_before: '2026-10-13T00:00:00.000Z' });
+    const bratislava = await first('2026-11-10T12:00:00Z', { tz: 'Europe/Bratislava' });
+    expect(titles(bratislava)).toEqual(['Today', 'Yesterday', 'Just yesterday']);
+    expect(bratislava.days.map((d) => d.date)).toEqual(['2026-11-10', '2026-11-09']);
+    expect(bratislava.next_before).toBe('2026-11-08T23:00:00.000Z');
+    const utc = await first('2026-11-10T12:00:00Z');
+    expect(titles(utc)).toEqual(['Today', 'Yesterday']);
+    expect(utc.next_before).toBe('2026-11-09T00:00:00.000Z');
+    // The next page starts at next_before and reaches back at any age.
+    expect(titles(await page({ before: T(utc.next_before!) }))).toEqual(['Just yesterday', 'Day before']);
+  });
+
+  it('has no next_before on the first page when nothing is older', async () => {
+    await note({ title: 'Today', created: '2026-11-10T08:00:00Z' });
+    expect(await first('2026-11-10T12:00:00Z')).toMatchObject({ next_before: null });
+    expect(await first('2026-11-10T12:00:00Z', { type: 'files' })).toEqual({ days: [], next_before: null });
+  });
+
+  it('cuts a page at 25 rows and loses and repeats nothing', async () => {
+    for (let i = 0; i < 30; i++) await note({ title: `n${String(i).padStart(2, '0')}`, created: minutes('2026-11-09T10:00:00Z', i) });
+    const all = Array.from({ length: 30 }, (_, i) => `n${String(29 - i).padStart(2, '0')}`);
+
+    const one = await page();
+    expect(titles(one)).toEqual(all.slice(0, 25));
+    expect(one.next_before).toBe('2026-11-09T10:05:00.000Z');
+    const two = await page({ before: T(one.next_before!) });
+    expect(titles(two)).toEqual(all.slice(25));
+    expect(two.next_before).toBeNull();
+    // The first page (today and yesterday) obeys the same limit and leads to the same second page.
+    const firstPage = await first('2026-11-10T06:00:00Z');
+    expect(titles(firstPage)).toEqual(all.slice(0, 25));
+    expect(firstPage.next_before).toBe(one.next_before);
+  });
+
+  it('keeps events with the same time on the same page', async () => {
+    for (let i = 0; i < 22; i++) await note({ title: `new${i}`, created: minutes('2026-11-09T12:00:00Z', i) });
+    for (let i = 0; i < 5; i++) await note({ title: `same${i}`, created: '2026-11-09T10:00:00Z' });
+    for (let i = 0; i < 3; i++) await note({ title: `old${i}`, created: minutes('2026-11-09T08:00:00Z', i) });
+
+    const one = await page();
+    // 22 + 5 rows would be 27: the five with one time all go to the next page.
+    expect(titles(one)).toHaveLength(22);
+    expect(titles(one).every((t) => t.startsWith('new'))).toBe(true);
+    expect(one.next_before).toBe('2026-11-09T12:00:00.000Z');
+    const two = await page({ before: T(one.next_before!) });
+    expect(titles(two).sort()).toEqual(['old0', 'old1', 'old2', 'same0', 'same1', 'same2', 'same3', 'same4']);
+  });
+
+  it('keeps a page whole when the newest time alone is over the limit', async () => {
+    for (let i = 0; i < 27; i++) await note({ title: `same${i}`, created: '2026-11-09T10:00:00Z' });
+    await note({ title: 'older', created: '2026-11-09T09:00:00Z' });
+    const one = await page();
+    expect(titles(one)).toHaveLength(27);
+    expect(one.next_before).toBe('2026-11-09T10:00:00.000Z');
+    expect(titles(await page({ before: T(one.next_before!) }))).toEqual(['older']);
+  });
+
+  it('splits a file batch cut by the row limit: newer files on one page, the rest on the next, none twice', async () => {
+    await seedProject(db, 'demo');
+    // Files every 4 minutes (one batch), a note two minutes after each: 30 of both, interleaved.
+    for (let i = 0; i < 30; i++) {
+      await file('demo', `docs/f${String(i).padStart(2, '0')}.md`, 'cli', minutes('2026-11-09T10:00:00Z', 4 * i));
+      await note({ title: `n${String(i).padStart(2, '0')}`, created: minutes('2026-11-09T10:00:00Z', 4 * i + 2) });
+    }
+    const one = await page();
+    const two = await page({ before: T(one.next_before!) });
+    const batch = (p: typeof one) => p.days.flatMap((d) => d.items).find((i) => i.type === 'file')!;
+    expect(one.days.flatMap((d) => d.items)).toHaveLength(25);
+    expect(batch(one)).toMatchObject({ action: 'Pushed 24 files', count: 24 });
+    expect(batch(two)).toMatchObject({ action: 'Pushed 6 files', count: 6 });
+    const paths = [...batch(one).children!, ...batch(two).children!].map((c) => c.path);
+    expect(new Set(paths).size).toBe(30);
+    expect(batch(one).children!.every((c) => c.path >= 'docs/f06.md')).toBe(true);
+    const noteTitles = [...titles(one), ...titles(two)].filter((t) => t.startsWith('n'));
+    expect(noteTitles).toEqual(Array.from({ length: 30 }, (_, i) => `n${String(29 - i).padStart(2, '0')}`));
+    expect(two.next_before).toBeNull();
+  });
+
+  it('crosses a quiet stretch longer than 14 days in one request, and stops after about a year', async () => {
+    await note({ title: 'Yesterday', created: '2026-11-09T12:00:00Z' });
+    await note({ title: 'In August', created: '2026-08-01T12:00:00Z' });
+    await note({ title: 'Long ago', created: '2024-01-01T12:00:00Z' });
+
+    const p = await first('2026-11-10T12:00:00Z');
+    expect(titles(p)).toEqual(['Yesterday']);
+    expect(p.next_before).toBe('2026-11-09T00:00:00.000Z');
+    const second = await page({ before: T(p.next_before!) });
+    expect(titles(second)).toEqual(['In August']);
+    // One request looks back at most 27 windows of 14 days and then says where to go on, even when it found nothing.
+    const span = 27 * 14 * 86_400_000;
+    expect(second.next_before).toBe(new Date(T('2026-11-09T00:00:00Z').getTime() - span).toISOString());
     const third = await page({ before: T(second.next_before!) });
-    expect(third.days.flatMap((d) => d.items.map((i) => i.title))).toEqual(['Long ago']);
-    expect(third.next_before).toBeNull();
+    expect(third.days).toEqual([]);
+    expect(third.next_before).toBe(new Date(T(second.next_before!).getTime() - span).toISOString());
+    const fourth = await page({ before: T(third.next_before!) });
+    expect(titles(fourth)).toEqual(['Long ago']);
+    expect(fourth.next_before).toBeNull();
+  });
+
+  it('obeys the same limits under every filter', async () => {
+    await seedProject(db, 'demo');
+    for (let i = 0; i < 30; i++) {
+      const t = minutes('2026-11-09T10:00:00Z', 10 * i);
+      const n = String(i).padStart(2, '0');
+      await file('demo', `docs/f${n}.md`, 'cli', t);
+      await report({ title: `r${n}`, created: t });
+      await thought({ title: `t${n}`, by: 'human', created: t });
+      await note({ title: `n${n}`, created: t });
+    }
+    const name = (type: ActivityType, i: number) => {
+      const n = String(i).padStart(2, '0');
+      return { files: `docs/f${n}.md`, reports: `r${n}`, thoughts: `t${n}`, notes: `n${n}` }[type];
+    };
+    for (const type of ['files', 'reports', 'thoughts', 'notes'] as const) {
+      const one = await first('2026-11-10T06:00:00Z', { type });
+      expect([type, titles(one)]).toEqual([type, Array.from({ length: 25 }, (_, i) => name(type, 29 - i))]);
+      const two = await page({ type, before: T(one.next_before!) });
+      expect([type, titles(two)]).toEqual([type, Array.from({ length: 5 }, (_, i) => name(type, 4 - i))]);
+      expect(two.next_before).toBeNull();
+    }
   });
 
   it('filters by type, and next_before follows the filter', async () => {
@@ -160,9 +277,9 @@ describe('activity', () => {
     const actions = async (type: ActivityType) => (await items({ type })).map((i) => i.action);
     expect(await actions('files')).toEqual(['Pushed 1 file']);
     expect(await actions('reports')).toEqual(['Transcribed', 'New report']);
-    expect(await actions('thoughts')).toEqual(['Saved thought']);
+    expect(await actions('thoughts')).toEqual(['Saved thought', 'Saved thought']);
     expect(await actions('notes')).toEqual(['New note']);
-    expect((await page({ type: 'thoughts' })).next_before).toBe('2026-10-27T00:00:00.000Z');
+    expect((await page({ type: 'thoughts' })).next_before).toBeNull();
     expect((await page({ type: 'notes' })).next_before).toBeNull();
   });
 

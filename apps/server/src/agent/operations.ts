@@ -300,7 +300,7 @@ export const agentDeleteFile = (
 
 export const agentFindNotes = async (
   ctx: AgentContext,
-  p: { query?: string; tag?: string; limit?: number },
+  p: { query?: string; tag?: string; limit?: number; offset?: number },
 ): Promise<Array<NoteHit & { ref: string }>> => (await findNotes(ctx.db, p)).map((h) => ({ ref: refOf(h.id), ...h }));
 
 const agentEditor = (ctx: AgentContext) => ({ source: 'agent' as const, label: ctx.agentLabel });
@@ -316,7 +316,7 @@ export async function agentSaveThought(
 /** Agents may edit any thought, including the human's; every content change keeps the old version as a revision. */
 export async function agentUpdateThought(
   ctx: AgentContext,
-  input: { id: string; title?: string; body?: string; append?: string; tags?: string[]; expected_version?: number },
+  input: { id: string; title?: string; body?: string; append?: string; tags?: string[]; archived?: boolean; expected_version?: number },
 ): Promise<{ id: string; ref: string; version: number }> {
   const r = await resolveRecord(ctx.db, input.id);
   if (r.type !== 'thought') throw badRequest(`${r.record.id} is ${aOrAn(r.type)}, not a thought`);
@@ -329,7 +329,7 @@ export async function agentUpdateThought(
   const t = await updateThought(
     ctx.db,
     r.record.id,
-    { title: input.title, body: input.body, append: input.append, tags: input.tags, expectedVersion: input.expected_version },
+    { title: input.title, body: input.body, append: input.append, tags: input.tags, archived: input.archived, expectedVersion: input.expected_version },
     agentEditor(ctx),
   );
   return { id: t.id, ref: refOf(t.id), version: t.version };
@@ -337,7 +337,7 @@ export async function agentUpdateThought(
 
 export const agentFindThoughts = async (
   ctx: AgentContext,
-  p: { query?: string; tag?: string; limit?: number },
+  p: { query?: string; tag?: string; limit?: number; offset?: number },
 ): Promise<Array<ThoughtHit & { ref: string }>> => (await findThoughts(ctx.db, p)).map((h) => ({ ref: refOf(h.id), ...h }));
 
 // ---- Reports -------------------------------------------------------------------------------------------------

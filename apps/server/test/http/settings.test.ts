@@ -36,11 +36,11 @@ describe('Copy for Claude text', () => {
     expect((await get()).json()).toEqual({ text: 'Process report {ref}.' });
   });
 
-  it('takes 1 000 characters and refuses more, and refuses control characters other than a new line', async () => {
-    expect((await put({ text: 'x'.repeat(1000) })).statusCode).toBe(200);
-    const long = await put({ text: 'x'.repeat(1001) });
+  it('takes 4 000 characters and refuses more, and refuses control characters other than a new line', async () => {
+    expect((await put({ text: 'x'.repeat(4000) })).statusCode).toBe(200);
+    const long = await put({ text: 'x'.repeat(4001) });
     expect(long.statusCode).toBe(400);
-    expect(long.json().message).toBe('text is 1001 characters; the limit is 1000');
+    expect(long.json().message).toBe('text is 4001 characters; the limit is 4000');
     for (const bad of ['a\tb', 'a\rb', `a${String.fromCharCode(0)}b`, `a${String.fromCharCode(27)}b`]) {
       const res = await put({ text: bad });
       expect(res.statusCode).toBe(400);
@@ -55,6 +55,49 @@ describe('Copy for Claude text', () => {
     for (const headers of [{}, as(TEST_WORKER_TOKEN)]) {
       expect((await app.inject({ method: 'GET', url: URL, headers })).statusCode).toBe(401);
       expect((await app.inject({ method: 'PUT', url: URL, headers, payload: { text: 'x' } })).statusCode).toBe(401);
+    }
+  });
+});
+
+const TIDY = '/api/settings/tidy-prompt';
+const getTidy = () => app.inject({ method: 'GET', url: TIDY, headers: as(TEST_TOKEN) });
+const putTidy = (payload: object) => app.inject({ method: 'PUT', url: TIDY, headers: as(TEST_TOKEN), payload });
+
+describe('tidy text', () => {
+  it('answers the default text until one is saved, and an empty text goes back to it', async () => {
+    const first = await getTidy();
+    expect(first.statusCode).toBe(200);
+    expect(first.json().text.startsWith('Tidy the Tabula recall of project {project}.')).toBe(true);
+    expect((await putTidy({ text: '  Tidy {project}\r\nnow.  ' })).json()).toEqual({ text: 'Tidy {project}\nnow.' });
+    expect((await getTidy()).json()).toEqual({ text: 'Tidy {project}\nnow.' });
+    expect((await putTidy({ text: ' ' })).json()).toEqual(first.json());
+    expect((await getTidy()).json()).toEqual(first.json());
+  });
+
+  it('keeps the two texts apart', async () => {
+    await put({ text: 'Process {ref} now.' });
+    await putTidy({ text: 'Tidy {project} now.' });
+    expect((await get()).json()).toEqual({ text: 'Process {ref} now.' });
+    await putTidy({ text: '' });
+    expect((await get()).json()).toEqual({ text: 'Process {ref} now.' });
+    expect((await getTidy()).json().text.startsWith('Tidy the Tabula recall')).toBe(true);
+    await put({ text: '' });
+  });
+
+  it('takes 4 000 characters, refuses more and refuses control characters', async () => {
+    expect((await putTidy({ text: 'x'.repeat(4000) })).statusCode).toBe(200);
+    const long = await putTidy({ text: 'x'.repeat(4001) });
+    expect(long.statusCode).toBe(400);
+    expect(long.json().message).toBe('text is 4001 characters; the limit is 4000');
+    expect((await putTidy({ text: `a${String.fromCharCode(27)}b` })).statusCode).toBe(400);
+    expect((await putTidy({})).statusCode).toBe(400);
+    await putTidy({ text: '' });
+  });
+
+  it('needs the user token; the worker token is refused', async () => {
+    for (const headers of [{}, as(TEST_WORKER_TOKEN)]) {
+      expect((await app.inject({ method: 'GET', url: TIDY, headers })).statusCode).toBe(401);
+      expect((await app.inject({ method: 'PUT', url: TIDY, headers, payload: { text: 'x' } })).statusCode).toBe(401);
     }
   });
 });

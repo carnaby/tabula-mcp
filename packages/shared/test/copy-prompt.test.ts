@@ -15,10 +15,10 @@ describe('copy prompt', () => {
     expect(normalizeCopyPrompt('  One\r\nTwo {ref}\n ')).toBe('One\nTwo {ref}');
   });
 
-  it('allows 1 000 characters and no more', () => {
+  it('allows 4 000 characters and no more', () => {
     expect(copyPromptProblem('x'.repeat(COPY_PROMPT_MAX))).toBeNull();
     expect(copyPromptProblem('😀'.repeat(COPY_PROMPT_MAX))).toBeNull();
-    expect(copyPromptProblem('x'.repeat(COPY_PROMPT_MAX + 1))).toBe('text is 1001 characters; the limit is 1000');
+    expect(copyPromptProblem('x'.repeat(COPY_PROMPT_MAX + 1))).toBe('text is 4001 characters; the limit is 4000');
   });
 
   it('refuses control characters other than a new line', () => {

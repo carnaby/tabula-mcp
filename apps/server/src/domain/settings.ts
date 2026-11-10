@@ -1,5 +1,6 @@
 import { copyPromptProblem, DEFAULT_COPY_PROMPT, normalizeCopyPrompt } from '@tabula/shared/copy-prompt';
 import { DEFAULT_TIDY_PROMPT } from '@tabula/shared/tidy-prompt';
+import { DEFAULT_COMPACT_PROMPT } from '@tabula/shared/compact-prompt';
 import { eq } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { settings } from '../db/schema.js';
@@ -38,3 +39,7 @@ export const setCopyPrompt = (db: Db, raw: string) => saveText(db, 'copy_prompt'
 /** The text Copy puts on the clipboard for a project whose recall is trimmed, with `{project}` for its slug. */
 export const getTidyPrompt = (db: Db) => readText(db, 'tidy_prompt', DEFAULT_TIDY_PROMPT);
 export const setTidyPrompt = (db: Db, raw: string) => saveText(db, 'tidy_prompt', raw, DEFAULT_TIDY_PROMPT);
+
+/** The text Tidy with Claude puts on the clipboard on the Thoughts page. */
+export const getCompactPrompt = (db: Db) => readText(db, 'compact_prompt', DEFAULT_COMPACT_PROMPT);
+export const setCompactPrompt = (db: Db, raw: string) => saveText(db, 'compact_prompt', raw, DEFAULT_COMPACT_PROMPT);

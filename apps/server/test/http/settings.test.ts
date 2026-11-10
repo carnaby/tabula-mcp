@@ -101,3 +101,48 @@ describe('tidy text', () => {
     }
   });
 });
+
+const COMPACT = '/api/settings/compact-prompt';
+const getCompact = () => app.inject({ method: 'GET', url: COMPACT, headers: as(TEST_TOKEN) });
+const putCompact = (payload: object) => app.inject({ method: 'PUT', url: COMPACT, headers: as(TEST_TOKEN), payload });
+
+describe('compact text', () => {
+  it('answers the default text until one is saved, and an empty text goes back to it', async () => {
+    const first = await getCompact();
+    expect(first.statusCode).toBe(200);
+    expect(first.json().text.startsWith('Tidy my Tabula notebook (Thoughts).')).toBe(true);
+    expect((await putCompact({ text: '  Tidy my thoughts\r\nnow.  ' })).json()).toEqual({ text: 'Tidy my thoughts\nnow.' });
+    expect((await getCompact()).json()).toEqual({ text: 'Tidy my thoughts\nnow.' });
+    expect((await putCompact({ text: ' ' })).json()).toEqual(first.json());
+    expect((await getCompact()).json()).toEqual(first.json());
+  });
+
+  it('keeps the texts apart', async () => {
+    await put({ text: 'Process {ref} now.' });
+    await putTidy({ text: 'Tidy {project} now.' });
+    await putCompact({ text: 'Compact now.' });
+    await putCompact({ text: '' });
+    expect((await get()).json()).toEqual({ text: 'Process {ref} now.' });
+    expect((await getTidy()).json()).toEqual({ text: 'Tidy {project} now.' });
+    await put({ text: '' });
+    await putTidy({ text: '' });
+    expect((await getCompact()).json().text.startsWith('Tidy my Tabula notebook')).toBe(true);
+  });
+
+  it('takes 4 000 characters, refuses more and refuses control characters', async () => {
+    expect((await putCompact({ text: 'x'.repeat(4000) })).statusCode).toBe(200);
+    const long = await putCompact({ text: 'x'.repeat(4001) });
+    expect(long.statusCode).toBe(400);
+    expect(long.json().message).toBe('text is 4001 characters; the limit is 4000');
+    expect((await putCompact({ text: `a${String.fromCharCode(27)}b` })).statusCode).toBe(400);
+    expect((await putCompact({})).statusCode).toBe(400);
+    await putCompact({ text: '' });
+  });
+
+  it('needs the user token; the worker token is refused', async () => {
+    for (const headers of [{}, as(TEST_WORKER_TOKEN)]) {
+      expect((await app.inject({ method: 'GET', url: COMPACT, headers })).statusCode).toBe(401);
+      expect((await app.inject({ method: 'PUT', url: COMPACT, headers, payload: { text: 'x' } })).statusCode).toBe(401);
+    }
+  });
+});

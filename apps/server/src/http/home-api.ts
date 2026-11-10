@@ -5,7 +5,7 @@ import type { Db } from '../db/client.js';
 import { ACTIVITY_TYPES, activityPage, SERVER_TZ } from '../domain/activity.js';
 import { dashboard } from '../domain/dashboard.js';
 import { badRequest } from '../domain/errors.js';
-import { getCopyPrompt, getTidyPrompt, setCopyPrompt, setTidyPrompt } from '../domain/settings.js';
+import { getCompactPrompt, getCopyPrompt, getTidyPrompt, setCompactPrompt, setCopyPrompt, setTidyPrompt } from '../domain/settings.js';
 import { parse } from './parse.js';
 
 /** Bounds of `before` and `after`: years the date arithmetic handles. */
@@ -57,5 +57,12 @@ export const homeRoutes: FastifyPluginAsync<{ db: Db; config: Config }> = async 
   app.put('/settings/tidy-prompt', async (req) => {
     const { text } = parse(z.object({ text: z.string() }), req.body);
     return { text: await setTidyPrompt(db, text) };
+  });
+
+  app.get('/settings/compact-prompt', async () => ({ text: await getCompactPrompt(db) }));
+
+  app.put('/settings/compact-prompt', async (req) => {
+    const { text } = parse(z.object({ text: z.string() }), req.body);
+    return { text: await setCompactPrompt(db, text) };
   });
 };

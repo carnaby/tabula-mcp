@@ -21,3 +21,32 @@ export function refQuery(q: string): string | null {
   const hex = v.slice(REF_PREFIX.length).replace(/-/g, '').length;
   return hex >= 4 && hex <= 32 ? v : null;
 }
+
+/**
+ * A reference in running text: `tabula:` and exactly 8 hex characters, not glued to a word on the left and not
+ * followed by more word characters (a full uuid, dashed or not, after the prefix is not a short reference). The only place the pattern lives.
+ */
+const REF_IN_TEXT = /(?<!\w)tabula:[0-9a-f]{8}(?!\w|-[0-9a-f]{4})/.source;
+
+export interface RefMatch { index: number; length: number; ref: string }
+
+/** The first reference in `text`, its ref lowercased, or null. */
+export function findRef(text: string): RefMatch | null {
+  const m = new RegExp(REF_IN_TEXT, 'i').exec(text);
+  return m ? { index: m.index, length: m[0].length, ref: m[0].toLowerCase() } : null;
+}
+
+/** `text` cut into plain strings and `{ ref }` pieces (lowercased), in order. Empty text gives an empty list. */
+export function splitRefs(text: string): Array<string | { ref: string }> {
+  const out: Array<string | { ref: string }> = [];
+  let offset = 0;
+  const re = new RegExp(REF_IN_TEXT, 'gi');
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    if (m.index > offset) out.push(text.slice(offset, m.index));
+    out.push({ ref: m[0].toLowerCase() });
+    offset = m.index + m[0].length;
+  }
+  const rest = text.slice(offset);
+  if (rest) out.push(rest);
+  return out;
+}

@@ -136,6 +136,8 @@ export const api = {
     request<ActivityPage>('GET', `/activity${qs(f)}`, undefined, signal),
   copyPrompt: (signal?: S) => request<{ text: string }>('GET', '/settings/copy-prompt', undefined, signal),
   setCopyPrompt: (text: string) => request<{ text: string }>('PUT', '/settings/copy-prompt', { text }),
+  tidyPrompt: (signal?: S) => request<{ text: string }>('GET', '/settings/tidy-prompt', undefined, signal),
+  setTidyPrompt: (text: string) => request<{ text: string }>('PUT', '/settings/tidy-prompt', { text }),
 };
 
 /**

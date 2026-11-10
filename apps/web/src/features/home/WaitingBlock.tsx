@@ -1,4 +1,4 @@
-import { fillCopyPrompt } from '@tabula/shared/copy-prompt';
+import { DEFAULT_COPY_PROMPT, fillCopyPrompt } from '@tabula/shared/copy-prompt';
 import { useState } from 'react';
 import { api, ApiError } from '../../api';
 import { age, copyText, fullDate } from '../../format';
@@ -7,8 +7,8 @@ import { href } from '../../router';
 import type { Dashboard, Project, WaitingItem, WaitingTranscript } from '../../types';
 import { Badge, type BadgeTone, Button, ButtonLink, Icon, IconButton, type IconName, Skeleton, useConfirm, useToast } from '../../ui';
 import { closeReportMessage } from '../reports/closeReport';
-import { CopyPromptDialog } from './CopyPromptDialog';
 import { ProjectTag } from './ProjectTag';
+import { PromptDialog } from './PromptDialog';
 
 const KIND: Record<WaitingItem['type'], { icon: IconName; label: string }> = {
   new_report: { icon: 'inbox', label: 'New report' },
@@ -61,9 +61,14 @@ export function WaitingBlock({
           ))}
         </ul>
       )}
-      <CopyPromptDialog
+      <PromptDialog
         open={editing && text !== undefined}
+        title="Copy for Claude"
+        intro={<>What <strong>Copy for Claude</strong> puts on the clipboard for a new report. <code className="t-mono">{'{ref}'}</code> becomes the report's reference; a text without it gets the reference at the end.</>}
         text={text ?? ''}
+        fallback={DEFAULT_COPY_PROMPT}
+        preview={(clean) => fillCopyPrompt(clean, 'tabula:1a2b3c4d')}
+        save={(t) => api.setCopyPrompt(t)}
         onClose={() => setEditing(false)}
         onSaved={() => {
           setEditing(false);

@@ -1,8 +1,8 @@
-// The text "Copy for Claude" puts on the clipboard for a report. No imports: @tabula/shared stays dependency-free.
+// The prompt texts Home copies for Claude: the Copy for Claude text and its checks, shared by the tidy text. No imports: @tabula/shared stays dependency-free.
 
 export const DEFAULT_COPY_PROMPT = 'Process report {ref}.';
-/** Characters (code points) the text may have. */
-export const COPY_PROMPT_MAX = 1000;
+/** Characters (code points) a stored prompt text may have (the Copy for Claude and the tidy text). */
+export const COPY_PROMPT_MAX = 4000;
 /** Where the report's reference goes. */
 export const REF_PLACEHOLDER = '{ref}';
 

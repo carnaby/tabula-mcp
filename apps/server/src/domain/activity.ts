@@ -20,6 +20,8 @@ const SAME_WRITE_MS = 2000;
 const WINDOW_DAYS = 14;
 /** Scan steps one request may take (about a year), so a quiet history cannot make it scan forever. */
 const MAX_WINDOWS = 27;
+/** The server's own zone, when the browser does not say its own. */
+export const SERVER_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
 /** Who transcribes recordings. */
 export const WORKER = 'worker';
 const HUMAN = 'human';
@@ -377,45 +379,64 @@ export async function collect(db: Db, from: Date, to: Date, type: ActivityType |
   return events;
 }
 
-/** Whether anything of the asked type happened before `before` (then the page has a next_before). One statement, one connection. */
-async function hasOlder(db: Db, before: Date, type: ActivityType | undefined): Promise<boolean> {
+/**
+ * The time of the newest change of the asked type before `before`, in ms, or null when nothing is older. The newest
+ * older change, not the oldest of a record, because a report or note changed before `before` shows at that change.
+ * One statement, one connection.
+ */
+async function newestBefore(db: Db, before: Date, type: ActivityType | undefined): Promise<number | null> {
   const want = (t: ActivityType) => !type || type === t;
-  const exists: SQL[] = [];
-  const add = (q: SQL | { getSQL(): SQL }) => exists.push(sql`exists (${q})`);
+  const iso = before.toISOString();
+  const newest: SQL[] = [];
+  const add = (q: { getSQL(): SQL }) => newest.push(sql`(${q})`);
   if (want('files')) {
-    add(db.select({ id: projectFiles.id }).from(projectFiles).where(and(isNull(projectFiles.deletedAt), lt(projectFiles.updatedAt, before))).limit(1));
+    add(db.select({ m: sql`max(${projectFiles.updatedAt})` }).from(projectFiles).where(and(isNull(projectFiles.deletedAt), lt(projectFiles.updatedAt, before))));
     add(
       db
-        .select({ id: projectFileRevisions.id })
+        .select({ m: sql`max(${projectFileRevisions.createdAt})` })
         .from(projectFileRevisions)
         .innerJoin(projectFiles, eq(projectFiles.id, projectFileRevisions.fileId))
-        .where(and(isNull(projectFiles.deletedAt), lt(projectFileRevisions.createdAt, before)))
-        .limit(1),
+        .where(and(isNull(projectFiles.deletedAt), lt(projectFileRevisions.createdAt, before))),
     );
   }
-  if (want('reports')) add(db.select({ id: reports.id }).from(reports).where(lt(reports.createdAt, before)).limit(1));
-  if (want('thoughts')) {
-    // The versions, not created_at: the oldest versions of a much-edited thought are no longer kept.
-    add(db.select({ id: thoughts.id }).from(thoughts).where(and(eq(thoughts.archived, false), lt(thoughts.updatedAt, before))).limit(1));
+  if (want('reports')) {
     add(
       db
-        .select({ id: thoughtRevisions.id })
+        .select({ m: sql`max(case when ${reports.updatedAt} < ${iso}::timestamptz then ${reports.updatedAt} else ${reports.createdAt} end)` })
+        .from(reports)
+        .where(lt(reports.createdAt, before)),
+    );
+    add(db.select({ m: sql`max(${reportTranscripts.createdAt})` }).from(reportTranscripts).where(lt(reportTranscripts.createdAt, before)));
+  }
+  if (want('thoughts')) {
+    // The versions, not created_at: the oldest versions of a much-edited thought are no longer kept.
+    add(db.select({ m: sql`max(${thoughts.updatedAt})` }).from(thoughts).where(and(eq(thoughts.archived, false), lt(thoughts.updatedAt, before))));
+    add(
+      db
+        .select({ m: sql`max(${thoughtRevisions.createdAt})` })
         .from(thoughtRevisions)
         .innerJoin(thoughts, eq(thoughts.id, thoughtRevisions.thoughtId))
-        .where(and(eq(thoughts.archived, false), lt(thoughtRevisions.createdAt, before)))
-        .limit(1),
+        .where(and(eq(thoughts.archived, false), lt(thoughtRevisions.createdAt, before))),
     );
   }
-  if (want('notes')) add(db.select({ id: notes.id }).from(notes).where(lt(notes.createdAt, before)).limit(1));
-  if (!exists.length) return false;
-  const rows = await db.execute<{ older: boolean }>(sql`select ${sql.join(exists, sql` or `)} as older`);
-  return rows[0]!.older;
+  if (want('notes')) {
+    add(
+      db
+        .select({ m: sql`max(case when ${notes.updatedAt} < ${iso}::timestamptz then ${notes.updatedAt} else ${notes.createdAt} end)` })
+        .from(notes)
+        .where(lt(notes.createdAt, before)),
+    );
+  }
+  if (!newest.length) return null;
+  const rows = await db.execute<{ ms: string | null }>(sql`select extract(epoch from greatest(${sql.join(newest, sql`, `)})) * 1000 as ms`);
+  const ms = rows[0]!.ms;
+  return ms === null ? null : Math.floor(Number(ms));
 }
 
 /**
  * The longest run of the newest events whose merged rows number at most `limit`. The cut falls between two different
  * times, so events with one `at` stay together, and the newest time is always kept. `cut` says events were left out
- * (or, when every event has one time, that more than `limit` rows were kept whole).
+ * (when every event has one time they all stay, over the limit if need be).
  */
 function cutPage(events: ActivityEvent[], limit: number): { run: ActivityEvent[]; cut: boolean } {
   const sorted = [...events].sort((a, b) => b.at.getTime() - a.at.getTime());
@@ -423,7 +444,8 @@ function cutPage(events: ActivityEvent[], limit: number): { run: ActivityEvent[]
   // Positions between two different times; the first one keeps the newest time whole.
   const cuts: number[] = [];
   for (let k = 1; k < sorted.length; k++) if (sorted[k]!.at.getTime() !== sorted[k - 1]!.at.getTime()) cuts.push(k);
-  if (!cuts.length) return { run: sorted, cut: true };
+  // Every event has one time: nothing can be left out, so this is no cut (the scan says whether more lies beyond).
+  if (!cuts.length) return { run: sorted, cut: false };
   // cuts[lo] is kept even when it is over the limit; cuts[hi] (beyond the end: all events) is known to be over it.
   let lo = 0;
   let hi = cuts.length;
@@ -436,36 +458,43 @@ function cutPage(events: ActivityEvent[], limit: number): { run: ActivityEvent[]
 }
 
 /**
- * One page of the timeline, grouped by day, newest first, at most 25 rows. The first page (no `before`) is the events
- * from the start of yesterday to now. A later page is the events strictly older than `before` at any age, scanned
- * back in 14-day windows until there are more than 25 rows (then cut) or nothing is older, at most 27 windows.
- * `next_before` is the time of the oldest event on the page when events were left out, else where the scan ended
- * if something older exists, else null.
+ * One page of the timeline, grouped by day, newest first, at most 25 rows.
+ * - No `before`, no `after`: the first page, the events from the start of yesterday to now.
+ * - `before`: the events strictly older than `before`, at any age, scanned back in 14-day windows until there are more
+ *   than 25 rows (then cut) or nothing is older. A quiet stretch is jumped over, at most 27 windows are scanned.
+ * - `after`: every event from `after` to now, no row limit and `next_before` = `after`. A first page that is kept
+ *   fresh while older pages are loaded uses it, so the two partition the timeline exactly.
+ * `next_before` is the time of the oldest event on a cut page, else where the scan ended if something older exists,
+ * else null.
  */
 export async function activityPage(
   db: Db,
-  opts: { before?: Date; type?: ActivityType; tz: string; now?: Date },
+  opts: { before?: Date; after?: Date; type?: ActivityType; tz: string; now?: Date },
 ): Promise<ActivityPage> {
   const tz = checkTimeZone(opts.tz);
   const events: ActivityEvent[] = [];
-  let scanEnd: Date | null;
+  let scanEnd: Date | null = null;
+  // `to` is exclusive: one millisecond past now includes a change made at this very instant.
+  const nowEnd = new Date((opts.now ?? new Date()).getTime() + 1);
+  if (opts.after) {
+    events.push(...(await collect(db, opts.after, nowEnd, opts.type)));
+    return { days: groupByDay(mergeActivity(events), tz), next_before: opts.after.toISOString() };
+  }
   if (!opts.before) {
-    const now = opts.now ?? new Date();
-    const from = dayStart(addDays(localDate(now, tz), -(ACTIVITY_FIRST_DAYS - 1)), tz);
-    // `to` is exclusive: one millisecond past now includes a change made at this very instant.
-    const [found, older] = await Promise.all([collect(db, from, new Date(now.getTime() + 1), opts.type), hasOlder(db, from, opts.type)]);
+    const from = dayStart(addDays(localDate(opts.now ?? new Date(), tz), -(ACTIVITY_FIRST_DAYS - 1)), tz);
+    const [found, newest] = await Promise.all([collect(db, from, nowEnd, opts.type), newestBefore(db, from, opts.type)]);
     events.push(...found);
-    scanEnd = older ? from : null;
+    scanEnd = newest === null ? null : from;
   } else {
     let end = opts.before;
-    scanEnd = null;
     for (let i = 0; i < MAX_WINDOWS; i++) {
       const { from, to } = activityWindow(end, tz);
-      const [found, older] = await Promise.all([collect(db, from, to, opts.type), hasOlder(db, from, opts.type)]);
+      const [found, newest] = await Promise.all([collect(db, from, to, opts.type), newestBefore(db, from, opts.type)]);
       events.push(...found);
-      scanEnd = older ? from : null;
-      if (!older || mergeActivity(events).length > ACTIVITY_ROWS) break;
-      end = from;
+      scanEnd = newest === null ? null : from;
+      if (newest === null || mergeActivity(events).length > ACTIVITY_ROWS) break;
+      // Jump over a quiet stretch: the next window ends just after the newest older change.
+      end = new Date(newest + 1);
     }
   }
   const { run, cut } = cutPage(events, ACTIVITY_ROWS);

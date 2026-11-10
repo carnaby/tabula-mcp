@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   notes, projectFileRevisions, projectFiles, reportAttachments, reports, reportTranscripts, thoughtRevisions, thoughts,
 } from '../../src/db/schema.js';
-import { type ActivityType, activityPage } from '../../src/domain/activity.js';
+import { type ActivityItem, type ActivityType, activityPage, collect, mergeActivity } from '../../src/domain/activity.js';
 import { seedProject, useTestDb } from '../helpers.js';
 
 const db = useTestDb();
@@ -18,6 +18,13 @@ const page = (o: { before?: Date; type?: ActivityType; tz?: string } = {}) =>
 const first = (now: string, o: { type?: ActivityType; tz?: string } = {}) => activityPage(db, { type: o.type, tz: o.tz ?? 'UTC', now: T(now) });
 const titles = (p: { days: { items: { title: string }[] }[] }) => p.days.flatMap((d) => d.items.map((i) => i.title));
 const minutes = (base: string, n: number) => new Date(T(base).getTime() + n * 60_000).toISOString();
+/** One entry per changed file and per other row, so pages that split a batch differently can be compared. */
+const atoms = (rows: ActivityItem[]) =>
+  rows
+    .flatMap((i) => (i.type === 'file' ? (i.children ?? [{ id: i.id }]).map((c) => `file:${c.id}`) : [`${i.ref}:${i.action}:${i.at}`]))
+    .sort();
+/** One merge of every event in the database: what the pages together must add up to. */
+const everything = async () => atoms(mergeActivity(await collect(db, T('2000-01-01T00:00:00Z'), T('2100-01-01T00:00:00Z'), undefined)));
 const items = async (o?: { before?: Date; type?: ActivityType; tz?: string }) => (await page(o)).days.flatMap((d) => d.items);
 
 async function file(project: string, path: string, by: string, at: string, o: { version?: number; deleted?: boolean } = {}) {
@@ -218,9 +225,10 @@ describe('activity', () => {
     const noteTitles = [...titles(one), ...titles(two)].filter((t) => t.startsWith('n'));
     expect(noteTitles).toEqual(Array.from({ length: 30 }, (_, i) => `n${String(29 - i).padStart(2, '0')}`));
     expect(two.next_before).toBeNull();
+    expect(atoms([...one.days, ...two.days].flatMap((d) => d.items))).toEqual(await everything());
   });
 
-  it('crosses a quiet stretch longer than 14 days in one request, and stops after about a year', async () => {
+  it('crosses quiet stretches longer than 14 days in one request', async () => {
     await note({ title: 'Yesterday', created: '2026-11-09T12:00:00Z' });
     await note({ title: 'In August', created: '2026-08-01T12:00:00Z' });
     await note({ title: 'Long ago', created: '2024-01-01T12:00:00Z' });
@@ -228,17 +236,46 @@ describe('activity', () => {
     const p = await first('2026-11-10T12:00:00Z');
     expect(titles(p)).toEqual(['Yesterday']);
     expect(p.next_before).toBe('2026-11-09T00:00:00.000Z');
+    // The quiet stretches (months and then more than a year) are jumped over inside one request.
     const second = await page({ before: T(p.next_before!) });
-    expect(titles(second)).toEqual(['In August']);
-    // One request looks back at most 27 windows of 14 days and then says where to go on, even when it found nothing.
-    const span = 27 * 14 * 86_400_000;
-    expect(second.next_before).toBe(new Date(T('2026-11-09T00:00:00Z').getTime() - span).toISOString());
-    const third = await page({ before: T(second.next_before!) });
-    expect(third.days).toEqual([]);
-    expect(third.next_before).toBe(new Date(T(second.next_before!).getTime() - span).toISOString());
-    const fourth = await page({ before: T(third.next_before!) });
-    expect(titles(fourth)).toEqual(['Long ago']);
-    expect(fourth.next_before).toBeNull();
+    expect(titles(second)).toEqual(['In August', 'Long ago']);
+    expect(second.next_before).toBeNull();
+  });
+
+  it('is no cut when every event has one time: next_before comes from the scan', async () => {
+    for (let i = 0; i < 27; i++) await note({ title: `same${i}`, created: '2026-11-09T10:00:00Z' });
+    const one = await page();
+    expect(titles(one)).toHaveLength(27);
+    expect(one.next_before).toBeNull();
+    await note({ title: 'Far back', created: '2026-03-01T10:00:00Z' });
+    const two = await page();
+    expect(titles(two)).toHaveLength(27);
+    // Something older exists: the page ends where the scan ended, not at the time of its events.
+    expect(two.next_before).toBe('2026-10-27T00:00:00.000Z');
+    expect(titles(await page({ before: T(two.next_before!) }))).toEqual(['Far back']);
+  });
+
+  it('keeps the first page fresh with after, so it and the older pages add up to every event', async () => {
+    for (let i = 0; i < 30; i++) await note({ title: `n${String(i).padStart(2, '0')}`, created: minutes('2026-11-09T10:00:00Z', i) });
+    const now = T('2026-11-10T06:00:00Z');
+    const head = await activityPage(db, { tz: 'UTC', now });
+    expect(titles(head)).toHaveLength(25);
+    const boundary = T(head.next_before!);
+    const older = await page({ before: boundary });
+    expect(titles(older)).toHaveLength(5);
+
+    // A newer change arrives. A plain first page would re-cut and drop a row; after= keeps the boundary.
+    await note({ title: 'late', created: '2026-11-10T05:00:00Z' });
+    const fresh = await activityPage(db, { after: boundary, tz: 'UTC', now });
+    expect(titles(fresh)).toHaveLength(26);
+    expect(fresh.next_before).toBe(boundary.toISOString());
+    expect(atoms([...fresh.days, ...older.days].flatMap((d) => d.items))).toEqual(await everything());
+
+    // After midnight the former Yesterday stays: the boundary does not move with the clock.
+    const nextDay = await activityPage(db, { after: boundary, tz: 'UTC', now: T('2026-11-11T01:00:00Z') });
+    expect(nextDay.days.map((d) => d.date)).toEqual(['2026-11-10', '2026-11-09']);
+    expect(atoms([...nextDay.days, ...older.days].flatMap((d) => d.items))).toEqual(await everything());
+    expect(await activityPage(db, { after: boundary, type: 'files', tz: 'UTC', now })).toEqual({ days: [], next_before: boundary.toISOString() });
   });
 
   it('obeys the same limits under every filter', async () => {

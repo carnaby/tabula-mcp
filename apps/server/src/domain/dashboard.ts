@@ -2,7 +2,7 @@ import { refOf } from '@tabula/shared/refs';
 import { and, asc, desc, eq, gt, inArray, isNull, ne } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { projectFiles, reportAttachments, reportJobs, reports, reportTranscripts } from '../db/schema.js';
-import { BAR_DAYS, checkTimeZone, projectActivity } from './activity.js';
+import { BAR_DAYS, checkTimeZone, projectActivity, SERVER_TZ } from './activity.js';
 import type { TrimStep } from './digest.js';
 import { FILE_LIMITS } from './files.js';
 import { listProjects } from './projects.js';
@@ -69,7 +69,7 @@ const OPEN = ['new', 'triaged'] as const;
 const RANK: Record<WaitingTranscript, number> = { done: 1, failed: 2, queued: 3, running: 4 };
 
 /** What the Home page shows besides the timeline. */
-export async function dashboard(db: Db, now = new Date(), { workerEnabled = true, tz = Intl.DateTimeFormat().resolvedOptions().timeZone }: { workerEnabled?: boolean; tz?: string } = {}): Promise<Dashboard> {
+export async function dashboard(db: Db, now = new Date(), { workerEnabled = true, tz = SERVER_TZ }: { workerEnabled?: boolean; tz?: string } = {}): Promise<Dashboard> {
   const zone = checkTimeZone(tz);
   const [open, recordings, large, projectList, openCounts, activity] = await Promise.all([
     db

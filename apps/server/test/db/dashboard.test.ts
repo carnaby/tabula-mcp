@@ -286,6 +286,19 @@ describe('dashboard: activity bars', () => {
     expect(await activity('alpha')).toEqual(Array(14).fill(0));
   });
 
+  it('counts local days across a daylight saving change', async () => {
+    await seedProject(db, 'alpha');
+    const now = new Date('2026-11-02T12:00:00Z');
+    // Bratislava went from UTC+2 to UTC+1 on 25 October; the 14 days are 20 October to 2 November.
+    await fileAt('alpha', 'docs/a.md', '2026-10-19T22:00:00Z');
+    await fileAt('alpha', 'docs/b.md', '2026-10-19T21:59:59Z');
+    await fileAt('alpha', 'docs/c.md', '2026-10-24T22:00:00Z');
+    await fileAt('alpha', 'docs/d.md', '2026-10-25T22:59:59Z');
+    await fileAt('alpha', 'docs/e.md', '2026-10-25T23:00:00Z');
+    const a = (await dashboard(db, now, { tz: 'Europe/Bratislava' })).projects[0]!.activity;
+    expect(a).toEqual([1, 0, 0, 0, 0, 2, 1, 0, 0, 0, 0, 0, 0, 0]);
+  });
+
   it('counts the earlier versions of a live file too', async () => {
     await seedProject(db, 'alpha');
     const f = await fileAt('alpha', 'docs/a.md', '2026-11-10T09:00:00Z', { version: 2 });

@@ -138,6 +138,8 @@ export const api = {
   setCopyPrompt: (text: string) => request<{ text: string }>('PUT', '/settings/copy-prompt', { text }),
   tidyPrompt: (signal?: S) => request<{ text: string }>('GET', '/settings/tidy-prompt', undefined, signal),
   setTidyPrompt: (text: string) => request<{ text: string }>('PUT', '/settings/tidy-prompt', { text }),
+  compactPrompt: (signal?: S) => request<{ text: string }>('GET', '/settings/compact-prompt', undefined, signal),
+  setCompactPrompt: (text: string) => request<{ text: string }>('PUT', '/settings/compact-prompt', { text }),
 };
 
 /**

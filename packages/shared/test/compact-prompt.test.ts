@@ -10,7 +10,7 @@ describe('compact prompt', () => {
   });
 
   it('adds the tag scope as the last line', () => {
-    expect(fillCompactPrompt('Tidy my thoughts.', 'nas')).toBe('Tidy my thoughts.\nOnly the thoughts tagged "nas".');
+    expect(fillCompactPrompt('Tidy my thoughts.', 'demo')).toBe('Tidy my thoughts.\nOnly the thoughts tagged "demo".');
   });
 
   it('has a default that passes the shared checks and asks for a plan before any change', () => {
@@ -20,5 +20,6 @@ describe('compact prompt', () => {
     expect(DEFAULT_COMPACT_PROMPT).toContain('Propose a plan and change nothing yet.');
     expect(DEFAULT_COMPACT_PROMPT).toContain('archived: true');
     expect(DEFAULT_COMPACT_PROMPT).toContain('Delete nothing.');
+    expect(DEFAULT_COMPACT_PROMPT).toContain('they are not duplicates, you archive them next');
   });
 });

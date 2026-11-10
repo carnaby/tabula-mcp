@@ -300,7 +300,7 @@ export const agentDeleteFile = (
 
 export const agentFindNotes = async (
   ctx: AgentContext,
-  p: { query?: string; tag?: string; limit?: number; offset?: number },
+  p: { query?: string; tag?: string; limit?: number },
 ): Promise<Array<NoteHit & { ref: string }>> => (await findNotes(ctx.db, p)).map((h) => ({ ref: refOf(h.id), ...h }));
 
 const agentEditor = (ctx: AgentContext) => ({ source: 'agent' as const, label: ctx.agentLabel });

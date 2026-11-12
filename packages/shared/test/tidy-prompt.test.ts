@@ -20,5 +20,7 @@ describe('tidy prompt', () => {
     // Both markers the recall digest prints when a state file did not fit (digest.ts stateSection).
     expect(DEFAULT_TIDY_PROMPT).toContain('[… truncated');
     expect(DEFAULT_TIDY_PROMPT).toContain('[omitted to fit the budget');
+    // Gotchas and rules are knowledge, not history: they stay where the next session reads them.
+    expect(DEFAULT_TIDY_PROMPT).toContain('Lasting knowledge never goes to the archive.');
   });
 });

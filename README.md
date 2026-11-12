@@ -2,6 +2,8 @@
 
 **A small, self-hosted memory for AI agents, served over MCP.**
 
+**Website:** https://carnaby.github.io/tabula-mcp/ — what Tabula is, screenshots and how to start.
+
 An AI coding agent starts every session with an empty head. Most of what it needs is in the repository: the code, `CLAUDE.md`, the docs in git. Some of it is not. Handoff notes that say where the last session stopped, specs and plans that must stay out of a public repository, the progress log of a running plan — they are gitignored on purpose, so a fresh clone or another computer doesn't have them, and claude.ai never sees them.
 
 Tabula (Latin for *writing tablet*) keeps exactly that. It is one small server with a Postgres database, an MCP endpoint for agents ([Model Context Protocol](https://modelcontextprotocol.io)), a REST API and a web UI:

@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tabula — memory for Claude, served over MCP</title>
+  <meta name="description" content="Tabula is a small, self-hosted memory for Claude, served over MCP: the project files git does not keep, global rules, a Thoughts notebook from claude.ai and reports from your phone with transcripts.">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#fafaf9" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0f0e0d" media="(prefers-color-scheme: dark)">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Tabula — memory for Claude, served over MCP">
+  <meta property="og:description" content="A small, self-hosted memory for Claude: the project files git does not keep, global rules, a Thoughts notebook from claude.ai and reports from your phone with transcripts.">
+  <meta property="og:url" content="https://carnaby.github.io/tabula-mcp/">
+  <meta property="og:image" content="https://carnaby.github.io/tabula-mcp/img/og.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Tabula: self-hosted memory for Claude, served over MCP, with a screenshot of the Home page.">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="https://carnaby.github.io/tabula-mcp/img/og.png">
+  <link rel="canonical" href="https://carnaby.github.io/tabula-mcp/">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header" id="top">
+    <div class="wrap header-inner">
+      <a class="brand" href="#top">
+        <img src="favicon.svg" width="32" height="32" alt="">
+        <span>Tabula</span>
+      </a>
+      <nav class="site-nav" aria-label="Main">
+        <a href="#features">Features</a>
+        <a href="#how-it-works">How it works</a>
+        <a href="#get-started">Get started</a>
+        <a href="https://github.com/carnaby/tabula-mcp">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="wrap">
+        <div class="hero-text">
+          <h1 id="hero-title">Self-hosted memory for Claude, served over&nbsp;<abbr title="Model Context Protocol">MCP</abbr>.</h1>
+          <p class="lead">Handoff notes, private specs and plans, global rules and the ideas worth keeping from your chats survive between sessions, across your computers, and between Claude Code and claude.ai.</p>
+          <div class="actions">
+            <a class="button button-primary" href="https://github.com/carnaby/tabula-mcp">View on GitHub</a>
+            <a class="button" href="#get-started">Get started</a>
+          </div>
+        </div>
+        <figure class="shot hero-shot">
+          <picture>
+            <source srcset="img/home-dark.webp" media="(prefers-color-scheme: dark)">
+            <img src="img/home-light.webp" width="1440" height="900" fetchpriority="high"
+              alt="Tabula's Home page: three reports waiting for you, recent activity by day, a warning that a project's recall was trimmed, and two projects with daily activity bars.">
+          </picture>
+        </figure>
+      </div>
+    </section>
+
+    <section class="section problem" aria-labelledby="problem-title">
+      <div class="wrap">
+        <p class="eyebrow">The problem</p>
+        <h2 id="problem-title">What an AI coding session forgets</h2>
+        <ul class="problem-list">
+          <li>
+            <h3>Every session starts from zero</h3>
+            <p>Claude reads the code and <code>CLAUDE.md</code>, but not where the last session stopped.</p>
+          </li>
+          <li>
+            <h3>The files outside git stay on one computer</h3>
+            <p>Handoff notes, specs and plans are gitignored on purpose, so a fresh clone, another machine or claude.ai never sees them.</p>
+          </li>
+          <li>
+            <h3>Ideas from chats get lost</h3>
+            <p>A plan worked out in a claude.ai conversation is buried in the chat history a week later.</p>
+          </li>
+        </ul>
+        <p class="note">Tabula keeps exactly that, and deliberately no more: no embeddings, no automatic memory, and no second copy of what git already holds.</p>
+      </div>
+    </section>
+
+    <section class="section" id="features" aria-labelledby="features-title">
+      <div class="wrap">
+        <p class="eyebrow">What it does</p>
+        <h2 id="features-title">Four parts, one small server</h2>
+
+        <article class="feature">
+          <div class="feature-text">
+            <h3>Project memory</h3>
+            <p>The <code>tabula</code> command mirrors a repository's untracked files (handoff state, private specs and plans) with <code>tabula push</code> and <code>tabula pull</code>, and a SessionStart hook restores them in a fresh clone. Two machines editing the same file get a conflict, not a silent overwrite.</p>
+            <p>At the start of a session Claude calls <code>recall</code> once and gets the global rules, the handoff state and a list of the names of the newest files, in at most 3&nbsp;000 tokens. When the digest has to be trimmed, Tabula warns you, and one click copies instructions that make Claude move finished history to an archive file.</p>
+          </div>
+          <figure class="shot">
+            <picture>
+              <source srcset="img/project-dark.webp" media="(prefers-color-scheme: dark)">
+              <img src="img/project-light.webp" width="1440" height="900" loading="lazy"
+                alt="The Files tab of the demo-shop project: the synced handoff state, a plan, notes and a spec, grouped by folder, each with its size, version and who wrote it.">
+            </picture>
+          </figure>
+        </article>
+
+        <article class="feature">
+          <div class="feature-text">
+            <h3>Thoughts</h3>
+            <p>Say <em>“save this to Tabula”</em> in claude.ai and what is worth keeping from the chat lands in a Markdown notebook with tags. Every change keeps the previous version, and the editor warns you when an agent changed the text while you were typing.</p>
+            <p><em>Tidy with Claude</em> copies instructions that make Claude propose how to merge, split and de-duplicate your thoughts, and wait for your OK before it changes anything.</p>
+          </div>
+          <figure class="shot">
+            <picture>
+              <source srcset="img/thought-dark.webp" media="(prefers-color-scheme: dark)">
+              <img src="img/thought-light.webp" width="1440" height="900" loading="lazy"
+                alt="A thought titled “Ideas for the sale weekend” in the Markdown editor, with its tags and the text side by side with its preview.">
+            </picture>
+          </figure>
+        </article>
+
+        <article class="feature">
+          <div class="feature-text">
+            <h3>Reports from your phone</h3>
+            <p>Capture a bug while testing on your phone, or record a meeting: photos, videos, screen recordings and voice notes, with no required fields.</p>
+            <p><code>tabula worker</code> on your own PC with an NVIDIA GPU transcribes the recordings with timestamps and can tell the speakers apart. Recordings travel only between your own machines.</p>
+            <p>Claude reads the transcript, looks at the exact moment you point at, and writes the triage: for a bug the cause and the tasks, for a meeting a summary, the decisions and the tasks.</p>
+          </div>
+          <div class="media-pair">
+            <figure class="shot shot-crop shot-report">
+              <picture>
+                <source srcset="img/report-dark.webp" media="(prefers-color-scheme: dark)">
+                <img src="img/report-light.webp" width="1440" height="2000" loading="lazy"
+                  alt="Part of a report titled “Onboarding walkthrough with Eva”: the screen recording, a saved frame and the transcript, where every line has a timestamp and a speaker, Eva or Tomáš.">
+              </picture>
+            </figure>
+            <figure class="phone">
+              <picture>
+                <source srcset="img/mobile-dark.webp" media="(prefers-color-scheme: dark)">
+                <img src="img/mobile-light.webp" width="390" height="844" loading="lazy"
+                  alt="Tabula's Home page on a phone: a warning and the reports waiting for you, each with Open and Mark done or Copy for Claude.">
+              </picture>
+              <figcaption>On a phone. Tabula installs as an app on the home screen.</figcaption>
+            </figure>
+          </div>
+        </article>
+
+        <article class="feature">
+          <div class="feature-text">
+            <h3>Home</h3>
+            <p><em>Waiting for you</em> lists new reports, triaged ones to fix or close and failed transcriptions, with <em>Copy for Claude</em> to hand a report over in one paste.</p>
+            <p><em>Recent activity</em> shows who changed what in the last 48 hours: pushed files, reports, transcripts, thoughts and notes. <em>Warnings</em> appear only when something needs a look, and every project has a bar per day for the last 14 days.</p>
+          </div>
+          <figure class="shot shot-crop shot-home">
+            <picture>
+              <source srcset="img/home-dark.webp" media="(prefers-color-scheme: dark)">
+              <img src="img/home-light.webp" width="1440" height="900" loading="lazy"
+                alt="A closer look at the Home page: reports waiting for you with Open, Mark done and Copy for Claude, recent activity with who did what and when, a Recall trimmed warning and the projects with their daily activity bars.">
+            </picture>
+          </figure>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" id="how-it-works" aria-labelledby="how-title">
+      <div class="wrap">
+        <p class="eyebrow">How it works</p>
+        <h2 id="how-title">One process, one database, your own machines</h2>
+
+        <figure class="diagram">
+          <svg class="diagram-wide" viewBox="0 0 960 340" role="img" aria-labelledby="dw-title">
+            <title id="dw-title">Claude Code, claude.ai and other MCP clients talk to the Tabula server over MCP. The web UI, the tabula command and the transcription worker talk to it over its REST API.</title>
+            <defs>
+              <marker id="dw-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M0 0 10 5 0 10z" fill="currentColor"/>
+              </marker>
+            </defs>
+            <g class="d-box">
+              <rect x="1" y="24" width="218" height="64" rx="10"/>
+              <rect x="1" y="138" width="218" height="64" rx="10"/>
+              <rect x="1" y="252" width="218" height="64" rx="10"/>
+              <rect x="741" y="24" width="218" height="64" rx="10"/>
+              <rect x="741" y="138" width="218" height="64" rx="10"/>
+              <rect x="741" y="252" width="218" height="64" rx="10"/>
+            </g>
+            <rect class="d-server" x="360" y="8" width="240" height="324" rx="14"/>
+            <g class="d-chip">
+              <rect x="380" y="88" width="200" height="44" rx="8"/>
+              <rect x="380" y="144" width="200" height="44" rx="8"/>
+              <rect x="380" y="200" width="200" height="44" rx="8"/>
+              <rect x="380" y="256" width="200" height="44" rx="8"/>
+            </g>
+            <g class="d-lines" marker-end="url(#dw-arrow)">
+              <line x1="220" y1="56" x2="358" y2="56"/>
+              <line x1="220" y1="170" x2="358" y2="170"/>
+              <line x1="220" y1="284" x2="358" y2="284"/>
+              <line x1="740" y1="56" x2="602" y2="56"/>
+              <line x1="740" y1="170" x2="602" y2="170"/>
+              <line x1="740" y1="284" x2="602" y2="284"/>
+            </g>
+            <g class="d-label" text-anchor="middle">
+              <text x="288" y="48">MCP</text>
+              <text x="288" y="162">MCP</text>
+              <text x="288" y="276">MCP</text>
+              <text x="672" y="48">REST /api</text>
+              <text x="672" y="162">REST /api</text>
+              <text x="672" y="276">jobs, HTTPS</text>
+            </g>
+            <g class="d-title" text-anchor="middle">
+              <text x="110" y="61">Claude Code</text>
+              <text x="110" y="175">claude.ai</text>
+              <text x="110" y="289">Other MCP clients</text>
+              <text x="850" y="51">Browser or phone</text>
+              <text x="850" y="165">tabula command</text>
+              <text x="850" y="279">PC with a GPU</text>
+              <text x="480" y="44" class="d-strong">Tabula server</text>
+              <text x="480" y="115">MCP endpoint</text>
+              <text x="480" y="171">REST API</text>
+              <text x="480" y="227">Web UI</text>
+              <text x="480" y="283">Postgres 17</text>
+            </g>
+            <g class="d-sub" text-anchor="middle">
+              <text x="850" y="72">the web UI</text>
+              <text x="850" y="186">syncs untracked files</text>
+              <text x="850" y="300">tabula worker, tray</text>
+              <text x="480" y="66">Node.js, Fastify</text>
+            </g>
+          </svg>
+
+          <svg class="diagram-tall" viewBox="0 0 340 460" role="img" aria-labelledby="dt-title">
+            <title id="dt-title">Claude Code, claude.ai and other MCP clients talk to the Tabula server over MCP. The web UI, the tabula command and the transcription worker talk to it over its REST API.</title>
+            <defs>
+              <marker id="dt-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M0 0 10 5 0 10z" fill="currentColor"/>
+              </marker>
+            </defs>
+            <g class="d-box">
+              <rect x="1" y="1" width="102" height="58" rx="9"/>
+              <rect x="119" y="1" width="102" height="58" rx="9"/>
+              <rect x="237" y="1" width="102" height="58" rx="9"/>
+              <rect x="1" y="380" width="102" height="58" rx="9"/>
+              <rect x="119" y="380" width="102" height="58" rx="9"/>
+              <rect x="237" y="380" width="102" height="58" rx="9"/>
+            </g>
+            <rect class="d-server" x="1" y="122" width="338" height="194" rx="12"/>
+            <g class="d-chip">
+              <rect x="17" y="194" width="148" height="44" rx="8"/>
+              <rect x="175" y="194" width="148" height="44" rx="8"/>
+              <rect x="17" y="250" width="148" height="44" rx="8"/>
+              <rect x="175" y="250" width="148" height="44" rx="8"/>
+            </g>
+            <g class="d-lines" marker-end="url(#dt-arrow)">
+              <line x1="52" y1="60" x2="52" y2="120"/>
+              <line x1="170" y1="60" x2="170" y2="120"/>
+              <line x1="288" y1="60" x2="288" y2="120"/>
+              <line x1="52" y1="379" x2="52" y2="318"/>
+              <line x1="170" y1="379" x2="170" y2="318"/>
+              <line x1="288" y1="379" x2="288" y2="318"/>
+            </g>
+            <g class="d-label">
+              <text x="60" y="95">MCP</text>
+              <text x="178" y="95">MCP</text>
+              <text x="296" y="95">MCP</text>
+              <text x="60" y="353">/api</text>
+              <text x="178" y="353">/api</text>
+              <text x="296" y="353">jobs</text>
+            </g>
+            <g class="d-title" text-anchor="middle">
+              <text x="52" y="35">Claude Code</text>
+              <text x="170" y="35">claude.ai</text>
+              <text x="288" y="26">Other MCP</text>
+              <text x="288" y="45">clients</text>
+              <text x="170" y="154" class="d-strong">Tabula server</text>
+              <text x="91" y="221">MCP endpoint</text>
+              <text x="249" y="221">REST API</text>
+              <text x="91" y="277">Web UI</text>
+              <text x="249" y="277">Postgres 17</text>
+              <text x="52" y="405">Web UI</text>
+              <text x="170" y="405">tabula</text>
+              <text x="288" y="405">GPU PC</text>
+            </g>
+            <g class="d-sub" text-anchor="middle">
+              <text x="170" y="176">Node.js, Fastify</text>
+              <text x="52" y="424">browser, phone</text>
+              <text x="170" y="424">syncs files</text>
+              <text x="288" y="424">worker, tray</text>
+            </g>
+          </svg>
+        </figure>
+
+        <ul class="how-list">
+          <li><strong>Claude Code, claude.ai and other MCP clients</strong> connect to one Tabula server over MCP (Streamable HTTP). Claude Code sends a bearer token; claude.ai uses a connector URL with a secret.</li>
+          <li><strong>The Tabula server</strong> is one Node.js process (Fastify) with Postgres 17. It serves the MCP endpoint, a REST API, the web UI and the <code>tabula</code> command itself.</li>
+          <li><strong>The <code>tabula</code> command</strong> on each of your computers syncs a repository's untracked files: one dependency-free file for Node 22 or newer on Windows, macOS and Linux.</li>
+          <li><strong>The transcription worker</strong> runs on a PC with an NVIDIA GPU and pulls jobs from Tabula over HTTPS, so nothing connects to that computer. The tray app starts it with a click and shows what it does.</li>
+        </ul>
+        <p class="more"><a href="https://github.com/carnaby/tabula-mcp#how-it-works">Details in the README: what it stores, the recall digest and the MCP tools</a></p>
+      </div>
+    </section>
+
+    <section class="section" id="get-started" aria-labelledby="start-title">
+      <div class="wrap wrap-narrow">
+        <p class="eyebrow">Get started</p>
+        <h2 id="start-title">Run your own Tabula</h2>
+        <p class="section-lead">You need Docker on the server and Node 22 or newer on your computers. Replace <code>tabula.example.com</code> with your own address.</p>
+
+        <ol class="steps">
+          <li>
+            <h3>Start it with Docker Compose</h3>
+            <p>Clone the repository, generate the secrets and start the stack.</p>
+            <pre><code>git clone https://github.com/carnaby/tabula-mcp.git &amp;&amp; cd tabula-mcp
+cat &gt; .env &lt;&lt;EOF
+POSTGRES_PASSWORD=$(openssl rand -hex 32)
+TABULA_TOKEN=$(openssl rand -hex 32)
+TABULA_CONNECTOR_SECRET=$(openssl rand -hex 32)
+EOF
+docker compose up -d --build</code></pre>
+            <p>Open <code>http://localhost:3000</code> and paste <code>TABULA_TOKEN</code> from <code>.env</code>. For anything beyond localhost, put Tabula behind a reverse proxy that terminates TLS: the token unlocks everything it holds.</p>
+            <p class="ref"><a href="https://github.com/carnaby/tabula-mcp#run-it-with-docker-compose">README: Run it with Docker Compose</a></p>
+          </li>
+          <li>
+            <h3>Connect Claude Code</h3>
+            <pre><code>claude mcp add tabula --scope user --transport http https://tabula.example.com/mcp \
+  --header "Authorization: Bearer &lt;TABULA_TOKEN&gt;" \
+  --header "X-Tabula-Agent: claude-code"</code></pre>
+            <p class="ref"><a href="https://github.com/carnaby/tabula-mcp#connect-claude-code">README: Connect Claude Code</a></p>
+          </li>
+          <li>
+            <h3>Connect claude.ai</h3>
+            <p>In <em>Settings → Connectors → Add custom connector</em>, use this URL with no authentication. Treat it as a password.</p>
+            <pre><code>https://tabula.example.com/mcp/&lt;TABULA_CONNECTOR_SECRET&gt;</code></pre>
+            <p class="ref"><a href="https://github.com/carnaby/tabula-mcp#connect-claudeai">README: Connect claude.ai</a></p>
+          </li>
+          <li>
+            <h3>Install the <code>tabula</code> command</h3>
+            <p>On macOS or Linux (the README has the PowerShell version for Windows):</p>
+            <pre><code>mkdir -p ~/.tabula &amp;&amp; curl -fsSL https://tabula.example.com/cli/tabula.mjs -o ~/.tabula/tabula.mjs
+node ~/.tabula/tabula.mjs install
+node ~/.tabula/tabula.mjs login https://tabula.example.com</code></pre>
+            <p><code>install</code> prints the folder to add to <code>PATH</code> and the SessionStart hook snippet for Claude Code; add both.</p>
+            <p>Then tell Claude <em>“use Tabula in this project”</em>: it adds a “Memory (Tabula)” section to <code>CLAUDE.md</code> and a <code>.tabula.json</code> to the repository. Run <code>tabula status</code> before the first <code>tabula push</code>.</p>
+            <p class="ref"><a href="https://github.com/carnaby/tabula-mcp#the-tabula-command">README: The tabula command</a></p>
+          </li>
+        </ol>
+
+        <p class="note">Transcribing recordings is optional: set <code>TABULA_WORKER_TOKEN</code> on the server and run <code>tabula worker setup</code> on a PC with an NVIDIA GPU. See <a href="https://github.com/carnaby/tabula-mcp#transcription-worker">Transcription worker</a> and <a href="https://github.com/carnaby/tabula-mcp#tray-app">Tray app</a>.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap footer-inner">
+      <p class="footer-brand"><img src="favicon.svg" width="20" height="20" alt=""> Tabula</p>
+      <p>In daily use by its author with Claude Code and claude.ai. Open source, MIT.</p>
+      <p>TypeScript · Fastify · Postgres · React</p>
+      <p>
+        <a href="https://github.com/carnaby/tabula-mcp/blob/main/LICENSE">MIT License</a>
+        <span aria-hidden="true">·</span>
+        <a href="https://github.com/carnaby/tabula-mcp">GitHub</a>
+        <span aria-hidden="true">·</span>
+        Made by Jozef Sokol
+      </p>
+    </div>
+  </footer>
+</body>
+</html>

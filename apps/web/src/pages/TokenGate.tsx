@@ -20,6 +20,7 @@ export function TokenGate({ children }: { children: ReactNode }) {
         <div className="t-stack" style={{ gap: 6 }}>
           <h1>Sign in to Tabula</h1>
           <p className="t-muted">Paste the bearer token from <code className="t-mono">TABULA_TOKEN</code>. It stays in this browser only.</p>
+          <p className="t-subtle"><a href="https://carnaby.github.io/tabula-mcp/" target="_blank" rel="noopener noreferrer">What is Tabula?</a></p>
         </div>
         <Field label="Token">
           {(id) => <Input id={id} type="password" autoComplete="current-password" value={draft} onChange={(e) => setDraft(e.target.value)} autoFocus />}

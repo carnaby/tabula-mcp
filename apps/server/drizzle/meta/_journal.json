@@ -113,6 +113,13 @@
       "when": 1794263927797,
       "tag": "0015_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1794901260496,
+      "tag": "0016_fornax_jobs",
+      "breakpoints": true
     }
   ]
 }

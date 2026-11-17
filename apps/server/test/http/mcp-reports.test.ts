@@ -7,10 +7,9 @@ import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { type Diarization, reportAttachments } from '../../src/db/schema.js';
-import { claimJob, completeJob } from '../../src/domain/jobs.js';
 import { buildApp } from '../../src/http/app.js';
 import { MediaStore } from '../../src/media/store.js';
-import { seedProject, TEST_TOKEN, testConfig, useTestDb } from '../helpers.js';
+import { finishNextJob, seedProject, TEST_TOKEN, testConfig, useTestDb } from '../helpers.js';
 import { HAS_FFMPEG, PNG, silentWav, testVideo } from '../media-fixtures.js';
 
 const db = useTestDb();
@@ -82,8 +81,7 @@ describe('reports over MCP', () => {
   async function conversation(diarization: Diarization | null = { model: 'pyannote/speaker-diarization-community-1', speakers: 2 }) {
     const created = json((await tool('create_report', { project: 'demo', title: 'Where is the button' })).content);
     const audio = await uploadFile(created.id, silentWav(1), 'audio/wav', 'voice.wav');
-    const claimed = (await claimJob(db, 'pc'))!;
-    await completeJob(db, claimed.job.id, claimed.job.leaseId!, {
+    await finishNextJob(db, {
       language: 'sk', model: 'large-v3', durationMs: 20_000, diarization,
       segments: [
         { start_ms: 12_000, end_ms: 15_000, text: 'Kde je tlačidlo uložiť?', speaker: 'S1' },
@@ -297,13 +295,12 @@ describe('reports over MCP', () => {
     expect(report.attachments[0].transcript.status).toBe('queued');
     expect(report.attachments[0].transcript.note).toMatch(/never connected.*tabula worker --once/);
 
-    const claimed = (await claimJob(db, 'pc'))!;
     // Long enough for more than one part of get_transcript (about 100 000 characters).
     const segments = Array.from({ length: 2000 }, (_, i) => ({
       start_ms: i * 3000, end_ms: i * 3000 + 2500, text: `Veta číslo ${i} o tom, čo sa deje na obrazovke.`,
     }));
     segments[53] = { start_ms: 161_000, end_ms: 163_000, text: 'Tu sa tlačidlo zasekne.' };
-    await completeJob(db, claimed.job.id, claimed.job.leaseId!, { language: 'sk', model: 'large-v3', durationMs: 6_000_000, segments });
+    await finishNextJob(db, { language: 'sk', model: 'large-v3', durationMs: 6_000_000, segments });
 
     report = json((await tool('get_report', { id: created.id })).content);
     const t = report.attachments[0].transcript;

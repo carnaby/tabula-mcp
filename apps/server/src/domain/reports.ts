@@ -484,7 +484,7 @@ export async function purgeClosedMedia(
         const [still] = await tx.select({ id: reports.id }).from(reports).where(and(eq(reports.id, a.reportId), dueReport)).for('share');
         if (!still) return false;
         await store.remove(a.key);
-        // Job rows first, then the attachment row: completeJob locks them in that order too.
+        // Job rows first, then the attachment row: storeTranscript locks them in that order too.
         await failPendingJobs(tx, [a.id], now);
         await tx.update(reportAttachments).set({ purgedAt: now }).where(eq(reportAttachments.id, a.id));
         return true;

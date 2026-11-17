@@ -95,7 +95,7 @@ describe('schema', () => {
       cause: { message: expect.stringMatching(/report_jobs_attachment_kind_idx/) },
     });
     const [job] = await db.select().from(reportJobs);
-    expect(job).toMatchObject({ kind: 'transcribe', status: 'queued', attempts: 0, leaseId: null });
+    expect(job).toMatchObject({ kind: 'transcribe', status: 'queued', attempts: 0, fornaxJobId: null, submitting: false });
 
     const text = 'Tlačidlo prehrávania nereaguje';
     await db.insert(reportTranscripts).values({

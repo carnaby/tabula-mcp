@@ -107,6 +107,54 @@ describe('fornaxClient', () => {
     expect(refused.message).toContain('is not offered');
   });
 
+  it('turns an answer that cannot be read into a transient FornaxError', async () => {
+    const answering = (body: () => BodyInit) => fornaxClient(cfg(), async () => new Response(body(), { status: 200 }));
+    const calls = (c: ReturnType<typeof fornaxClient>) => [
+      () => c.uploadFile('a.wav', Readable.from([Buffer.from('a')]), 1),
+      () => c.submit({ params: {}, fileId: 'f_1' }),
+      () => c.job('j_1'),
+      () => c.output('j_1', 'transcript.json'),
+      () => c.status(),
+    ];
+    // A proxy's error page, an answer that breaks off, and JSON of another shape.
+    const broken = () =>
+      new ReadableStream({
+        start(ctl) {
+          ctl.enqueue(new TextEncoder().encode('{"id":'));
+          ctl.error(new Error('socket hang up'));
+        },
+      });
+    for (const body of [() => '<html>Bad gateway</html>', broken]) {
+      for (const call of calls(answering(body))) {
+        const err = await call().catch((e) => e);
+        expect(err).toBeInstanceOf(FornaxError);
+        expect(err).toMatchObject({ status: null, permanent: false });
+      }
+    }
+    const odd = answering(() => JSON.stringify({ hello: 'world' }));
+    for (const call of [() => odd.uploadFile('a.wav', Readable.from([Buffer.from('a')]), 1), () => odd.submit({ params: {}, fileId: 'f' }), () => odd.job('j')]) {
+      expect(await call().catch((e) => e)).toMatchObject({ name: 'FornaxError', status: null, permanent: false });
+    }
+    const unknownState = answering(() => JSON.stringify({ id: 'j', state: 'paused', change: 'c' }));
+    expect(await unknownState.job('j').catch((e) => e)).toMatchObject({ name: 'FornaxError', status: null, permanent: false });
+  });
+
+  it('lets an abort by the caller through while the answer is read', async () => {
+    const stop = new AbortController();
+    // The answer's headers came; its body never ends until the request is aborted.
+    const hanging = fornaxClient(cfg(), async (_url, init) => {
+      const signal = (init as RequestInit).signal!;
+      return new Response(
+        new ReadableStream({ start: (ctl) => signal.addEventListener('abort', () => ctl.error(signal.reason), { once: true }) }),
+        { status: 200 },
+      );
+    });
+    setTimeout(() => stop.abort(), 50);
+    const err = await hanging.job('j_1', { wait: 1, signal: stop.signal }).catch((e) => e);
+    expect(err).not.toBeInstanceOf(FornaxError);
+    expect(err.name).toBe('AbortError');
+  });
+
   it('never puts the token into an error message', async () => {
     const wrong = fornaxClient({ ...cfg(), token: 'wrong-token-0123456789' });
     const unauthorized = await wrong.status().catch((e) => e);

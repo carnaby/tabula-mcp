@@ -2,7 +2,7 @@ import { sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { AGENT_READ_ONLY, badRequest, forbidden, notFound } from '../domain/errors.js';
 import { getFile, listFiles, type ProjectFile } from '../domain/files.js';
-import { isRecording, lastWorkerSeen, type TranscriptState, transcriptStates } from '../domain/jobs.js';
+import { isRecording, type TranscriptState, transcriptStates } from '../domain/jobs.js';
 import { createMemory, deprecateMemory, type Memory } from '../domain/memories.js';
 import { findNotes, type Note, type NoteHit } from '../domain/notes.js';
 import { listProjects, type ProjectSummary } from '../domain/projects.js';
@@ -185,10 +185,9 @@ async function attachmentBlocks(ctx: AgentContext, a: Attachment, report: Report
     return [{ type: 'image', image, mime }, jsonBlock(view)];
   }
   const s = (await transcriptStates(ctx.db, [a.id])).get(a.id);
-  const lastSeen = isRecording(a) && s?.status !== 'done' ? await lastWorkerSeen(ctx.db) : null;
   return [jsonBlock({
     ...view,
-    ...transcriptForAgent(a, s, lastSeen, ctx.workerEnabled !== false),
+    ...transcriptForAgent(a, s, null, ctx.workerEnabled !== false),
     next: `call get_report with id "${refOf(report.id)}" for the report and the first part of the transcript, and get_transcript with attachment_id "${refOf(a.id)}" for all of it`,
   })];
 }
@@ -469,11 +468,9 @@ export async function agentGetReport(ctx: AgentContext, id: string) {
   const r = await requireReportRef(ctx, id);
   const files = await listAttachments(ctx.db, r.id);
   const states = await transcriptStates(ctx.db, files.filter(isRecording).map((a) => a.id));
-  const waiting = files.some((a) => isRecording(a) && states.get(a.id)?.status !== 'done');
-  const lastSeen = waiting ? await lastWorkerSeen(ctx.db) : null;
   return {
     ...reportForAgent(r),
-    attachments: files.map((a) => ({ ...attachmentForAgent(a, m), ...transcriptForAgent(a, states.get(a.id), lastSeen, ctx.workerEnabled !== false) })),
+    attachments: files.map((a) => ({ ...attachmentForAgent(a, m), ...transcriptForAgent(a, states.get(a.id), null, ctx.workerEnabled !== false) })),
   };
 }
 
@@ -535,7 +532,7 @@ export async function agentGetTranscript(ctx: AgentContext, input: { attachment_
   const a = await requireAttachment(ctx.db, id);
   if (!isRecording(a)) throw badRequest(`attachment ${id} is ${a.kind === 'image' ? 'a photo' : 'a frame'}; only video and audio are transcribed`);
   const s = (await transcriptStates(ctx.db, [id])).get(id);
-  if (s?.status !== 'done') throw notFound(`attachment ${id} has no transcript yet: ${pendingText(s, await lastWorkerSeen(ctx.db), ctx.workerEnabled !== false)}`);
+  if (s?.status !== 'done') throw notFound(`attachment ${id} has no transcript yet: ${pendingText(s, null, ctx.workerEnabled !== false)}`);
   const view = speakerView(s.segments, s.diarization, s.speakers);
   const lines = transcriptLines(s.segments, view.labels);
   const offset = Math.max(0, Math.trunc(input.offset ?? 0));

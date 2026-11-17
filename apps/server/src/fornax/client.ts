@@ -32,6 +32,8 @@ const LONG_POLL_MARGIN_S = 15;
 // A recording of hours may be gigabytes; the upload has no 60 s limit.
 const UPLOAD_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 
+const STATES = new Set<unknown>(['queued', 'running', 'succeeded', 'failed', 'canceled'] satisfies FornaxJob['state'][]);
+
 type WireJob = {
   id: string;
   state: FornaxJob['state'];
@@ -47,11 +49,12 @@ export function fornaxClient(cfg: FornaxConfig, fetchImpl: typeof fetch = fetch)
   // The token must not leak through any message, whatever the cause says.
   const scrub = (s: string) => (cfg.token ? s.split(cfg.token).join('***') : s);
 
+  /** The answer of a successful call, parsed as JSON. Reading or parsing it fails like the call itself would. */
   async function call(
     method: string,
     path: string,
     init: { body?: BodyInit; headers?: Record<string, string>; timeoutMs?: number; signal?: AbortSignal; duplex?: boolean } = {},
-  ): Promise<Response> {
+  ): Promise<unknown> {
     const timeout = AbortSignal.timeout(init.timeoutMs ?? CALL_TIMEOUT_MS);
     const signal = init.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
     let res: Response;
@@ -70,8 +73,16 @@ export function fornaxClient(cfg: FornaxConfig, fetchImpl: typeof fetch = fetch)
       const cause = (e as { cause?: { code?: string } }).cause;
       throw new FornaxError(scrub(`Fornax is unreachable${cause?.code ? ` (${cause.code})` : ''}`), null, false);
     }
-    if (res.ok) return res;
-    throw await failure(res);
+    if (!res.ok) throw await failure(res);
+    // The body arrives after the headers: it can still time out, break off, or be a proxy's page instead of JSON.
+    try {
+      return await res.json();
+    } catch (e) {
+      if (init.signal?.aborted) throw e;
+      if (timeout.aborted) throw new FornaxError('Fornax did not answer in time', null, false);
+      if (e instanceof SyntaxError) throw new FornaxError('Fornax answered with something other than JSON', null, false);
+      throw new FornaxError('the answer from Fornax broke off', null, false);
+    }
   }
 
   async function failure(res: Response): Promise<FornaxError> {
@@ -86,7 +97,12 @@ export function fornaxClient(cfg: FornaxConfig, fetchImpl: typeof fetch = fetch)
     return new FornaxError(scrub(message ? `Fornax answered ${res.status}: ${message}` : `Fornax answered ${res.status}`), res.status, permanent);
   }
 
-  const toJob = (w: WireJob): FornaxJob => {
+  const unexpected = () => new FornaxError('Fornax sent an answer of an unexpected shape', null, false);
+  const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+  const toJob = (body: unknown): FornaxJob => {
+    if (!isObject(body) || typeof body.id !== 'string' || !STATES.has(body.state) || typeof body.change !== 'string') throw unexpected();
+    const w = body as WireJob;
     const hasProgress = w.progress != null || w.progress_message != null;
     return {
       id: w.id,
@@ -104,25 +120,28 @@ export function fornaxClient(cfg: FornaxConfig, fetchImpl: typeof fetch = fetch)
   };
 
   return {
-    async uploadFile(name: string, body: Readable | ReadableStream, size: number): Promise<{ id: string }> {
+    async uploadFile(name: string, body: Readable | ReadableStream, size: number, signal?: AbortSignal): Promise<{ id: string }> {
       const stream = body instanceof Readable ? (Readable.toWeb(body) as ReadableStream) : body;
-      const res = await call('POST', `/api/files?name=${encodeURIComponent(name)}`, {
+      const answer = await call('POST', `/api/files?name=${encodeURIComponent(name)}`, {
         body: stream as unknown as BodyInit,
         headers: { 'content-type': 'application/octet-stream', 'content-length': String(size) },
         duplex: true,
         timeoutMs: UPLOAD_TIMEOUT_MS,
+        ...(signal ? { signal } : {}),
       });
-      return { id: ((await res.json()) as { id: string }).id };
+      if (!isObject(answer) || typeof answer.id !== 'string') throw unexpected();
+      return { id: answer.id };
     },
 
-    async submit(input: { params: Record<string, unknown>; fileId: string }): Promise<FornaxJob> {
-      const res = await call('POST', '/api/jobs', {
+    async submit(input: { params: Record<string, unknown>; fileId: string }, signal?: AbortSignal): Promise<FornaxJob> {
+      const body = await call('POST', '/api/jobs', {
         body: JSON.stringify({
           type: 'transcribe', params: input.params, inputs: { audio: input.fileId }, priority: cfg.priority, group: 'tabula',
         }),
         headers: { 'content-type': 'application/json' },
+        ...(signal ? { signal } : {}),
       });
-      return toJob((await res.json()) as WireJob);
+      return toJob(body);
     },
 
     /** The job, or null when Fornax does not know it (404; also another client's job). */
@@ -132,11 +151,11 @@ export function fornaxClient(cfg: FornaxConfig, fetchImpl: typeof fetch = fetch)
       if (opts.change !== undefined) q.set('change', opts.change);
       const qs = q.size ? `?${q}` : '';
       try {
-        const res = await call('GET', `/api/jobs/${encodeURIComponent(id)}${qs}`, {
+        const body = await call('GET', `/api/jobs/${encodeURIComponent(id)}${qs}`, {
           timeoutMs: opts.wait ? (opts.wait + LONG_POLL_MARGIN_S) * 1000 : CALL_TIMEOUT_MS,
           ...(opts.signal ? { signal: opts.signal } : {}),
         });
-        return toJob((await res.json()) as WireJob);
+        return toJob(body);
       } catch (e) {
         if (e instanceof FornaxError && e.status === 404) return null;
         throw e;
@@ -144,16 +163,21 @@ export function fornaxClient(cfg: FornaxConfig, fetchImpl: typeof fetch = fetch)
     },
 
     /** An output of a finished job, parsed as JSON. */
-    async output(id: string, name: string): Promise<unknown> {
-      const res = await call('GET', `/api/jobs/${encodeURIComponent(id)}/outputs/${encodeURIComponent(name)}`);
-      return res.json();
+    async output(id: string, name: string, signal?: AbortSignal): Promise<unknown> {
+      return call('GET', `/api/jobs/${encodeURIComponent(id)}/outputs/${encodeURIComponent(name)}`, signal ? { signal } : {});
     },
 
     /** Whether the Fornax worker is online and offers `transcribe` (GET /api/types). */
     async status(): Promise<{ online: boolean; offered: boolean }> {
-      const res = await call('GET', '/api/types');
-      const body = (await res.json()) as { types?: { name: string }[]; worker?: { online?: boolean } };
-      return { online: body.worker?.online === true, offered: (body.types ?? []).some((t) => t.name === 'transcribe') };
+      const body = await call('GET', '/api/types');
+      if (!isObject(body)) throw unexpected();
+      const { types, worker } = body as { types?: unknown; worker?: { online?: unknown } | null };
+      return {
+        online: isObject(worker) && worker.online === true,
+        offered: Array.isArray(types) && types.some((t) => isObject(t) && t.name === 'transcribe'),
+      };
     },
   };
 }
+
+export type FornaxClient = ReturnType<typeof fornaxClient>;

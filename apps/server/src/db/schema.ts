@@ -300,8 +300,8 @@ export type SpeakerName = { name: string; by: 'user' | 'agent'; at: string };
 export type SpeakerNames = Record<string, SpeakerName>;
 
 /**
- * Work for the transcription worker, a PC that pulls jobs over HTTPS (Tabula never connects to it). A worker holds a
- * job under a lease and extends it with heartbeats; a lease that runs out puts the job back in the queue.
+ * A recording to transcribe. Fornax (a separate GPU job queue) does the work: the sync uploads the recording, submits a
+ * job and follows it until the transcript can be stored.
  */
 export const reportJobs = pgTable(
   'report_jobs',
@@ -312,16 +312,19 @@ export const reportJobs = pgTable(
       .references(() => reportAttachments.id, { onDelete: 'cascade' }),
     kind: jobKind('kind').notNull().default('transcribe'),
     status: jobStatus('status').notNull().default('queued'),
-    /** How many times a worker took the job; a lease that ran out counts as well. */
+    /** How many times the recording was submitted to Fornax (a failed upload or submit counts as well). */
     attempts: integer('attempts').notNull().default(0),
-    /** Not handed out before this moment (the back-off after a failed attempt). */
+    /** Not submitted before this moment (the back-off after a failed submit). */
     runAfter: timestamp('run_after', { withTimezone: true }).notNull().defaultNow(),
-    /** New with every claim: proves that the worker reporting on the job is the one holding it. */
-    leaseId: uuid('lease_id'),
-    leaseUntil: timestamp('lease_until', { withTimezone: true }),
-    /** The worker that took it last (its host name). */
-    worker: text('worker'),
     error: text('error'),
+    /** The job in Fornax; null until it is submitted (and again after Try again or Transcribe again). */
+    fornaxJobId: text('fornax_job_id'),
+    /** Fornax's change value of the job as last seen: following it waits until the job changes. */
+    fornaxChange: text('fornax_change'),
+    /** Why the job waits in Fornax, one sentence from Fornax (e.g. the worker is offline). */
+    note: text('note'),
+    /** Set while the sync uploads and submits the recording: no other sync takes the job meanwhile. */
+    submitting: boolean('submitting').notNull().default(false),
     startedAt: timestamp('started_at', { withTimezone: true }),
     finishedAt: timestamp('finished_at', { withTimezone: true }),
     ...timestamps,
@@ -353,13 +356,6 @@ export const reportTranscripts = pgTable(
   },
   (t) => [index('report_transcripts_search_idx').using('gin', t.search)],
 );
-
-/** When each transcription worker last called in, for the UI's "worker last seen". */
-export const workers = pgTable('workers', {
-  name: text('name').primaryKey(),
-  version: text('version'),
-  lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
-});
 
 /** Settings of the single user, one row per key (the Copy for Claude text). A missing row means the default. */
 export const settings = pgTable('settings', {

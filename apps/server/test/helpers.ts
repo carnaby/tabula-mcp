@@ -1,14 +1,14 @@
-import type { FastifyInstance } from 'fastify';
-import { sql } from 'drizzle-orm';
+import { asc, inArray, sql } from 'drizzle-orm';
 import { afterAll, beforeEach, inject } from 'vitest';
 import type { Config } from '../src/config.js';
 import { createDb, type Db } from '../src/db/client.js';
-import { projects } from '../src/db/schema.js';
+import { projects, reportJobs } from '../src/db/schema.js';
+import { storeTranscript, type TranscriptInput } from '../src/domain/jobs.js';
 
 export function useTestDb(): Db {
   const { db, close } = createDb(inject('databaseUrl'));
   beforeEach(async () => {
-    await db.execute(sql`TRUNCATE memories, notes, thoughts, project_files, project_file_revisions, reports, report_attachments, report_jobs, report_transcripts, workers, settings CASCADE`);
+    await db.execute(sql`TRUNCATE memories, notes, thoughts, project_files, project_file_revisions, reports, report_attachments, report_jobs, report_transcripts, settings CASCADE`);
     await db.execute(sql`DELETE FROM projects WHERE id <> 'global'`);
   });
   afterAll(close);
@@ -21,9 +21,8 @@ export async function seedProject(db: Db, id: string): Promise<void> {
 
 export const TEST_TOKEN = 't'.repeat(32);
 export const TEST_SECRET = 's'.repeat(32);
+/** A token that opens nothing: the retired worker token, sent to check that it is refused. */
 export const TEST_WORKER_TOKEN = 'w'.repeat(32);
-// Temporary: the worker API still reads its token from the environment until it is removed.
-process.env.TABULA_WORKER_TOKEN = TEST_WORKER_TOKEN;
 
 export function testConfig(overrides: Partial<Config> = {}): Config {
   return {
@@ -39,12 +38,14 @@ export function testConfig(overrides: Partial<Config> = {}): Config {
   };
 }
 
-/** Temporary (until the worker API is removed): builds an app whose worker API has no token. */
-export async function buildAppWithoutWorkerToken(build: () => Promise<FastifyInstance>): Promise<FastifyInstance> {
-  delete process.env.TABULA_WORKER_TOKEN;
-  try {
-    return await build();
-  } finally {
-    process.env.TABULA_WORKER_TOKEN = TEST_WORKER_TOKEN;
-  }
+/** Fornax finished the oldest waiting job: its transcript is stored as the sync stores it. */
+export async function finishNextJob(db: Db, input: TranscriptInput): Promise<void> {
+  const [job] = await db
+    .select({ id: reportJobs.id })
+    .from(reportJobs)
+    .where(inArray(reportJobs.status, ['queued', 'running']))
+    .orderBy(asc(reportJobs.runAfter), asc(reportJobs.createdAt))
+    .limit(1);
+  if (!job) throw new Error('no transcription job waits');
+  await db.transaction((tx) => storeTranscript(tx, job.id, input));
 }

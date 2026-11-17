@@ -87,3 +87,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     },
   };
 }
+
+/** Lines to log once at start about settings that no longer do anything. */
+export function configWarnings(env: NodeJS.ProcessEnv = process.env): string[] {
+  const warnings: string[] = [];
+  if (env.TABULA_WORKER_TOKEN) warnings.push('TABULA_WORKER_TOKEN is no longer used; transcription runs on Fornax (TABULA_FORNAX_URL)');
+  return warnings;
+}

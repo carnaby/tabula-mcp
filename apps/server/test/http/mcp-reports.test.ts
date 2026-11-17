@@ -6,7 +6,7 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { type Diarization, reportAttachments } from '../../src/db/schema.js';
+import { type Diarization, reportAttachments, reportJobs } from '../../src/db/schema.js';
 import { buildApp } from '../../src/http/app.js';
 import { MediaStore } from '../../src/media/store.js';
 import { finishNextJob, seedProject, TEST_TOKEN, testConfig, useTestDb } from '../helpers.js';
@@ -293,7 +293,7 @@ describe('reports over MCP', () => {
     const audio = await uploadFile(created.id, silentWav(1), 'audio/wav', 'voice.wav');
     let report = json((await tool('get_report', { id: created.id })).content);
     expect(report.attachments[0].transcript.status).toBe('queued');
-    expect(report.attachments[0].transcript.note).toMatch(/never connected.*tabula worker --once/);
+    expect(report.attachments[0].transcript.note).toMatch(/waiting for the Fornax worker/);
 
     // Long enough for more than one part of get_transcript (about 100 000 characters).
     const segments = Array.from({ length: 2000 }, (_, i) => ({
@@ -317,7 +317,7 @@ describe('reports over MCP', () => {
     expect(page2).toMatch(new RegExp(`^\\[transcript of voice\\.wav .* · from character ${next}\\]\\n\\[\\d+:\\d+(:\\d+)?\\] Veta`));
   });
 
-  it('says transcription is not enabled when the server has no worker token', async () => {
+  it('says transcription is not enabled when the server has no Fornax (TABULA_FORNAX_URL)', async () => {
     const off = await buildApp({ config: { ...config, fornax: undefined }, db, store: new MediaStore(mediaDir, config.media.maxBytes) });
     await off.listen({ port: 0, host: '127.0.0.1' });
     const origin = `http://127.0.0.1:${(off.server.address() as AddressInfo).port}`;
@@ -328,6 +328,8 @@ describe('reports over MCP', () => {
       expect(report.attachments[0].transcript.status).toBe('queued');
       expect(report.attachments[0].transcript.note).toMatch(/not enabled on this server/);
       expect(report.attachments[0].transcript.note).not.toMatch(/tabula worker/);
+      expect(report.attachments[0].transcript.note).toMatch(/no TABULA_FORNAX_URL/);
+      expect(report.attachments[0].transcript.note).not.toMatch(/WORKER_TOKEN/);
       expect(text((await tool('get_transcript', { attachment_id: audio.id }, origin)).content)).toMatch(/not enabled on this server/);
     } finally {
       await off.close();
@@ -368,7 +370,13 @@ describe('reports over MCP', () => {
     const audio = await uploadFile(created.id, silentWav(1), 'audio/wav', 'voice.wav');
     const waiting = await tool('get_transcript', { attachment_id: audio.id });
     expect(waiting.isError).toBe(true);
-    expect(text(waiting.content)).toMatch(/^404: .*waiting for the transcription worker/);
+    expect(text(waiting.content)).toMatch(/^404: .*waiting for the Fornax worker; ask again later/);
+    // Fornax says why the job waits: the text passes it on.
+    await db.update(reportJobs).set({ note: 'the worker is offline' }).where(eq(reportJobs.attachmentId, audio.id));
+    expect(text((await tool('get_transcript', { attachment_id: audio.id })).content)).toMatch(/waiting for the Fornax worker \(the worker is offline\)/);
+    expect(json((await tool('get_report', { id: created.id })).content).attachments[0].transcript).toEqual({
+      status: 'queued', note: 'waiting for the Fornax worker (the worker is offline); ask again later',
+    });
     const photo = await uploadFile(created.id, PNG, 'image/png', 'p.png');
     expect(text((await tool('get_transcript', { attachment_id: photo.id })).content)).toMatch(/^400: .*only video and audio/);
   });

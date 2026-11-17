@@ -26,7 +26,7 @@ export const homeRoutes: FastifyPluginAsync<{ db: Db; config: Config }> = async 
   // purge_after_hours: Mark done shows the same confirmation as the report page. tz: the days of the projects' activity bars.
   app.get('/dashboard', async (req) => {
     const q = parse(z.object({ tz: z.string().max(100).optional() }), req.query);
-    return { ...(await dashboard(db, new Date(), { workerEnabled: config.fornax !== undefined, tz: q.tz ?? SERVER_TZ })), purge_after_hours: config.media.purgeAfterHours };
+    return { ...(await dashboard(db, new Date(), { transcriptionEnabled: config.fornax !== undefined, tz: q.tz ?? SERVER_TZ })), purge_after_hours: config.media.purgeAfterHours };
   });
 
   // The timeline in the browser's time zone, at most 25 rows a page. Without `before`: yesterday and today. With it: rows

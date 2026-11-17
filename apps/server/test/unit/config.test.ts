@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { loadConfig } from '../../src/config.js';
+import { configWarnings, loadConfig } from '../../src/config.js';
 
 const TOKEN = 'x'.repeat(32);
 
@@ -74,6 +74,13 @@ describe('loadConfig', () => {
 
     it('does not throw when the retired TABULA_WORKER_TOKEN is set', () => {
       expect(() => loadConfig({ ...base, TABULA_WORKER_TOKEN: 'w'.repeat(32) })).not.toThrow();
+    });
+
+    it('warns once about the retired TABULA_WORKER_TOKEN, and about nothing else', () => {
+      expect(configWarnings({ ...base, TABULA_WORKER_TOKEN: 'w'.repeat(32) })).toEqual([
+        'TABULA_WORKER_TOKEN is no longer used; transcription runs on Fornax (TABULA_FORNAX_URL)',
+      ]);
+      expect(configWarnings(base)).toEqual([]);
     });
   });
 });

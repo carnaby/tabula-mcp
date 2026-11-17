@@ -107,12 +107,12 @@ describe('speakers', () => {
     const job = await transcribeAgain(db, attachmentId);
     expect(job).toMatchObject({ status: 'queued', attempts: 0, error: null, fornaxJobId: null });
     expect(await stateOf(attachmentId)).toMatchObject({ status: 'done', speakers: { S1: { name: 'Eva' } }, again: { status: 'queued', error: null } });
-    await expect(transcribeAgain(db, attachmentId)).rejects.toThrow(/already waiting for the worker or being transcribed/);
+    await expect(transcribeAgain(db, attachmentId)).rejects.toThrow(/already waiting for Fornax or being transcribed/);
 
     // Fornax runs the job: it is refused just the same.
     await db.update(reportJobs).set({ status: 'running', fornaxJobId: 'j_1' }).where(eq(reportJobs.attachmentId, attachmentId));
     expect(await stateOf(attachmentId)).toMatchObject({ status: 'done', again: { status: 'running' } });
-    await expect(transcribeAgain(db, attachmentId)).rejects.toThrow(/already waiting for the worker or being transcribed/);
+    await expect(transcribeAgain(db, attachmentId)).rejects.toThrow(/already waiting for Fornax or being transcribed/);
     await finishNextJob(db, {
       language: 'sk', model: 'large-v3', durationMs: 2000,
       segments: [{ ...SEGMENTS[0]!, speaker: 'S2' }, { ...SEGMENTS[1]!, speaker: 'S1' }], diarization: PYANNOTE,

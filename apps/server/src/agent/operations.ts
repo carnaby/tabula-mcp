@@ -32,8 +32,8 @@ export type AgentMedia = {
   /** Origin the agent reached Tabula at, for absolute attachment links. */
   baseUrl?: string;
 };
-/** `workerEnabled`: the server has a TABULA_WORKER_TOKEN, so a transcription worker can connect (absent = yes). */
-export type AgentContext = { db: Db; agentLabel: string; media?: AgentMedia; workerEnabled?: boolean };
+/** `transcriptionEnabled`: Fornax is configured (TABULA_FORNAX_URL), so recordings get transcribed (absent = yes). */
+export type AgentContext = { db: Db; agentLabel: string; media?: AgentMedia; transcriptionEnabled?: boolean };
 
 /** Project memories were replaced by synced files; agents keep only the global rules, and only on request. */
 export const GLOBAL_ONLY =
@@ -187,7 +187,7 @@ async function attachmentBlocks(ctx: AgentContext, a: Attachment, report: Report
   const s = (await transcriptStates(ctx.db, [a.id])).get(a.id);
   return [jsonBlock({
     ...view,
-    ...transcriptForAgent(a, s, null, ctx.workerEnabled !== false),
+    ...transcriptForAgent(a, s, ctx.transcriptionEnabled !== false),
     next: `call get_report with id "${refOf(report.id)}" for the report and the first part of the transcript, and get_transcript with attachment_id "${refOf(a.id)}" for all of it`,
   })];
 }
@@ -378,29 +378,21 @@ const REPORT_TRANSCRIPT_CHARS = 6_000;
 /** One part of get_transcript. */
 export const TRANSCRIPT_CHUNK = 50_000;
 
-function ago(d: Date, now = Date.now()): string {
-  const min = Math.max(0, Math.round((now - d.getTime()) / 60_000));
-  if (min < 1) return 'just now';
-  if (min < 60) return `${min} min ago`;
-  const h = Math.round(min / 60);
-  return h < 48 ? `${h} h ago` : `${Math.round(h / 24)} days ago`;
-}
-
 /** Why a recording has no transcript (yet), in words an agent can pass on. */
-function pendingText(s: TranscriptState | undefined, lastSeen: Date | null, workerEnabled = true): string {
-  if (!workerEnabled) return 'transcription is not enabled on this server (no TABULA_WORKER_TOKEN); recordings stay untranscribed until the owner enables it';
+function pendingText(s: TranscriptState | undefined, transcriptionEnabled = true): string {
+  if (!transcriptionEnabled) return 'transcription is not enabled on this server (no TABULA_FORNAX_URL); recordings stay untranscribed until the owner enables it';
   if (!s || s.status === 'none') {
-    return 'it was not queued for transcription (a video without sound, or uploaded before the worker existed); the user can start it with "Transcribe" in the Tabula app';
+    return 'it was not queued for transcription (a video without sound, or uploaded before transcription existed); the user can start it with "Transcribe" in the Tabula app';
   }
   if (s.status === 'running') return 'it is being transcribed right now; ask again in a minute';
   if (s.status === 'failed') return `the transcription failed (${s.error ?? 'unknown error'}); the user can retry it in the Tabula app`;
-  const seen = lastSeen ? `last seen ${ago(lastSeen)}` : 'it has never connected';
-  return `waiting for the transcription worker (${seen}); the user starts it on their PC with \`tabula worker --once\``;
+  const note = s.status === 'queued' ? s.note : null;
+  return `waiting for the Fornax worker${note ? ` (${note})` : ''}; ask again later`;
 }
 
-function transcriptForAgent(a: Attachment, s: TranscriptState | undefined, lastSeen: Date | null, workerEnabled: boolean) {
+function transcriptForAgent(a: Attachment, s: TranscriptState | undefined, transcriptionEnabled: boolean) {
   if (!isRecording(a)) return {};
-  if (s?.status !== 'done') return { transcript: { status: s?.status ?? 'none', note: pendingText(s, lastSeen, workerEnabled) } };
+  if (s?.status !== 'done') return { transcript: { status: s?.status ?? 'none', note: pendingText(s, transcriptionEnabled) } };
   const view = speakerView(s.segments, s.diarization, s.speakers);
   const speakers = view.header ? { speakers: view.header } : {};
   const lines = transcriptLines(s.segments, view.labels);
@@ -470,7 +462,7 @@ export async function agentGetReport(ctx: AgentContext, id: string) {
   const states = await transcriptStates(ctx.db, files.filter(isRecording).map((a) => a.id));
   return {
     ...reportForAgent(r),
-    attachments: files.map((a) => ({ ...attachmentForAgent(a, m), ...transcriptForAgent(a, states.get(a.id), null, ctx.workerEnabled !== false) })),
+    attachments: files.map((a) => ({ ...attachmentForAgent(a, m), ...transcriptForAgent(a, states.get(a.id), ctx.transcriptionEnabled !== false) })),
   };
 }
 
@@ -532,7 +524,7 @@ export async function agentGetTranscript(ctx: AgentContext, input: { attachment_
   const a = await requireAttachment(ctx.db, id);
   if (!isRecording(a)) throw badRequest(`attachment ${id} is ${a.kind === 'image' ? 'a photo' : 'a frame'}; only video and audio are transcribed`);
   const s = (await transcriptStates(ctx.db, [id])).get(id);
-  if (s?.status !== 'done') throw notFound(`attachment ${id} has no transcript yet: ${pendingText(s, null, ctx.workerEnabled !== false)}`);
+  if (s?.status !== 'done') throw notFound(`attachment ${id} has no transcript yet: ${pendingText(s, ctx.transcriptionEnabled !== false)}`);
   const view = speakerView(s.segments, s.diarization, s.speakers);
   const lines = transcriptLines(s.segments, view.labels);
   const offset = Math.max(0, Math.trunc(input.offset ?? 0));

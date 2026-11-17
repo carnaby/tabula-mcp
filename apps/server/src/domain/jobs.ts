@@ -96,7 +96,7 @@ export async function retryTranscription(db: Db, attachmentId: string, now = new
     .values({ attachmentId, kind: 'transcribe', runAfter: now })
     .onConflictDoUpdate({ target: [reportJobs.attachmentId, reportJobs.kind], set: startOver(now), setWhere: eq(reportJobs.status, 'failed') })
     .returning();
-  if (!job) throw conflict('the recording is already waiting for the worker, being transcribed, or transcribed');
+  if (!job) throw conflict('the recording is already waiting for Fornax, being transcribed, or transcribed');
   return job;
 }
 
@@ -125,7 +125,7 @@ export async function transcribeAgain(db: Db, attachmentId: string, now = new Da
       setWhere: inArray(reportJobs.status, ['done', 'failed']),
     })
     .returning();
-  if (!job) throw conflict('the recording is already waiting for the worker or being transcribed');
+  if (!job) throw conflict('the recording is already waiting for Fornax or being transcribed');
   return job;
 }
 
@@ -141,17 +141,15 @@ export async function failPendingJobs(db: Pick<Db, 'update'>, attachmentIds: str
     .where(and(inArray(reportJobs.attachmentId, attachmentIds), inArray(reportJobs.status, ['queued', 'running'])));
 }
 
-export type WorkerStatus = {
-  lastSeenAt: string | null;
-  workers: Array<{ name: string; version: string | null; lastSeenAt: string }>;
+export type JobCounts = {
   /** Jobs of open reports by state. */
   queued: number;
   running: number;
   failed: number;
 };
 
-/** How many recordings of open reports wait, run and failed. The worker fields stay empty (the status is about Fornax now). */
-export async function transcriptionStatus(db: Db): Promise<WorkerStatus> {
+/** How many recordings of open reports wait, run and failed. */
+export async function transcriptionStatus(db: Db): Promise<JobCounts> {
   const counts = await db
     .select({ status: reportJobs.status, n: count() })
     .from(reportJobs)
@@ -160,7 +158,7 @@ export async function transcriptionStatus(db: Db): Promise<WorkerStatus> {
     .where(ne(reports.status, 'done'))
     .groupBy(reportJobs.status);
   const n = (s: Job['status']) => counts.find((c) => c.status === s)?.n ?? 0;
-  return { lastSeenAt: null, workers: [], queued: n('queued'), running: n('running'), failed: n('failed') };
+  return { queued: n('queued'), running: n('running'), failed: n('failed') };
 }
 
 /** A recording transcribed again: the job's state while the old transcript stays on show. */

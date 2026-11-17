@@ -145,11 +145,11 @@ describe('transcription jobs', () => {
   });
 
   it('counts the recordings of open reports that wait, run and failed', async () => {
-    expect(await transcriptionStatus(db)).toEqual({ lastSeenAt: null, workers: [], queued: 0, running: 0, failed: 0 });
+    expect(await transcriptionStatus(db)).toEqual({ queued: 0, running: 0, failed: 0 });
     await queued();
     await queued({ closed: true });
     const r = await queued();
     await setJob(r.id, IN_FORNAX);
-    expect(await transcriptionStatus(db)).toEqual({ lastSeenAt: null, workers: [], queued: 1, running: 1, failed: 0 });
+    expect(await transcriptionStatus(db)).toEqual({ queued: 1, running: 1, failed: 0 });
   });
 });

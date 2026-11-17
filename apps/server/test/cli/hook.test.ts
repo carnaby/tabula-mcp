@@ -8,8 +8,8 @@ import { CLI, git, makeRepo, readText, runCli, startProxy, tempDir, useServer } 
 const db = useTestDb();
 const server = useServer(db);
 let home: string;
-// TABULA_DATA_DIR keeps `tabula update` away from the real data folder (it refreshes transcribe.py there).
-const env = () => ({ TABULA_HOME: home, TABULA_DATA_DIR: join(home, 'data'), TABULA_URL: server.url, TABULA_TOKEN: TEST_TOKEN });
+// TABULA_HOME keeps `tabula update` and the rest away from the real configuration.
+const env = () => ({ TABULA_HOME: home, TABULA_URL: server.url, TABULA_TOKEN: TEST_TOKEN });
 const cfg = { project: 'demo', sync: ['docs/**'] };
 
 beforeEach(async () => {

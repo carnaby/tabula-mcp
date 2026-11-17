@@ -19,9 +19,9 @@ function body(w: DashboardWarning, name: (id: string) => string, copy: { disable
         <>
           <Icon name="mic" />
           <div className="warning__body">
-            <strong>{w.count === 1 ? '1 recording waits' : `${w.count} recordings wait`} for the transcription worker</strong>
+            <strong>{w.count === 1 ? '1 recording waits' : `${w.count} recordings wait`} for the Fornax worker</strong>
             <p>
-              The oldest since {fullDate(w.oldest)}. Start the Tabula tray or run <code className="t-mono">tabula worker --once</code> on your PC.
+              The oldest since {fullDate(w.oldest)}.
             </p>
           </div>
         </>

@@ -124,17 +124,21 @@ export type SpeakerName = { name: string; by: 'user' | 'agent'; at: string };
 export type TranscribingAgain = { status: 'queued' | 'running' | 'failed'; error: string | null; retryAt: string | null };
 export type TranscriptState =
   | { status: 'none' }
-  | { status: 'queued' | 'running' | 'failed'; attempts: number; error: string | null; retryAt: string | null }
+  | { status: 'queued' | 'running' | 'failed'; attempts: number; error: string | null; retryAt: string | null; note?: string | null }
   | {
       status: 'done'; language: string | null; model: string; segments: TranscriptSegment[]; createdAt: string;
       diarization: Diarization | null; speakers: Record<string, SpeakerName>; again: TranscribingAgain | null;
     };
-/** The transcription worker as the server last saw it; job counts are of open reports. */
+/** The Fornax worker as Fornax reports it; job counts are of open reports. */
 export type WorkerStatus = {
-  /** False when the server has no TABULA_WORKER_TOKEN: jobs queue, but no worker can connect. */
+  /** False when the server has no TABULA_FORNAX_URL: recordings are not transcribed. */
   enabled: boolean;
-  lastSeenAt: string | null;
-  workers: { name: string; version: string | null; lastSeenAt: string }[];
+  /** Whether the Fornax worker is online; null when Fornax cannot be reached. */
+  online: boolean | null;
+  /** Whether the worker offers the transcribe job; null when unknown. */
+  offered: boolean | null;
+  /** Fornax's address, null when disabled. */
+  url: string | null;
   queued: number;
   running: number;
   failed: number;
@@ -218,7 +222,7 @@ export type Dashboard = {
   warnings: DashboardWarning[];
   projects: DashboardProject[];
   recall_budget: number;
-  /** False when the server has no worker token: recordings stay queued by design. */
+  /** False when the server has no Fornax configured: recordings stay queued by design. */
   transcription_enabled: boolean;
   /** TABULA_MEDIA_PURGE_HOURS, for the Mark done confirmation. */
   purge_after_hours: number;

@@ -1,30 +1,33 @@
-import { timeAgo } from '../../format';
 import type { WorkerStatus } from '../../types';
 import { cx, Popover } from '../../ui';
-import { workerAlive } from './Transcript';
 
 export type WorkerTone = 'idle' | 'busy' | 'waiting' | 'offline';
 
 /** What a glance at the header should tell: the dot's colour and a few words. */
-export function workerSummary(s: WorkerStatus, now = Date.now()): { tone: WorkerTone; label: string } {
-  if (workerAlive(s, now)) {
+export function workerSummary(s: WorkerStatus): { tone: WorkerTone; label: string } {
+  if (s.online === null) return { tone: 'offline', label: 'Fornax unreachable' };
+  if (s.online) {
     if (s.running > 0) return { tone: 'busy', label: s.queued > 0 ? `Transcribing · ${s.queued} waiting` : 'Transcribing' };
     return { tone: 'idle', label: 'Worker' };
   }
-  // A job "running" on a worker that stopped answering goes back to the queue when its lease runs out.
   const waiting = s.queued + s.running;
   return waiting > 0 ? { tone: 'waiting', label: `Worker offline · ${waiting} waiting` } : { tone: 'offline', label: 'Worker offline' };
 }
 
+const STATE_TEXT = {
+  unreachable: 'Fornax cannot be reached right now, so the worker\'s state is unknown. Recordings wait and are tried again.',
+  online: 'The Fornax worker is online.',
+  offline: 'The Fornax worker is offline. Recordings wait until it is back.',
+};
+
 /**
- * The transcription worker in the header: a dot with a few words; a click shows when it last called in, what waits,
- * runs and failed, and how to start it. Nothing when the server has no worker (no TABULA_WORKER_TOKEN).
+ * The Fornax worker in the header: a dot with a few words; a click shows whether it is online, what waits, runs and
+ * failed, and links to Fornax. Nothing when the server has no Fornax (no TABULA_FORNAX_URL).
  */
 export function WorkerIndicator({ status, align = 'start', className }: { status: WorkerStatus | undefined; align?: 'start' | 'end'; className?: string }) {
   if (!status || !status.enabled) return null;
   const { tone, label } = workerSummary(status);
-  const alive = tone === 'idle' || tone === 'busy';
-  const last = status.workers[0];
+  const state = status.online === null ? STATE_TEXT.unreachable : status.online ? STATE_TEXT.online : STATE_TEXT.offline;
   return (
     <Popover
       fixed
@@ -43,21 +46,13 @@ export function WorkerIndicator({ status, align = 'start', className }: { status
       {(_close, labelId) => (
         <div className="worker-ind__panel">
           <p id={labelId} className="worker-ind__title">Transcription worker</p>
-          <p>
-            {last ? (
-              <>Last seen {timeAgo(last.lastSeenAt)} · {last.name}{last.version ? ` ${last.version}` : ''}</>
-            ) : (
-              'It has never connected.'
-            )}
-          </p>
+          <p>{state}{status.online !== null && status.offered === false && ' It does not offer transcription.'}</p>
           <dl className="worker-ind__counts">
             <div><dt>Waiting</dt><dd>{status.queued}</dd></div>
             <div><dt>Running</dt><dd>{status.running}</dd></div>
             <div><dt>Failed</dt><dd>{status.failed}</dd></div>
           </dl>
-          {!alive && (
-            <p className="worker-ind__hint">Start the Tabula tray or run <code>tabula worker --once</code> on your PC.</p>
-          )}
+          {status.url && <p className="worker-ind__hint"><a href={status.url} target="_blank" rel="noreferrer">Open Fornax</a></p>}
         </div>
       )}
     </Popover>

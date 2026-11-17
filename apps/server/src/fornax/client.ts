@@ -15,12 +15,16 @@ export type FornaxJob = {
   progress: { done?: number; total?: number; message?: string } | null;
 };
 
-/** A failed call to Fornax. `status` is null for a network error or a timeout; `permanent` means retrying cannot help. */
+/**
+ * A failed call to Fornax. `status` is null for a network error or a timeout; `permanent` means retrying cannot help;
+ * `auth` is a 401 or 403 (a missing, unknown, revoked or not yet approved token): a configuration problem, never permanent.
+ */
 export class FornaxError extends Error {
   constructor(
     message: string,
     readonly status: number | null,
     readonly permanent: boolean,
+    readonly auth = false,
   ) {
     super(message);
     this.name = 'FornaxError';
@@ -94,6 +98,10 @@ export function fornaxClient(cfg: FornaxConfig, fetchImpl: typeof fetch = fetch)
       code = body?.error ?? null;
     } catch {
       // not JSON: use the status
+    }
+    // The token is not accepted (yet): that is no fault of the recording or the job, and an admin can fix it.
+    if (res.status === 401 || res.status === 403) {
+      return new FornaxError(scrub(message || "Fornax refused Tabula's token"), res.status, false, true);
     }
     // A 404 is Fornax's own answer only with its JSON error body; a proxy's 404 page (e.g. while Fornax restarts)
     // passes, so it is not taken for "Fornax does not know this job".

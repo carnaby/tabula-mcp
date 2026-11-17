@@ -12,7 +12,7 @@ import {
 import { type FornaxClient, fornaxClient, FornaxError } from '../../src/fornax/client.js';
 import { createFornaxSync, FORNAX_CANCELED, FORNAX_FORGOT } from '../../src/fornax/sync.js';
 import { MediaStore } from '../../src/media/store.js';
-import { type FakeFornax, startFakeFornax } from '../fake-fornax.js';
+import { type FakeFornax, PENDING_MESSAGE, startFakeFornax } from '../fake-fornax.js';
 import { useTestDb } from '../helpers.js';
 import { silentWav } from '../media-fixtures.js';
 
@@ -303,6 +303,64 @@ describe('the Fornax sync', () => {
     await sync.syncOnce(at(300_000));
     expect(await jobOf(a.id)).toMatchObject({ status: 'failed', attempts: 3, finishedAt: at(300_000), error: expect.stringMatching(/500/) });
     expect(fake.jobs.size).toBe(0);
+  });
+
+  it('keeps a recording waiting, without an attempt, while Fornax does not accept the token', async () => {
+    const a = await recording();
+    const sync = newSync();
+    for (const how of ['pending', 403, 401] as const) {
+      fake.fail('/api/files', how);
+      await sync.syncOnce(at(0));
+      const job = await jobOf(a.id);
+      expect(job).toMatchObject({ status: 'queued', attempts: 0, submitting: false, runAfter: at(60_000), fornaxJobId: null, finishedAt: null });
+      expect(job.note).toBe(how === 'pending' ? PENDING_MESSAGE : how === 403 ? 'injected failure 403' : 'injected failure 401');
+      await sync.syncOnce(at(30_000));
+      expect(fake.requests.filter((r) => r.path === '/api/files').length).toBe(['pending', 403, 401].indexOf(how) + 1);
+      await db.update(reportJobs).set({ runAfter: at(0) }).where(eq(reportJobs.id, job.id));
+    }
+    // refused at the job creation, after a good upload
+    fake.fail('/api/files', null);
+    fake.fail('/api/jobs', 'pending');
+    await sync.syncOnce(at(0));
+    expect(await jobOf(a.id)).toMatchObject({ status: 'queued', attempts: 0, runAfter: at(60_000), note: PENDING_MESSAGE, fornaxJobId: null });
+    // approved: the next tick submits and the note clears
+    fake.fail('/api/jobs', null);
+    await sync.syncOnce(at(60_000));
+    const done = await jobOf(a.id);
+    expect(done).toMatchObject({ status: 'queued', attempts: 1, error: null, fornaxJobId: expect.any(String) });
+    expect(done.note).toBe((await fornaxJob(a.id)).note);
+    expect(done.note).not.toBe(PENDING_MESSAGE);
+  });
+
+  it('never fails a followed job over a 401 or 403; the job keeps its state', async () => {
+    const a = await recording();
+    const sync = newSync();
+    await sync.syncOnce(at(0));
+    const id = (await jobOf(a.id)).fornaxJobId!;
+    fake.setJob(id, { state: 'running' });
+    await sync.syncOnce(at(1000));
+    for (const how of ['pending', 403, 401] as const) {
+      fake.fail(`/api/jobs/${id}`, how);
+      await sync.syncOnce(at(2000));
+      expect(await jobOf(a.id)).toMatchObject({ status: 'running', attempts: 1, error: null, fornaxJobId: id });
+    }
+    fake.fail(`/api/jobs/${id}`, null);
+    fake.setJob(id, succeeded());
+    await sync.syncOnce(at(3000));
+    expect((await jobOf(a.id)).status).toBe('done');
+  });
+
+  it('shows the pending message as the note of a waiting followed job', async () => {
+    const a = await recording();
+    const sync = newSync();
+    await sync.syncOnce(at(0));
+    const id = (await jobOf(a.id)).fornaxJobId!;
+    fake.fail(`/api/jobs/${id}`, 'pending');
+    await sync.syncOnce(at(1000));
+    expect(await jobOf(a.id)).toMatchObject({ status: 'queued', note: PENDING_MESSAGE });
+    fake.fail(`/api/jobs/${id}`, null);
+    await sync.syncOnce(at(2000));
+    expect((await jobOf(a.id)).note).toBe((await fornaxJob(a.id)).note);
   });
 
   it('fails at once when Fornax refuses the job (4xx), with its message', async () => {

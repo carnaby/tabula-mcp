@@ -24,6 +24,8 @@ export type SyncTiming = {
   /** How long one long poll waits for the job to change, in seconds (Fornax allows up to 30). */
   waitS: number;
 };
+/** How long a recording waits after Fornax did not accept the token. */
+const AUTH_RETRY_MS = 60_000;
 const TIMING: SyncTiming = { tickMs: 5000, retryMs: 10_000, waitS: 25 };
 
 /** transcript.json of a Fornax transcribe job; anything beyond the shape is checked when it is stored. */
@@ -142,6 +144,17 @@ export function createFornaxSync(deps: { db: Db; store: MediaStore; client: Forn
       .where(stillClaimed(job.id));
   }
 
+  /** Fornax does not accept the token (yet): the job waits with the reason as its note, and no attempt is counted. */
+  async function submitRefused(job: Claimed, e: FornaxError, now: Date): Promise<void> {
+    const note = cleanError(e.message);
+    const [row] = await db
+      .update(reportJobs)
+      .set({ submitting: false, note, runAfter: new Date(now.getTime() + AUTH_RETRY_MS), updatedAt: now })
+      .where(stillClaimed(job.id))
+      .returning({ id: reportJobs.id });
+    if (row) log.warn({ job: job.id, err: loggableError(e) }, 'Fornax does not accept the token; the recording waits and is submitted again later');
+  }
+
   /** A failed upload or submit: back to the queue after a back-off, or failed after the last attempt or a refusal. */
   async function submitFailed(job: Claimed, e: unknown, now: Date): Promise<void> {
     const permanent = e instanceof FornaxError && e.permanent;
@@ -184,6 +197,7 @@ export function createFornaxSync(deps: { db: Db; store: MediaStore; client: Forn
       // Stopped: the abort is no failure of Fornax and costs no attempt.
       if (stopping.signal.aborted && !(e instanceof FornaxError)) return release(job, clock());
       // The code only: the error's message holds the file's path on this host.
+      if (e instanceof FornaxError && e.auth && !readError) return submitRefused(job, e, clock());
       const failure = readError ? new Error(`the recording could not be read (${(readError as NodeJS.ErrnoException).code ?? 'read error'})`, { cause: e }) : e;
       return submitFailed(job, failure, clock());
     } finally {
@@ -303,6 +317,15 @@ export function createFornaxSync(deps: { db: Db; store: MediaStore; client: Forn
     }
   }
 
+  /** Fornax does not accept the token: the job keeps its state; a waiting job says why in its note. */
+  async function followRefused(job: Followed, e: FornaxError, now: Date): Promise<void> {
+    if (job.status !== 'queued') return;
+    const note = cleanError(e.message);
+    if (job.note === note) return;
+    const [row] = await db.update(reportJobs).set({ note, updatedAt: now }).where(stillFollowed(job)).returning({ id: reportJobs.id });
+    if (row) job.note = note;
+  }
+
   /** Ask once about every followed job; Fornax being unreachable changes nothing and counts no attempt. */
   async function followAll(now: Date): Promise<void> {
     for (const job of await followedJobs()) {
@@ -312,6 +335,7 @@ export function createFornaxSync(deps: { db: Db; store: MediaStore; client: Forn
         await apply(job, seen, now, stopping.signal);
       } catch (e) {
         if (stopping.signal.aborted) return;
+        if (e instanceof FornaxError && e.auth) await followRefused(job, e, now);
         log.warn({ job: job.id, fornax: job.fornaxJobId, err: loggableError(e) }, 'could not follow a transcription in Fornax; asking again later');
       }
     }
@@ -342,6 +366,7 @@ export function createFornaxSync(deps: { db: Db; store: MediaStore; client: Forn
         if (!more) return;
       } catch (e) {
         if (signal.aborted) return;
+        if (e instanceof FornaxError && e.auth) await followRefused(job, e, new Date()).catch(() => {});
         if (!failing) {
           log.warn(
             { job: job.id, fornax: job.fornaxJobId, err: loggableError(e) },

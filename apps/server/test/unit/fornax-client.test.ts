@@ -1,7 +1,7 @@
 import { Readable } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FornaxError, fornaxClient } from '../../src/fornax/client.js';
-import { startFakeFornax, type FakeFornax } from '../fake-fornax.js';
+import { PENDING_MESSAGE, startFakeFornax, type FakeFornax } from '../fake-fornax.js';
 
 let fake: FakeFornax;
 const cfg = () => ({ url: fake.url, token: fake.token, priority: 'high' as const });
@@ -122,6 +122,18 @@ describe('fornaxClient', () => {
     expect(refused.message).toContain('is not offered');
   });
 
+  it('marks a 401 or 403 as an auth problem that is not permanent, without the token in the message', async () => {
+    const wrong = await fornaxClient({ ...cfg(), token: 'wrong-token-0123456789' }).status().catch((e) => e);
+    expect(wrong).toMatchObject({ status: 401, permanent: false, auth: true });
+    fake.fail('/api/types', 'pending');
+    const pending = await fornaxClient(cfg()).status().catch((e) => e);
+    expect(pending).toMatchObject({ status: 403, permanent: false, auth: true });
+    expect(pending.message).toBe(PENDING_MESSAGE);
+    expect(wrong.message).toBe("Fornax refused Tabula's token");
+    fake.fail('/api/types', 400);
+    expect(await fornaxClient(cfg()).status().catch((e) => e)).toMatchObject({ status: 400, permanent: true, auth: false });
+  });
+
   it('turns an answer that cannot be read into a transient FornaxError', async () => {
     const answering = (body: () => BodyInit) => fornaxClient(cfg(), async () => new Response(body(), { status: 200 }));
     const calls = (c: ReturnType<typeof fornaxClient>) => [
@@ -173,7 +185,7 @@ describe('fornaxClient', () => {
   it('never puts the token into an error message', async () => {
     const wrong = fornaxClient({ ...cfg(), token: 'wrong-token-0123456789' });
     const unauthorized = await wrong.status().catch((e) => e);
-    expect(unauthorized).toMatchObject({ status: 401, permanent: true });
+    expect(unauthorized).toMatchObject({ status: 401, permanent: false, auth: true });
     const dead = await startFakeFornax();
     const url = dead.url;
     await dead.close();

@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { reportJobs } from '../../src/db/schema.js';
-import { seedProject, TEST_TOKEN, TEST_WORKER_TOKEN, testConfig, useTestDb } from '../helpers.js';
+import { buildAppWithoutWorkerToken, seedProject, TEST_TOKEN, TEST_WORKER_TOKEN, testConfig, useTestDb } from '../helpers.js';
 import { silentWav } from '../media-fixtures.js';
 import { buildApp } from '../../src/http/app.js';
 import { CLI, type RunResult, runCli, startProxy, tempDir, useServer } from './harness.js';
@@ -678,7 +678,7 @@ describe('tabula worker queue', () => {
   });
 
   it('says that a server without TABULA_WORKER_TOKEN has no worker API', async () => {
-    const off = await buildApp({ config: testConfig({ workerToken: undefined }), db });
+    const off = await buildAppWithoutWorkerToken(() => buildApp({ config: testConfig(), db }));
     await off.listen({ port: 0, host: '127.0.0.1' });
     try {
       const url = `http://127.0.0.1:${(off.server.address() as AddressInfo).port}`;

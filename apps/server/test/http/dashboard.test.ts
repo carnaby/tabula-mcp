@@ -40,7 +40,7 @@ describe('GET /api/dashboard', () => {
 
   it('says whether transcription is enabled: it is not without a worker token', async () => {
     expect((await call('GET', '/api/dashboard')).json().transcription_enabled).toBe(true);
-    const bare = await buildApp({ config: testConfig({ workerToken: undefined }), db });
+    const bare = await buildApp({ config: testConfig({ fornax: undefined }), db });
     try {
       const res = await bare.inject({ method: 'GET', url: '/api/dashboard', headers: as(TEST_TOKEN) });
       expect(res.json().transcription_enabled).toBe(false);

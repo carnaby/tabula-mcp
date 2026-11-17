@@ -1,3 +1,4 @@
+import type { FastifyInstance } from 'fastify';
 import { sql } from 'drizzle-orm';
 import { afterAll, beforeEach, inject } from 'vitest';
 import type { Config } from '../src/config.js';
@@ -21,17 +22,29 @@ export async function seedProject(db: Db, id: string): Promise<void> {
 export const TEST_TOKEN = 't'.repeat(32);
 export const TEST_SECRET = 's'.repeat(32);
 export const TEST_WORKER_TOKEN = 'w'.repeat(32);
+// Temporary: the worker API still reads its token from the environment until it is removed.
+process.env.TABULA_WORKER_TOKEN = TEST_WORKER_TOKEN;
 
 export function testConfig(overrides: Partial<Config> = {}): Config {
   return {
     databaseUrl: 'unused-in-tests',
     token: TEST_TOKEN,
     connectorSecret: TEST_SECRET,
-    workerToken: TEST_WORKER_TOKEN,
+    fornax: { url: 'https://fornax.example.com', token: 'f'.repeat(32), priority: 'high' },
     port: 0,
     host: '127.0.0.1',
     webDist: 'does-not-exist',
     media: { dir: 'does-not-exist', maxBytes: 10 * 1024 * 1024, purgeAfterHours: 24, ffmpeg: 'ffmpeg', ffprobe: 'ffprobe' },
     ...overrides,
   };
+}
+
+/** Temporary (until the worker API is removed): builds an app whose worker API has no token. */
+export async function buildAppWithoutWorkerToken(build: () => Promise<FastifyInstance>): Promise<FastifyInstance> {
+  delete process.env.TABULA_WORKER_TOKEN;
+  try {
+    return await build();
+  } finally {
+    process.env.TABULA_WORKER_TOKEN = TEST_WORKER_TOKEN;
+  }
 }

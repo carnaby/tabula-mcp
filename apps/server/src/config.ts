@@ -9,10 +9,9 @@ const schema = z.object({
     emptyToUndefined,
     z.string().min(32, 'TABULA_CONNECTOR_SECRET must be at least 32 characters').optional(),
   ),
-  TABULA_WORKER_TOKEN: z.preprocess(
-    emptyToUndefined,
-    z.string().min(32, 'TABULA_WORKER_TOKEN must be at least 32 characters').optional(),
-  ),
+  TABULA_FORNAX_URL: z.preprocess(emptyToUndefined, z.string().optional()),
+  TABULA_FORNAX_TOKEN: z.preprocess(emptyToUndefined, z.string().optional()),
+  TABULA_FORNAX_PRIORITY: z.preprocess(emptyToUndefined, z.enum(['low', 'normal', 'high']).default('high')),
   PORT: z.coerce.number().int().positive().default(3000),
   HOST: z.string().default('0.0.0.0'),
   WEB_DIST: z.string().default('web/dist'),
@@ -23,12 +22,14 @@ const schema = z.object({
   FFPROBE_PATH: z.string().default('ffprobe'),
 });
 
+export type FornaxConfig = { url: string; token: string; priority: 'low' | 'normal' | 'high' };
+
 export type Config = {
   databaseUrl: string;
   token: string;
   connectorSecret: string | undefined;
-  /** Bearer token of the transcription worker: valid only on /api/worker/*. Unset = the worker API answers 503. */
-  workerToken: string | undefined;
+  /** The Fornax job queue that transcribes recordings. Unset = transcription is off. */
+  fornax: FornaxConfig | undefined;
   port: number;
   host: string;
   webDist: string;
@@ -43,6 +44,19 @@ export type Config = {
   };
 };
 
+function fornaxUrl(raw: string): string {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    throw new Error('Invalid configuration: TABULA_FORNAX_URL must be an http(s) URL');
+  }
+  if ((u.protocol !== 'http:' && u.protocol !== 'https:') || (u.pathname !== '/' && u.pathname !== '') || u.search || u.hash || u.username || u.password) {
+    throw new Error('Invalid configuration: TABULA_FORNAX_URL must be an http(s) URL without a path');
+  }
+  return u.origin;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const parsed = schema.safeParse(env);
   if (!parsed.success) {
@@ -50,17 +64,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error(`Invalid configuration: ${msg}`);
   }
   const e = parsed.data;
-  if (e.TABULA_WORKER_TOKEN !== undefined && e.TABULA_WORKER_TOKEN === e.TABULA_TOKEN) {
-    throw new Error('Invalid configuration: TABULA_WORKER_TOKEN must differ from TABULA_TOKEN (the worker token opens only the worker API)');
-  }
-  if (e.TABULA_WORKER_TOKEN !== undefined && e.TABULA_WORKER_TOKEN === e.TABULA_CONNECTOR_SECRET) {
-    throw new Error('Invalid configuration: TABULA_WORKER_TOKEN must differ from TABULA_CONNECTOR_SECRET (the connector URL must not accept the worker token)');
+  let fornax: FornaxConfig | undefined;
+  if (e.TABULA_FORNAX_URL !== undefined || e.TABULA_FORNAX_TOKEN !== undefined) {
+    if (e.TABULA_FORNAX_URL === undefined) throw new Error('Invalid configuration: TABULA_FORNAX_URL is required when TABULA_FORNAX_TOKEN is set');
+    if (e.TABULA_FORNAX_TOKEN === undefined) throw new Error('Invalid configuration: TABULA_FORNAX_TOKEN is required when TABULA_FORNAX_URL is set');
+    fornax = { url: fornaxUrl(e.TABULA_FORNAX_URL), token: e.TABULA_FORNAX_TOKEN, priority: e.TABULA_FORNAX_PRIORITY };
   }
   return {
     databaseUrl: e.DATABASE_URL,
     token: e.TABULA_TOKEN,
     connectorSecret: e.TABULA_CONNECTOR_SECRET,
-    workerToken: e.TABULA_WORKER_TOKEN,
+    fornax,
     port: e.PORT,
     host: e.HOST,
     webDist: e.WEB_DIST,

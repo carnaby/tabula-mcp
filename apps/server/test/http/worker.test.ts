@@ -7,7 +7,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { reportAttachments, reportJobs, reports, workers } from '../../src/db/schema.js';
 import { buildApp } from '../../src/http/app.js';
 import { MediaStore } from '../../src/media/store.js';
-import { seedProject, TEST_TOKEN, TEST_WORKER_TOKEN, testConfig, useTestDb } from '../helpers.js';
+import { buildAppWithoutWorkerToken, seedProject, TEST_TOKEN, TEST_WORKER_TOKEN, testConfig, useTestDb } from '../helpers.js';
 import { PNG, silentWav } from '../media-fixtures.js';
 
 const db = useTestDb();
@@ -95,7 +95,7 @@ describe('worker API', () => {
   });
 
   it('answers 503 when no worker token is configured', async () => {
-    const off = await buildApp({ config: testConfig({ workerToken: undefined }), db });
+    const off = await buildAppWithoutWorkerToken(() => buildApp({ config: testConfig(), db }));
     try {
       const res = await off.inject({ method: 'GET', url: '/api/worker/ping', headers: worker });
       expect(res.statusCode).toBe(503);
@@ -129,7 +129,7 @@ describe('worker API', () => {
   it('opens /queue only with the worker token', async () => {
     expect((await app.inject({ method: 'GET', url: '/api/worker/queue', headers: main })).statusCode).toBe(401);
     expect((await app.inject({ method: 'GET', url: '/api/worker/queue' })).statusCode).toBe(401);
-    const off = await buildApp({ config: testConfig({ workerToken: undefined }), db });
+    const off = await buildAppWithoutWorkerToken(() => buildApp({ config: testConfig(), db }));
     try {
       expect((await off.inject({ method: 'GET', url: '/api/worker/queue', headers: worker })).statusCode).toBe(503);
     } finally {
@@ -319,7 +319,7 @@ describe('worker API', () => {
 
   it('reports whether transcription is enabled on this server', async () => {
     expect((await asUser('GET', '/transcription/status')).json().enabled).toBe(true);
-    const off = await buildApp({ config: testConfig({ workerToken: undefined }), db });
+    const off = await buildApp({ config: testConfig({ fornax: undefined }), db });
     try {
       const res = await off.inject({ method: 'GET', url: '/api/transcription/status', headers: main });
       expect(res.json()).toMatchObject({ enabled: false, queued: 0 });

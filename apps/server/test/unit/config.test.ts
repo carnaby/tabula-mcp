@@ -10,7 +10,7 @@ describe('loadConfig', () => {
       databaseUrl: 'postgres://u:p@localhost:5432/db',
       token: TOKEN,
       connectorSecret: undefined,
-      workerToken: undefined,
+      fornax: undefined,
       port: 3000,
       host: '0.0.0.0',
       webDist: 'web/dist',
@@ -40,14 +40,40 @@ describe('loadConfig', () => {
     ).toThrow(/TABULA_CONNECTOR_SECRET/);
   });
 
-  it('reads the worker token and refuses a short one or one equal to TABULA_TOKEN or the connector secret', () => {
-    const W = 'w'.repeat(32);
+  describe('Fornax', () => {
     const base = { DATABASE_URL: 'postgres://x', TABULA_TOKEN: TOKEN };
-    expect(loadConfig({ ...base, TABULA_WORKER_TOKEN: W }).workerToken).toBe(W);
-    expect(loadConfig({ ...base, TABULA_WORKER_TOKEN: '' }).workerToken).toBeUndefined();
-    expect(() => loadConfig({ ...base, TABULA_WORKER_TOKEN: 'short' })).toThrow(/TABULA_WORKER_TOKEN/);
-    expect(() => loadConfig({ ...base, TABULA_WORKER_TOKEN: TOKEN })).toThrow(/must differ/);
-    const S = 's'.repeat(32);
-    expect(() => loadConfig({ ...base, TABULA_CONNECTOR_SECRET: S, TABULA_WORKER_TOKEN: S })).toThrow(/TABULA_CONNECTOR_SECRET/);
+    const F = { TABULA_FORNAX_URL: 'https://fornax.example.com', TABULA_FORNAX_TOKEN: 'f'.repeat(24) };
+
+    it('is off when neither variable is set (empty counts as unset)', () => {
+      expect(loadConfig(base).fornax).toBeUndefined();
+      expect(loadConfig({ ...base, TABULA_FORNAX_URL: '', TABULA_FORNAX_TOKEN: '' }).fornax).toBeUndefined();
+    });
+
+    it('reads both with priority high by default', () => {
+      expect(loadConfig({ ...base, ...F }).fornax).toEqual({ url: 'https://fornax.example.com', token: F.TABULA_FORNAX_TOKEN, priority: 'high' });
+    });
+
+    it('honours TABULA_FORNAX_PRIORITY and refuses another value', () => {
+      expect(loadConfig({ ...base, ...F, TABULA_FORNAX_PRIORITY: 'low' }).fornax?.priority).toBe('low');
+      expect(loadConfig({ ...base, ...F, TABULA_FORNAX_PRIORITY: 'normal' }).fornax?.priority).toBe('normal');
+      expect(() => loadConfig({ ...base, ...F, TABULA_FORNAX_PRIORITY: 'urgent' })).toThrow(/TABULA_FORNAX_PRIORITY/);
+    });
+
+    it('names the missing variable when only one is set', () => {
+      expect(() => loadConfig({ ...base, TABULA_FORNAX_URL: F.TABULA_FORNAX_URL })).toThrow(/TABULA_FORNAX_TOKEN/);
+      expect(() => loadConfig({ ...base, TABULA_FORNAX_TOKEN: F.TABULA_FORNAX_TOKEN })).toThrow(/TABULA_FORNAX_URL/);
+    });
+
+    it('accepts an http(s) URL without a path and strips the trailing slash', () => {
+      expect(loadConfig({ ...base, ...F, TABULA_FORNAX_URL: 'https://fornax.example.com/' }).fornax?.url).toBe('https://fornax.example.com');
+      expect(loadConfig({ ...base, ...F, TABULA_FORNAX_URL: 'http://127.0.0.1:8080' }).fornax?.url).toBe('http://127.0.0.1:8080');
+      for (const bad of ['ftp://fornax.example.com', 'https://fornax.example.com/api', 'not a url']) {
+        expect(() => loadConfig({ ...base, ...F, TABULA_FORNAX_URL: bad })).toThrow(/TABULA_FORNAX_URL/);
+      }
+    });
+
+    it('does not throw when the retired TABULA_WORKER_TOKEN is set', () => {
+      expect(() => loadConfig({ ...base, TABULA_WORKER_TOKEN: 'w'.repeat(32) })).not.toThrow();
+    });
   });
 });

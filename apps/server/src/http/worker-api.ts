@@ -54,7 +54,9 @@ const jobView = (c: ClaimedJob, token: string) => ({
  * (the rest of /api and /mcp check TABULA_TOKEN). Without TABULA_WORKER_TOKEN every call answers 503.
  */
 export const workerRoutes: FastifyPluginAsync<{ db: Db; config: Config }> = async (app, { db, config }) => {
-  const auth = config.workerToken ? requireBearer(config.workerToken) : null;
+  // Temporary (removed with the worker API): the token is no longer part of the config.
+  const workerToken = process.env.TABULA_WORKER_TOKEN;
+  const auth = workerToken ? requireBearer(workerToken) : null;
   // On shutdown waiting claims answer "no job" at once instead of holding the close up for up to 30 s.
   const closing = new AbortController();
   app.addHook('preClose', async () => closing.abort());

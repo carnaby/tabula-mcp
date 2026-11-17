@@ -321,7 +321,7 @@ describe('reports over MCP', () => {
   });
 
   it('says transcription is not enabled when the server has no worker token', async () => {
-    const off = await buildApp({ config: { ...config, workerToken: undefined }, db, store: new MediaStore(mediaDir, config.media.maxBytes) });
+    const off = await buildApp({ config: { ...config, fornax: undefined }, db, store: new MediaStore(mediaDir, config.media.maxBytes) });
     await off.listen({ port: 0, host: '127.0.0.1' });
     const origin = `http://127.0.0.1:${(off.server.address() as AddressInfo).port}`;
     try {

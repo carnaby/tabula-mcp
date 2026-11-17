@@ -4,7 +4,6 @@
 .git
 .superpowers
 docs
-apps/tray
 .env
 .env.*
 !.env.example

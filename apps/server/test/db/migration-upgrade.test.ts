@@ -135,12 +135,12 @@ describe('upgrade to Fornax (migration 0016)', () => {
       await c`INSERT INTO workers (name, version) VALUES ('studio-pc', '1.4.0')`;
       for (const m of migrations.filter((x) => x.file >= '0016')) for (const s of m.statements) await c.unsafe(s);
       const rows = await c`
-        SELECT attachment_id, status, attempts, run_after <= now() AS due, error, started_at, fornax_job_id, fornax_change, note, submitting
+        SELECT attachment_id, status, attempts, run_after <= now() AS due, error, started_at, fornax_job_id, fornax_change, note, progress, progress_message, submitting
         FROM report_jobs`;
       const by = (id: string) => rows.find((x) => x.attachment_id === id);
       expect(by(running)).toEqual({
         attachment_id: running, status: 'queued', attempts: 0, due: true, error: null, started_at: null,
-        fornax_job_id: null, fornax_change: null, note: null, submitting: false,
+        fornax_job_id: null, fornax_change: null, note: null, progress: null, progress_message: null, submitting: false,
       });
       expect(by(queued)).toMatchObject({ status: 'queued', attempts: 0, due: false, fornax_job_id: null, submitting: false });
       expect(by(done)).toMatchObject({ status: 'done', attempts: 1 });

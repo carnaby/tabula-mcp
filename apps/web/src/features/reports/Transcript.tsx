@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, ApiError } from '../../api';
 import { timeAgo } from '../../format';
-import type { Attachment, SpeakerName, TranscriptSegment, TranscriptState, WorkerStatus } from '../../types';
+import type { Attachment, SpeakerName, TranscriptProgress, TranscriptSegment, TranscriptState, WorkerStatus } from '../../types';
 import { Alert, Button, cx, Icon, Popover, Select, Spinner, Textarea, useConfirm, useToast } from '../../ui';
 import { clock } from './Recorder';
 import { SpeakerChip } from './Speakers';
@@ -207,6 +207,23 @@ function LineEditor({
   );
 }
 
+/**
+ * Fornax's note on a waiting job in words for people: without its leading "waiting:" (the line says it already) and
+ * without the advice for agents that asking again changes nothing.
+ */
+function noteForPeople(note: string | null | undefined): string | null {
+  if (!note) return null;
+  return note.replace(/^waiting\s*[:,]\s*/i, '').replace(/[,;]?\s*asking again changes nothing\.?$/i, '').trim() || null;
+}
+
+/** " 42 % · transcribing 01:23 / 10:00": how far Fornax is, with its message when it is short. */
+function progressText(p: TranscriptProgress): string {
+  const parts: string[] = [];
+  if (p.progress != null) parts.push(`${p.progress} %`);
+  if (p.progressMessage && p.progressMessage.length <= 60) parts.push(p.progressMessage);
+  return parts.length ? ` ${parts.join(' · ')}` : '';
+}
+
 /** "Transcribe again" of a recording: whether it is allowed now, and the confirmed action. Used by the card's menu. */
 export function useTranscribeAgain(a: Attachment, closed: boolean, onChange: (t: TranscriptState) => void) {
   const notify = useToast();
@@ -399,9 +416,14 @@ export function Transcript({
         )}
         {notRecognized && <p className="transcript__note transcript__note--quiet">Speakers not recognized: {notRecognized}</p>}
         {pending?.status === 'queued' && (
-          <p className="transcript__note"><Icon name="inbox" /> Waiting to transcribe again; this transcript stays until the new one is ready.</p>
+          <p className="transcript__note">
+            <Icon name="inbox" />
+            <span>
+              Waiting to transcribe again{noteForPeople(pending.note) && ` — ${noteForPeople(pending.note)}`}. This transcript stays until the new one is ready.
+            </span>
+          </p>
         )}
-        {pending?.status === 'running' && <p className="transcript__note"><Spinner /> Transcribing again…</p>}
+        {pending?.status === 'running' && <p className="transcript__note"><Spinner /> Transcribing again…{progressText(pending)}</p>}
         {pending?.status === 'failed' && (
           <div className="transcript__note">
             <Alert tone="danger">Transcribing again failed{pending.error ? `: ${pending.error}` : ''}</Alert>
@@ -412,7 +434,7 @@ export function Transcript({
     );
   }
   if (t.status === 'running') {
-    return <p className="transcript__note"><Spinner /> Transcribing…</p>;
+    return <p className="transcript__note"><Spinner /> Transcribing…{progressText(t)}</p>;
   }
   if (t.status === 'failed') {
     return (
@@ -439,7 +461,7 @@ export function Transcript({
       <Icon name="inbox" />
       <span>
         Waiting for transcription
-        {t.note && ` — ${t.note}`}
+        {noteForPeople(t.note) && ` — ${noteForPeople(t.note)}`}
         {t.retryAt && ` · next try ${timeAgo(t.retryAt)}`}
       </span>
     </p>

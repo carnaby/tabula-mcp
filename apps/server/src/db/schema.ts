@@ -323,6 +323,10 @@ export const reportJobs = pgTable(
     fornaxChange: text('fornax_change'),
     /** Why the job waits in Fornax, one sentence from Fornax (e.g. the worker is offline). */
     note: text('note'),
+    /** How far Fornax is with a running job, a whole percent 0–100; null when it does not say (or the job waits). */
+    progress: integer('progress'),
+    /** What Fornax is doing on a running job, one line from Fornax (e.g. "transcribing 01:23 / 10:00"). */
+    progressMessage: text('progress_message'),
     /** Set while the sync uploads and submits the recording: no other sync takes the job meanwhile. */
     submitting: boolean('submitting').notNull().default(false),
     startedAt: timestamp('started_at', { withTimezone: true }),

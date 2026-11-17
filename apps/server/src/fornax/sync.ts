@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { Db } from '../db/client.js';
 import { projects, reportAttachments, reportJobs, reports } from '../db/schema.js';
 import { DomainError, loggableError } from '../domain/errors.js';
-import { cleanError, MAX_ATTEMPTS, MEDIA_GONE, retryDelayMs, storeTranscript, type TranscriptInput } from '../domain/jobs.js';
+import { cleanError, MAX_ATTEMPTS, MEDIA_GONE, type Progress, retryDelayMs, storeTranscript, type TranscriptInput } from '../domain/jobs.js';
 import type { MediaStore } from '../media/store.js';
 import { type FornaxClient, FornaxError, type FornaxJob } from './client.js';
 
@@ -55,7 +55,24 @@ function transcriptInput(raw: unknown): TranscriptInput {
 
 type Claimed = { id: string; attempts: number; attachmentId: string; storageKey: string; purgedAt: Date | null; project: string | null };
 /** A job Fornax works on, as last stored here; `fornaxChange` also as last seen (kept in memory between stored states). */
-type Followed = { id: string; fornaxJobId: string; fornaxChange: string | null; status: 'queued' | 'running'; note: string | null };
+type Followed = { id: string; fornaxJobId: string; fornaxChange: string | null; status: 'queued' | 'running'; note: string | null } & Progress;
+
+const NO_PROGRESS: Progress = { progress: null, progressMessage: null };
+
+/**
+ * Fornax's progress of a running job as stored here: a whole percent (Fornax reports a fraction 0..1 on every
+ * heartbeat; finer steps write nothing) and its message as one line. A waiting job has none.
+ */
+function progressOf(job: FornaxJob): Progress {
+  if (job.state !== 'running' || !job.progress) return NO_PROGRESS;
+  const { done, total, message } = job.progress;
+  const fraction = done != null && total ? done / total : null;
+  const line = (message ?? '').replace(/[\x00-\x1f\x7f]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return {
+    progress: fraction === null || !Number.isFinite(fraction) ? null : Math.round(Math.min(Math.max(fraction, 0), 1) * 100),
+    progressMessage: line ? [...line].slice(0, 200).join('') : null,
+  };
+}
 
 /**
  * Moves transcription jobs to Fornax and back. Submitting: a due queued job is claimed (FOR UPDATE SKIP LOCKED, then
@@ -177,7 +194,7 @@ export function createFornaxSync(deps: { db: Db; store: MediaStore; client: Forn
       .update(reportJobs)
       .set({
         status: submitted.state === 'running' ? 'running' : 'queued', fornaxJobId: submitted.id, fornaxChange: submitted.change,
-        note: submitted.note, submitting: false, attempts: job.attempts + 1, error: null, startedAt: now, updatedAt: now,
+        note: submitted.note, ...progressOf(submitted), submitting: false, attempts: job.attempts + 1, error: null, startedAt: now, updatedAt: now,
       })
       .where(stillClaimed(job.id))
       .returning({ id: reportJobs.id });
@@ -206,6 +223,7 @@ export function createFornaxSync(deps: { db: Db; store: MediaStore; client: Forn
     db
       .select({
         id: reportJobs.id, fornaxJobId: reportJobs.fornaxJobId, fornaxChange: reportJobs.fornaxChange, status: reportJobs.status, note: reportJobs.note,
+        progress: reportJobs.progress, progressMessage: reportJobs.progressMessage,
       })
       .from(reportJobs)
       .where(and(inArray(reportJobs.status, ['queued', 'running']), isNotNull(reportJobs.fornaxJobId))) as Promise<Followed[]>;
@@ -262,20 +280,24 @@ export function createFornaxSync(deps: { db: Db; store: MediaStore; client: Forn
         await failFollowed(job, FORNAX_CANCELED, now);
         return false;
       default: {
-        // Fornax's change value follows progress too, and not the note: the row is written only when what it shows
-        // (state, the note) changed. The change value itself only needs to be current after a restart, where a stale
-        // one costs a single immediate answer.
-        if (seen.state === job.status && seen.note === job.note) {
+        // Fornax's change value follows its exact progress, and not the note: the row is written only when what it
+        // shows (state, the note, the whole percent, the progress message) changed. The change value itself only
+        // needs to be current after a restart, where a stale one costs a single immediate answer.
+        const shown = progressOf(seen);
+        if (
+          seen.state === job.status && seen.note === job.note
+          && shown.progress === job.progress && shown.progressMessage === job.progressMessage
+        ) {
           job.fornaxChange = seen.change;
           return true;
         }
         const [row] = await db
           .update(reportJobs)
-          .set({ status: seen.state, note: seen.note, fornaxChange: seen.change, updatedAt: now })
+          .set({ status: seen.state, note: seen.note, ...shown, fornaxChange: seen.change, updatedAt: now })
           .where(stillFollowed(job))
           .returning({ id: reportJobs.id });
         if (!row) return false;
-        Object.assign(job, { status: seen.state, note: seen.note, fornaxChange: seen.change });
+        Object.assign(job, { status: seen.state, note: seen.note, ...shown, fornaxChange: seen.change });
         return true;
       }
     }
@@ -309,13 +331,24 @@ export function createFornaxSync(deps: { db: Db; store: MediaStore; client: Forn
 
   /** One long poll after another until the job is finished here or the follower is stopped. */
   async function follow(job: Followed, signal: AbortSignal): Promise<void> {
+    // One line per outage, not one every few seconds: the first failure, then the first round that works again.
+    let failing = false;
     while (!signal.aborted) {
       try {
         const seen = await client.job(job.fornaxJobId, { wait: timing.waitS, ...(job.fornaxChange ? { change: job.fornaxChange } : {}), signal });
-        if (!(await apply(job, seen, new Date(), signal))) return;
+        const more = await apply(job, seen, new Date(), signal);
+        if (failing) log.info({ job: job.id, fornax: job.fornaxJobId }, 'following a transcription in Fornax works again');
+        failing = false;
+        if (!more) return;
       } catch (e) {
         if (signal.aborted) return;
-        log.warn({ job: job.id, fornax: job.fornaxJobId, err: loggableError(e) }, 'could not follow a transcription in Fornax; asking again shortly');
+        if (!failing) {
+          log.warn(
+            { job: job.id, fornax: job.fornaxJobId, err: loggableError(e) },
+            'could not follow a transcription in Fornax; asking again every few seconds (logged again once it works)',
+          );
+        }
+        failing = true;
         await pause(timing.retryMs, signal);
       }
     }
@@ -361,7 +394,8 @@ export function createFornaxSync(deps: { db: Db; store: MediaStore; client: Forn
     start(): void {
       if (started || stopping.signal.aborted) return;
       started = (async () => {
-        // A submit the previous run of the server did not finish: nobody uploads it any more.
+        // A submit the previous run of the server did not finish: nobody uploads it any more. This holds because Tabula
+        // runs as a single server per database; a second server would see this one's uploads taken back.
         try {
           await db.update(reportJobs).set({ submitting: false }).where(and(eq(reportJobs.submitting, true), isNull(reportJobs.fornaxJobId)));
         } catch (e) {

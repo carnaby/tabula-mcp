@@ -135,22 +135,33 @@ describe('the Fornax sync', () => {
     expect((await jobOf(a.id)).fornaxChange).toBe(change);
   });
 
-  it('does not write the row for progress alone', async () => {
+  it('stores the whole percent and the message of a running job, and writes the row only when they change', async () => {
     const a = await recording();
     const sync = newSync();
     await sync.syncOnce(at(0));
     const id = (await jobOf(a.id)).fornaxJobId!;
-    fake.setJob(id, { state: 'running', note: null, progress: 0.1 });
+    fake.setJob(id, { state: 'running', note: null, progress: 0.1, progress_message: 'extracting the audio' });
     await sync.syncOnce(at(1000));
     const running = await jobOf(a.id);
-    expect(running).toMatchObject({ status: 'running', updatedAt: at(1000) });
-    for (const [i, progress] of [0.2, 0.5, 0.9].entries()) {
-      fake.setJob(id, { progress, progress_message: `transcribing ${progress}` });
+    expect(running).toMatchObject({ status: 'running', progress: 10, progressMessage: 'extracting the audio', updatedAt: at(1000) });
+    expect(await stateOf(a.id)).toMatchObject({ status: 'running', progress: 10, progressMessage: 'extracting the audio' });
+    // Finer progress with the same whole percent and message: Fornax's change value moves, the row stays.
+    for (const [i, progress] of [0.101, 0.104].entries()) {
+      fake.setJob(id, { progress });
       await sync.syncOnce(at(2000 + i));
     }
-    expect(await jobOf(a.id)).toMatchObject({ status: 'running', updatedAt: at(1000), fornaxChange: running.fornaxChange });
-    fake.setJob(id, succeeded());
+    expect(await jobOf(a.id)).toMatchObject({ progress: 10, updatedAt: at(1000), fornaxChange: running.fornaxChange });
+    fake.setJob(id, { progress: 0.4213, progress_message: 'transcribing 01:23 / 10:00' });
     await sync.syncOnce(at(3000));
+    expect(await jobOf(a.id)).toMatchObject({ progress: 42, progressMessage: 'transcribing 01:23 / 10:00', updatedAt: at(3000) });
+    fake.setJob(id, { progress: 0.4249 });
+    await sync.syncOnce(at(4000));
+    expect((await jobOf(a.id)).updatedAt).toEqual(at(3000));
+    fake.setJob(id, { progress_message: 'transcribing 01:30 / 10:00' });
+    await sync.syncOnce(at(5000));
+    expect(await jobOf(a.id)).toMatchObject({ progress: 42, progressMessage: 'transcribing 01:30 / 10:00', updatedAt: at(5000) });
+    fake.setJob(id, succeeded());
+    await sync.syncOnce(at(6000));
     expect((await jobOf(a.id)).status).toBe('done');
   });
 
@@ -254,6 +265,24 @@ describe('the Fornax sync', () => {
     expect(FORNAX_CANCELED).toBe('the job was canceled in Fornax');
     expect(await jobOf(forgotten.id)).toMatchObject({ status: 'failed', error: FORNAX_FORGOT });
     expect(FORNAX_FORGOT).toBe('Fornax no longer knows this job');
+  });
+
+  it('keeps following through a 404 that is not from Fornax (a proxy while Fornax restarts)', async () => {
+    const a = await recording();
+    const sync = newSync();
+    await sync.syncOnce(at(0));
+    const id = (await jobOf(a.id)).fornaxJobId!;
+    fake.fail(`/api/jobs/${id}`, 'proxy-404');
+    await sync.syncOnce(at(1000));
+    expect(await jobOf(a.id)).toMatchObject({ status: 'queued', error: null, fornaxJobId: id });
+    fake.fail(`/api/jobs/${id}`, null);
+    fake.setJob(id, succeeded());
+    fake.fail(`/api/jobs/${id}/outputs/transcript.json`, 'proxy-404');
+    await sync.syncOnce(at(2000));
+    expect(await jobOf(a.id)).toMatchObject({ status: 'queued', error: null, fornaxJobId: id });
+    fake.fail(`/api/jobs/${id}/outputs/transcript.json`, null);
+    await sync.syncOnce(at(3000));
+    expect((await jobOf(a.id)).status).toBe('done');
   });
 
   it('retries a failed upload or submit after 1 and 4 minutes and gives up after the third', async () => {
@@ -407,6 +436,30 @@ describe('the running Fornax sync', () => {
     await vi.waitFor(() => expect(fake.requests.some((r) => /wait=1/.test(r.query))).toBe(true), { timeout: 5000 });
     fake.setJob((await jobOf(a.id)).fornaxJobId!, { note: 'the queue is paused' }, { sameChange: true });
     await vi.waitFor(async () => expect((await jobOf(a.id)).note).toBe('the queue is paused'), { timeout: 5000 });
+  });
+
+  it('logs a failing long poll once, and again when it works', async () => {
+    const a = await recording();
+    await newSync().syncOnce(at(0));
+    const id = (await jobOf(a.id)).fornaxJobId!;
+    const polls = () => fake.requests.filter((r) => r.path === `/api/jobs/${id}`).length;
+    const lines = (level: string, text: RegExp) => logged.filter((l) => l.level === level && text.test(l.msg)).length;
+    fake.fail(`/api/jobs/${id}`, 503);
+    const sync = newSync(client, fast);
+    sync.start();
+    await vi.waitFor(() => expect(polls()).toBeGreaterThanOrEqual(5), { timeout: 5000 });
+    expect(lines('warn', /could not follow a transcription/)).toBe(1);
+    expect(lines('info', /works again/)).toBe(0);
+    fake.fail(`/api/jobs/${id}`, null);
+    await vi.waitFor(() => expect(lines('info', /works again/)).toBe(1), { timeout: 5000 });
+    fake.fail(`/api/jobs/${id}`, 'network');
+    fake.setJob(id, { note: 'waiting: the queue is paused' });
+    await vi.waitFor(() => expect(lines('warn', /could not follow a transcription/)).toBe(2), { timeout: 5000 });
+    fake.fail(`/api/jobs/${id}`, null);
+    fake.setJob(id, succeeded());
+    await vi.waitFor(async () => expect((await jobOf(a.id)).status).toBe('done'), { timeout: 5000 });
+    expect(lines('warn', /could not follow a transcription/)).toBe(2);
+    expect(lines('info', /works again/)).toBe(2);
   });
 
   it('follows other jobs while an upload hangs, and gives the job back when stopped', async () => {

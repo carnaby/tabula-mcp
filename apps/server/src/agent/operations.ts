@@ -384,10 +384,21 @@ function pendingText(s: TranscriptState | undefined, transcriptionEnabled = true
   if (!s || s.status === 'none') {
     return 'it was not queued for transcription (a video without sound, or uploaded before transcription existed); the user can start it with "Transcribe" in the Tabula app';
   }
-  if (s.status === 'running') return 'it is being transcribed right now; ask again in a minute';
+  if (s.status === 'running') {
+    const done = s.progress !== null ? ` (${s.progress} % done)` : '';
+    return `it is being transcribed right now${done}; ask again in a minute`;
+  }
   if (s.status === 'failed') return `the transcription failed (${s.error ?? 'unknown error'}); the user can retry it in the Tabula app`;
-  const note = s.status === 'queued' ? s.note : null;
-  return `waiting for the Fornax worker${note ? ` (${note})` : ''}; ask again later`;
+  const queued = s.status === 'queued' ? s : null;
+  // A failed submit waits for its next try (Fornax unreachable, an upload error).
+  if (queued?.error) {
+    const next = queued.retryAt ? `it is tried again at ${queued.retryAt}` : 'it is tried again within seconds';
+    return `waiting for Fornax: submitting the recording failed (${queued.error}); ${next}`;
+  }
+  // Fornax's note starts with "waiting" and may already say that asking again changes nothing.
+  const note = queued?.note?.replace(/^waiting\s*[:,]\s*/i, '') || null;
+  if (note && /asking again changes nothing/i.test(note)) return `waiting for Fornax: ${note}`;
+  return `waiting for Fornax${note ? `: ${note}` : ''}; ask again later`;
 }
 
 function transcriptForAgent(a: Attachment, s: TranscriptState | undefined, transcriptionEnabled: boolean) {

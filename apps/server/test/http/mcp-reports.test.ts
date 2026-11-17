@@ -293,7 +293,7 @@ describe('reports over MCP', () => {
     const audio = await uploadFile(created.id, silentWav(1), 'audio/wav', 'voice.wav');
     let report = json((await tool('get_report', { id: created.id })).content);
     expect(report.attachments[0].transcript.status).toBe('queued');
-    expect(report.attachments[0].transcript.note).toMatch(/waiting for the Fornax worker/);
+    expect(report.attachments[0].transcript.note).toMatch(/^waiting for Fornax; ask again later$/);
 
     // Long enough for more than one part of get_transcript (about 100 000 characters).
     const segments = Array.from({ length: 2000 }, (_, i) => ({
@@ -370,12 +370,28 @@ describe('reports over MCP', () => {
     const audio = await uploadFile(created.id, silentWav(1), 'audio/wav', 'voice.wav');
     const waiting = await tool('get_transcript', { attachment_id: audio.id });
     expect(waiting.isError).toBe(true);
-    expect(text(waiting.content)).toMatch(/^404: .*waiting for the Fornax worker; ask again later/);
-    // Fornax says why the job waits: the text passes it on.
-    await db.update(reportJobs).set({ note: 'the worker is offline' }).where(eq(reportJobs.attachmentId, audio.id));
-    expect(text((await tool('get_transcript', { attachment_id: audio.id })).content)).toMatch(/waiting for the Fornax worker \(the worker is offline\)/);
+    expect(text(waiting.content)).toMatch(/^404: .*waiting for Fornax; ask again later/);
+    // Fornax says why the job waits: the text passes it on, without its leading "waiting:".
+    await db.update(reportJobs).set({ note: 'waiting, position 2; the worker takes it after one other job' }).where(eq(reportJobs.attachmentId, audio.id));
+    expect(text((await tool('get_transcript', { attachment_id: audio.id })).content))
+      .toMatch(/waiting for Fornax: position 2; the worker takes it after one other job; ask again later/);
+    // A note that already says asking again changes nothing is given as it is.
+    const offline = 'waiting: the worker is offline since 13:40; the job starts when the worker runs again, asking again changes nothing';
+    await db.update(reportJobs).set({ note: offline }).where(eq(reportJobs.attachmentId, audio.id));
     expect(json((await tool('get_report', { id: created.id })).content).attachments[0].transcript).toEqual({
-      status: 'queued', note: 'waiting for the Fornax worker (the worker is offline); ask again later',
+      status: 'queued',
+      note: 'waiting for Fornax: the worker is offline since 13:40; the job starts when the worker runs again, asking again changes nothing',
+    });
+    // A failed submit waits for its next try: the last error and when.
+    const retryAt = new Date(Date.now() + 4 * 60_000);
+    await db.update(reportJobs).set({ note: null, error: 'Fornax is unreachable (ECONNREFUSED)', runAfter: retryAt }).where(eq(reportJobs.attachmentId, audio.id));
+    expect(json((await tool('get_report', { id: created.id })).content).attachments[0].transcript.note).toBe(
+      `waiting for Fornax: submitting the recording failed (Fornax is unreachable (ECONNREFUSED)); it is tried again at ${retryAt.toISOString()}`,
+    );
+    // While Fornax runs it: how far it is.
+    await db.update(reportJobs).set({ status: 'running', error: null, fornaxJobId: 'j_1', progress: 42 }).where(eq(reportJobs.attachmentId, audio.id));
+    expect(json((await tool('get_report', { id: created.id })).content).attachments[0].transcript).toEqual({
+      status: 'running', note: 'it is being transcribed right now (42 % done); ask again in a minute',
     });
     const photo = await uploadFile(created.id, PNG, 'image/png', 'p.png');
     expect(text((await tool('get_transcript', { attachment_id: photo.id })).content)).toMatch(/^400: .*only video and audio/);

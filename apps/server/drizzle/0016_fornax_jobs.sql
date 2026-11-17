@@ -12,6 +12,8 @@ ALTER TABLE "report_jobs" ADD COLUMN "fornax_job_id" text;--> statement-breakpoi
 ALTER TABLE "report_jobs" ADD COLUMN "fornax_change" text;--> statement-breakpoint
 ALTER TABLE "report_jobs" ADD COLUMN "note" text;--> statement-breakpoint
 ALTER TABLE "report_jobs" ADD COLUMN "submitting" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "report_jobs" ADD COLUMN "progress" integer;--> statement-breakpoint
+ALTER TABLE "report_jobs" ADD COLUMN "progress_message" text;--> statement-breakpoint
 ALTER TABLE "report_jobs" DROP COLUMN "lease_id";--> statement-breakpoint
 ALTER TABLE "report_jobs" DROP COLUMN "lease_until";--> statement-breakpoint
 ALTER TABLE "report_jobs" DROP COLUMN "worker";--> statement-breakpoint

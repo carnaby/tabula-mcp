@@ -144,6 +144,26 @@ describe('transcription jobs', () => {
     expect((await transcriptStates(db, [a.id], now)).get(a.id)).toEqual({ status: 'failed', attempts: 1, error: 'boom', retryAt: null });
   });
 
+  it('shows how far Fornax is with a running job, also while a done recording is transcribed again', async () => {
+    const a = await queued();
+    await setJob(a.id, { ...IN_FORNAX, note: null, progress: 42, progressMessage: 'transcribing 01:23 / 10:00' });
+    expect((await transcriptStates(db, [a.id])).get(a.id)).toEqual({
+      status: 'running', attempts: 1, error: null, retryAt: null, note: null, progress: 42, progressMessage: 'transcribing 01:23 / 10:00',
+    });
+    await store(a.id, { language: 'sk', model: 'large-v3', durationMs: null, segments: SEGMENTS });
+    await transcribeAgain(db, a.id);
+    expect(await jobOf(a.id)).toMatchObject({ progress: null, progressMessage: null });
+    await setJob(a.id, { fornaxJobId: 'j_2', note: 'waiting: the worker is offline since 13:40' });
+    expect((await transcriptStates(db, [a.id])).get(a.id)).toMatchObject({
+      status: 'done',
+      again: { status: 'queued', error: null, retryAt: null, note: 'waiting: the worker is offline since 13:40', progress: null, progressMessage: null },
+    });
+    await setJob(a.id, { status: 'running', note: null, progress: 7, progressMessage: 'extracting the audio' });
+    expect((await transcriptStates(db, [a.id])).get(a.id)).toMatchObject({
+      status: 'done', again: { status: 'running', note: null, progress: 7, progressMessage: 'extracting the audio' },
+    });
+  });
+
   it('counts the recordings of open reports that wait, run and failed', async () => {
     expect(await transcriptionStatus(db)).toEqual({ queued: 0, running: 0, failed: 0 });
     await queued();

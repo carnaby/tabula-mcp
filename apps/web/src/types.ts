@@ -120,11 +120,13 @@ export type TranscriptSegment = { start_ms: number; end_ms: number; text: string
 /** How the speakers were recognized: the model and how many speak, or why it failed. */
 export type Diarization = { model: string; speakers: number } | { error: string };
 export type SpeakerName = { name: string; by: 'user' | 'agent'; at: string };
+/** How far Fornax is with a running job: a whole percent 0–100 and what it does now (null when it does not say). */
+export type TranscriptProgress = { progress?: number | null; progressMessage?: string | null };
 /** A recording transcribed again: its job's state while the old transcript stays on show. */
-export type TranscribingAgain = { status: 'queued' | 'running' | 'failed'; error: string | null; retryAt: string | null };
+export type TranscribingAgain = { status: 'queued' | 'running' | 'failed'; error: string | null; retryAt: string | null; note?: string | null } & TranscriptProgress;
 export type TranscriptState =
   | { status: 'none' }
-  | { status: 'queued' | 'running' | 'failed'; attempts: number; error: string | null; retryAt: string | null; note?: string | null }
+  | ({ status: 'queued' | 'running' | 'failed'; attempts: number; error: string | null; retryAt: string | null; note?: string | null } & TranscriptProgress)
   | {
       status: 'done'; language: string | null; model: string; segments: TranscriptSegment[]; createdAt: string;
       diarization: Diarization | null; speakers: Record<string, SpeakerName>; again: TranscribingAgain | null;

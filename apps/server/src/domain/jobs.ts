@@ -30,8 +30,8 @@ export async function enqueueTranscription(db: Db, attachmentId: string, now = n
 
 /** A job that starts over: a new upload and a new Fornax job, with all its attempts again. */
 const startOver = (now: Date) => ({
-  status: 'queued' as const, attempts: 0, error: null, fornaxJobId: null, fornaxChange: null, note: null, submitting: false,
-  runAfter: now, startedAt: null, finishedAt: null, updatedAt: now,
+  status: 'queued' as const, attempts: 0, error: null, fornaxJobId: null, fornaxChange: null, note: null, progress: null,
+  progressMessage: null, submitting: false, runAfter: now, startedAt: null, finishedAt: null, updatedAt: now,
 });
 
 const LANGUAGE = /^[a-z]{2,3}(-[a-z0-9]{2,8})?$/i;
@@ -161,16 +161,24 @@ export async function transcriptionStatus(db: Db): Promise<JobCounts> {
   return { queued: n('queued'), running: n('running'), failed: n('failed') };
 }
 
+/** How far Fornax is with a running job: a whole percent 0–100 and what it does now (both null when it does not say). */
+export type Progress = { progress: number | null; progressMessage: string | null };
+
 /** A recording transcribed again: the job's state while the old transcript stays on show. */
-export type TranscribingAgain = { status: 'queued' | 'running' | 'failed'; error: string | null; retryAt: string | null };
+export type TranscribingAgain = {
+  status: 'queued' | 'running' | 'failed'; error: string | null; retryAt: string | null;
+  /** Why the job waits in Fornax (see TranscriptState). */
+  note: string | null;
+} & Progress;
 
 export type TranscriptState =
   | { status: 'none' }
   | {
-      status: 'queued' | 'running'; attempts: number; error: string | null; retryAt: string | null;
+      status: 'queued'; attempts: number; error: string | null; retryAt: string | null;
       /** Why the job waits in Fornax, one sentence from Fornax (e.g. the worker is offline); null when it says nothing. */
       note: string | null;
     }
+  | ({ status: 'running'; attempts: number; error: string | null; retryAt: string | null; note: string | null } & Progress)
   | { status: 'failed'; attempts: number; error: string | null; retryAt: string | null }
   | {
       status: 'done'; language: string | null; model: string; segments: TranscriptSegment[]; createdAt: string;
@@ -188,7 +196,7 @@ export async function transcriptStates(db: Db, attachmentIds: readonly string[],
     db
       .select({
         attachmentId: reportJobs.attachmentId, status: reportJobs.status, attempts: reportJobs.attempts, error: reportJobs.error,
-        runAfter: reportJobs.runAfter, note: reportJobs.note,
+        runAfter: reportJobs.runAfter, note: reportJobs.note, progress: reportJobs.progress, progressMessage: reportJobs.progressMessage,
       })
       .from(reportJobs)
       .where(inArray(reportJobs.attachmentId, ids)),
@@ -205,12 +213,19 @@ export async function transcriptStates(db: Db, attachmentIds: readonly string[],
   for (const j of jobs) {
     if (j.status === 'done') continue;
     const retryAt = j.status === 'queued' && j.runAfter > now ? j.runAfter.toISOString() : null;
-    pending.set(j.attachmentId, { status: j.status, error: j.error, retryAt });
+    // Progress belongs to a running job only; a job back in the queue starts from nothing.
+    const progress: Progress = j.status === 'running'
+      ? { progress: j.progress, progressMessage: j.progressMessage }
+      : { progress: null, progressMessage: null };
+    pending.set(j.attachmentId, { status: j.status, error: j.error, retryAt, note: j.status === 'failed' ? null : j.note, ...progress });
+    const base = { attempts: j.attempts, error: j.error, retryAt };
     states.set(
       j.attachmentId,
       j.status === 'failed'
-        ? { status: j.status, attempts: j.attempts, error: j.error, retryAt }
-        : { status: j.status, attempts: j.attempts, error: j.error, retryAt, note: j.note },
+        ? { status: j.status, ...base }
+        : j.status === 'running'
+          ? { status: j.status, ...base, note: j.note, ...progress }
+          : { status: j.status, ...base, note: j.note },
     );
   }
   // A transcript wins over its job's state: it is what the user wants to see.

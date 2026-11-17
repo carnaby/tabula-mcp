@@ -54,8 +54,12 @@ export type FakeFornax = {
    * note out), so a waiting long poll is not woken.
    */
   setJob(id: string, patch: Partial<Omit<FakeJob, 'id' | 'change'>>, opts?: { sameChange?: boolean }): FakeJob;
-  /** Every request to `path` (without the query string) answers `status`, or drops the connection with 'network'; null removes the rule. */
-  fail(path: string, how: number | 'network' | null): void;
+  /**
+   * Every request to `path` (without the query string) answers `status` (with a JSON body that is not Fornax's own
+   * error), drops the connection with 'network', or answers like a reverse proxy without Fornax behind it with
+   * 'proxy-404' (a plain-text 404 page); null removes the rule.
+   */
+  fail(path: string, how: number | 'network' | 'proxy-404' | null): void;
   close(): Promise<void>;
 };
 
@@ -73,7 +77,7 @@ export async function startFakeFornax(opts: { token?: string } = {}): Promise<Fa
   const jobs = new Map<string, FakeJob>();
   const files = new Map<string, FakeFile>();
   const requests: FakeRequest[] = [];
-  const rules = new Map<string, number | 'network'>();
+  const rules = new Map<string, number | 'network' | 'proxy-404'>();
   const worker = { online: true, offered: true };
   let changes = 0;
   const nextChange = () => createHash('sha256').update(String(++changes)).digest('hex').slice(0, 16);
@@ -91,6 +95,7 @@ export async function startFakeFornax(opts: { token?: string } = {}): Promise<Fa
       req.raw.socket.destroy();
       return reply;
     }
+    if (rule === 'proxy-404') return reply.code(404).header('content-type', 'text/plain; charset=utf-8').send('404 page not found');
     if (rule !== undefined) return reply.code(rule).send({ error: 'injected', message: `injected failure ${rule}` });
     if (auth !== `Bearer ${token}`) return reply.code(401).header('WWW-Authenticate', 'Bearer').send({ error: 'unauthorized' });
     return undefined;

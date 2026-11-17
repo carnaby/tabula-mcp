@@ -24,11 +24,11 @@ function textProblem(text: string): string | null {
   return null;
 }
 
-/** The user's text for a line: whitespace collapsed like the worker's lines; empty or over 2 000 characters is a 400. */
+/** The user's text for a line: whitespace collapsed like the transcribed lines; empty or over 2 000 characters is a 400. */
 function cleanLineText(raw: string): string {
   rejectNul(raw, 'text');
   const text = collapseSpaces(raw);
-  if (!text) throw badRequest("text is empty; a line needs words (Restore original brings back the worker's)");
+  if (!text) throw badRequest("text is empty; a line needs words (Restore original brings back the original line)");
   const n = charCount(text);
   if (n > TRANSCRIPT_LIMITS.segmentChars) throw badRequest(`text is ${n} characters; the limit is ${TRANSCRIPT_LIMITS.segmentChars}`);
   return text;

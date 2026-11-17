@@ -179,7 +179,7 @@ export const reportRoutes: FastifyPluginAsync<MediaDeps> = async (app, { db, con
     return (await transcriptStates(db, [id])).get(id);
   });
 
-  /** "Restore original": the worker's text and speaker of one line. */
+  /** "Restore original": the text and speaker of one line as Fornax transcribed it. */
   app.post('/attachments/:id/segments/:index/restore', async (req) => {
     const { id, index } = parse(segmentParams, req.params);
     await requireAttachment(db, id);

@@ -92,11 +92,11 @@ Tabula needs three settings (see [Configuration](#configuration)):
 |---|---|
 | `TABULA_FORNAX_URL` | address of your Fornax, e.g. `https://fornax.example.com` |
 | `TABULA_FORNAX_TOKEN` | the token Fornax gave Tabula (not shown in logs, errors or the API) |
-| `TABULA_FORNAX_PRIORITY` | optional: `high` (default), `normal` or `low`, how Fornax orders Tabula's jobs against other clients' |
+| `TABULA_FORNAX_PRIORITY` | optional: `high` (default) or `normal`, how Fornax orders Tabula's jobs against other clients'; `low` is accepted, but Fornax treats it as `normal` |
 
 Set the URL and the token together; with only one of them the server refuses to start and says which is missing. To get the token, run `fornax-admin tokens invite <name>` in Fornax, open the link it prints and approve the client after comparing the fingerprint; the steps are in Fornax's README under [Connect a client](https://github.com/carnaby/fornax-mcp#connect-a-client).
 
-What you see: a recording in a report shows *waiting* with Fornax's reason (for example that the worker is offline), *running*, *done* with the transcript, or *failed* with the reason and *Try again* (a new upload and a new job). A failed upload or an unreachable Fornax is retried after 1 and after 4 minutes before the transcription fails. The dot next to the logo in the sidebar shows the Fornax worker (see [The web UI](#the-web-ui)).
+What you see: a recording in a report shows *waiting* with Fornax's reason (for example that the worker is offline), *running* with Fornax's progress (`Transcribing… 42 %`), *done* with the transcript, or *failed* with the reason and *Try again* (a new upload and a new job). A failed upload or an unreachable Fornax is retried after 1 and after 4 minutes before the transcription fails. Run one Tabula server per database: at start the server takes back the uploads to Fornax that its previous run did not finish. The dot next to the logo in the sidebar shows the Fornax worker (see [The web UI](#the-web-ui)).
 
 Without `TABULA_FORNAX_URL` and `TABULA_FORNAX_TOKEN` recordings are kept but not transcribed.
 
@@ -293,7 +293,7 @@ Any client that speaks Streamable HTTP with the classic `initialize` handshake (
 | `TABULA_CONNECTOR_SECRET` | no | — | Enables `/mcp/<secret>` for clients that can't send headers, at least 32 characters |
 | `TABULA_FORNAX_URL` | no | — | Address of [Fornax](#transcription-with-fornax), which transcribes recordings. Set together with `TABULA_FORNAX_TOKEN` (one without the other: the server refuses to start). Without both, recordings are not transcribed |
 | `TABULA_FORNAX_TOKEN` | no | — | The token Fornax issued to Tabula; never logged or returned by the API |
-| `TABULA_FORNAX_PRIORITY` | no | `high` | `high`, `normal` or `low`: the priority of Tabula's jobs in Fornax; anything else refuses to start |
+| `TABULA_FORNAX_PRIORITY` | no | `high` | `high`, `normal` or `low` (Fornax treats `low` as `normal`): the priority of Tabula's jobs in Fornax; anything else refuses to start |
 | `PORT` | no | `3000` | Port the server listens on |
 | `HOST` | no | `0.0.0.0` | Interface to bind |
 | `WEB_DIST` | no | `web/dist` | Path to the UI build (in the image `/app/web/dist`; for `pnpm dev` see `.env.example`) |

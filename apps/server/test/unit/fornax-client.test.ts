@@ -70,6 +70,21 @@ describe('fornaxClient', () => {
     expect(await fornaxClient(cfg()).job('j_nope')).toBeNull();
   });
 
+  it('takes a 404 for an unknown job or output only when Fornax itself says not_found; a 404 from a proxy is transient', async () => {
+    const { client, job } = await submitted();
+    fake.fail(`/api/jobs/${job.id}`, 'proxy-404');
+    expect(await client.job(job.id).catch((e) => e)).toMatchObject({ status: 404, permanent: false });
+    fake.fail(`/api/jobs/${job.id}`, 404);
+    expect(await client.job(job.id).catch((e) => e)).toMatchObject({ status: 404, permanent: false });
+    fake.fail(`/api/jobs/${job.id}`, null);
+    expect((await client.job(job.id))!.id).toBe(job.id);
+    fake.setJob(job.id, { state: 'succeeded', files: new Map([['transcript.json', { segments: [] }]]) });
+    fake.fail(`/api/jobs/${job.id}/outputs/transcript.json`, 'proxy-404');
+    expect(await client.output(job.id, 'transcript.json').catch((e) => e)).toMatchObject({ status: 404, permanent: false });
+    fake.fail(`/api/jobs/${job.id}/outputs/transcript.json`, null);
+    expect(await client.output(job.id, 'transcript.json')).toEqual({ segments: [] });
+  });
+
   it('returns an output as parsed JSON', async () => {
     const { client, job } = await submitted();
     fake.setJob(job.id, { state: 'succeeded', files: new Map([['transcript.json', { segments: [{ text: 'Ahoj svet' }] }]]) });

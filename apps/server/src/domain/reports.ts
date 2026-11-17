@@ -291,7 +291,7 @@ export async function addAttachment(
     if (file.type.kind !== 'image') {
       if (file.type.ext === 'webm') file = await remuxed(store, paths, file);
       durationMs = await probeDurationMs(paths, file.tmpPath, file.type.mime);
-      // A video without a sound track has nothing to transcribe; when ffprobe can't tell, the worker finds out.
+      // A video without a sound track has nothing to transcribe; when ffprobe can't tell, Fornax finds out.
       transcribe = file.type.kind === 'audio' || (await hasAudioStream(paths, file.tmpPath, file.type.mime)) !== false;
     }
     await store.commit(file.tmpPath, key);

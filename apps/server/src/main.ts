@@ -48,7 +48,12 @@ void purge();
 
 const shutdown = async () => {
   clearInterval(purgeTimer);
-  await sync?.stop();
+  // The server closes and the process exits even when stopping the sync fails.
+  try {
+    await sync?.stop();
+  } catch (e) {
+    app.log.error({ err: loggableError(e) }, 'could not stop the Fornax sync cleanly');
+  }
   await app.close();
   await close();
   process.exit(0);

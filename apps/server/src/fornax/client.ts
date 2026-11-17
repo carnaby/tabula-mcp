@@ -87,13 +87,19 @@ export function fornaxClient(cfg: FornaxConfig, fetchImpl: typeof fetch = fetch)
 
   async function failure(res: Response): Promise<FornaxError> {
     let message = '';
+    let code: unknown = null;
     try {
-      const body = (await res.json()) as { message?: unknown };
-      if (typeof body.message === 'string') message = body.message;
+      const body = (await res.json()) as { error?: unknown; message?: unknown } | null;
+      if (typeof body?.message === 'string') message = body.message;
+      code = body?.error ?? null;
     } catch {
       // not JSON: use the status
     }
-    const permanent = res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429;
+    // A 404 is Fornax's own answer only with its JSON error body; a proxy's 404 page (e.g. while Fornax restarts)
+    // passes, so it is not taken for "Fornax does not know this job".
+    const permanent = res.status === 404
+      ? code === 'not_found'
+      : res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429;
     return new FornaxError(scrub(message ? `Fornax answered ${res.status}: ${message}` : `Fornax answered ${res.status}`), res.status, permanent);
   }
 
@@ -144,7 +150,7 @@ export function fornaxClient(cfg: FornaxConfig, fetchImpl: typeof fetch = fetch)
       return toJob(body);
     },
 
-    /** The job, or null when Fornax does not know it (404; also another client's job). */
+    /** The job, or null when Fornax does not know it (its own 404; also another client's job). */
     async job(id: string, opts: { wait?: number; change?: string; signal?: AbortSignal } = {}): Promise<FornaxJob | null> {
       const q = new URLSearchParams();
       if (opts.wait !== undefined) q.set('wait', String(opts.wait));
@@ -157,7 +163,7 @@ export function fornaxClient(cfg: FornaxConfig, fetchImpl: typeof fetch = fetch)
         });
         return toJob(body);
       } catch (e) {
-        if (e instanceof FornaxError && e.status === 404) return null;
+        if (e instanceof FornaxError && e.status === 404 && e.permanent) return null;
         throw e;
       }
     },

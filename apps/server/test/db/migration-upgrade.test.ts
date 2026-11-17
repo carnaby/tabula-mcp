@@ -108,3 +108,48 @@ describe('upgrade to optional projects and Keep media (migration 0014)', () => {
     }
   });
 });
+
+describe('upgrade to Fornax (migration 0016)', () => {
+  it('puts running and queued jobs back in the queue without a Fornax job, and drops the workers table', async () => {
+    const name = 'tabula_upgrade_fornax';
+    await admin.unsafe(`DROP DATABASE IF EXISTS ${name}`);
+    await admin.unsafe(`CREATE DATABASE ${name}`);
+    const url = new URL(upgradeUrl);
+    url.pathname = `/${name}`;
+    const c = postgres(url.href, { max: 1, onnotice: () => {} });
+    try {
+      for (const m of migrations.filter((x) => x.file < '0016')) for (const s of m.statements) await c.unsafe(s);
+      await c`INSERT INTO projects (id, name) VALUES ('demo', 'demo')`;
+      const [r] = await c`INSERT INTO reports (project_id, title, source, edited_by) VALUES ('demo', 'Old report', 'human', 'human') RETURNING id`;
+      const attachment = async (key: string) => (await c`
+        INSERT INTO report_attachments (report_id, kind, mime, size, sha256, file_name, storage_key, created_by)
+        VALUES (${r!.id}, 'audio', 'audio/wav', 10, 'x', 'voice.wav', ${key}, 'human') RETURNING id`)[0]!.id as string;
+      const running = await attachment('a');
+      const queued = await attachment('b');
+      const done = await attachment('c');
+      await c`
+        INSERT INTO report_jobs (attachment_id, status, attempts, run_after, lease_id, lease_until, worker, error, started_at)
+        VALUES (${running}, 'running', 2, now() - interval '1 hour', gen_random_uuid(), now() + interval '5 minutes', 'studio-pc', 'the worker stopped answering (its lease ran out)', now())`;
+      await c`INSERT INTO report_jobs (attachment_id, status, attempts, run_after) VALUES (${queued}, 'queued', 1, now() + interval '1 hour')`;
+      await c`INSERT INTO report_jobs (attachment_id, status, attempts, finished_at) VALUES (${done}, 'done', 1, now())`;
+      await c`INSERT INTO workers (name, version) VALUES ('studio-pc', '1.4.0')`;
+      for (const m of migrations.filter((x) => x.file >= '0016')) for (const s of m.statements) await c.unsafe(s);
+      const rows = await c`
+        SELECT attachment_id, status, attempts, run_after <= now() AS due, error, started_at, fornax_job_id, fornax_change, note, progress, progress_message, submitting
+        FROM report_jobs`;
+      const by = (id: string) => rows.find((x) => x.attachment_id === id);
+      expect(by(running)).toEqual({
+        attachment_id: running, status: 'queued', attempts: 0, due: true, error: null, started_at: null,
+        fornax_job_id: null, fornax_change: null, note: null, progress: null, progress_message: null, submitting: false,
+      });
+      expect(by(queued)).toMatchObject({ status: 'queued', attempts: 0, due: false, fornax_job_id: null, submitting: false });
+      expect(by(done)).toMatchObject({ status: 'done', attempts: 1 });
+      const columns = await c`SELECT column_name FROM information_schema.columns WHERE table_name = 'report_jobs'`;
+      for (const gone of ['lease_id', 'lease_until', 'worker']) expect(columns.map((x) => x.column_name)).not.toContain(gone);
+      expect((await c`SELECT to_regclass('public.workers') AS t`)[0]!.t).toBeNull();
+    } finally {
+      await c.end();
+      await admin.unsafe(`DROP DATABASE IF EXISTS ${name}`);
+    }
+  });
+});

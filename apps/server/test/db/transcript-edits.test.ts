@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { type Diarization, reportAttachments, reports, type TranscriptSegment } from '../../src/db/schema.js';
-import { claimJob, completeJob, enqueueTranscription, transcribeAgain, transcriptStates } from '../../src/domain/jobs.js';
+import { enqueueTranscription, transcribeAgain, transcriptStates } from '../../src/domain/jobs.js';
 import { pageReports } from '../../src/domain/reports.js';
 import { editSegmentAsUser, editTranscriptAsAgent, restoreSegment, SegmentChangedError } from '../../src/domain/transcript-edits.js';
-import { seedProject, useTestDb } from '../helpers.js';
+import { finishNextJob, seedProject, useTestDb } from '../helpers.js';
 
 const db = useTestDb();
 beforeEach(() => seedProject(db, 'demo'));
@@ -17,10 +17,9 @@ const PYANNOTE: Diarization = { model: 'pyannote/speaker-diarization-community-1
 const NOW = new Date('2026-11-09T10:00:00.000Z');
 const FIRST = { text: 'Ako sa má Tabla?', speaker: 'S1' };
 
-/** The worker takes the next job and hands in a transcript. */
+/** Fornax finishes the next job: its transcript is stored. */
 async function finish(segments = SEGMENTS, diarization: Diarization | null = PYANNOTE) {
-  const c = (await claimJob(db, 'pc'))!;
-  await completeJob(db, c.job.id, c.job.leaseId!, { language: 'sk', model: 'large-v3', durationMs: 2000, segments, diarization });
+  await finishNextJob(db, { language: 'sk', model: 'large-v3', durationMs: 2000, segments, diarization });
 }
 
 /** A report with one transcribed voice note. */

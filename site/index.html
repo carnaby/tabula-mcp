@@ -123,7 +123,7 @@
           <div class="feature-text">
             <h3>Reports from your phone</h3>
             <p>Capture a bug while testing on your phone, or record a meeting: photos, videos, screen recordings and voice notes, with no required fields.</p>
-            <p><code>tabula worker</code> on your own PC with an NVIDIA GPU transcribes the recordings with timestamps and can tell the speakers apart. Recordings travel only between your own machines.</p>
+            <p>A PC with an NVIDIA GPU runs <a href="https://github.com/carnaby/fornax-mcp">Fornax</a>, which transcribes the recordings for Tabula with timestamps and tells the speakers apart. Recordings travel only between your own machines.</p>
             <p>Claude reads the transcript, looks at the exact moment you point at, and writes the triage: for a bug the cause and the tasks, for a meeting a summary, the decisions and the tasks.</p>
           </div>
           <div class="media-pair">
@@ -169,7 +169,7 @@
 
         <figure class="diagram">
           <svg class="diagram-wide" viewBox="0 0 960 340" role="img" aria-labelledby="dw-title">
-            <title id="dw-title">Claude Code, claude.ai and other MCP clients talk to the Tabula server over MCP. The web UI, the tabula command and the transcription worker talk to it over its REST API.</title>
+            <title id="dw-title">Claude Code, claude.ai and other MCP clients talk to the Tabula server over MCP. The web UI and the tabula command talk to it over its REST API; it sends recordings to Fornax, which runs on a PC with a GPU.</title>
             <defs>
               <marker id="dw-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
                 <path d="M0 0 10 5 0 10z" fill="currentColor"/>
@@ -196,7 +196,7 @@
               <line x1="220" y1="284" x2="358" y2="284"/>
               <line x1="740" y1="56" x2="602" y2="56"/>
               <line x1="740" y1="170" x2="602" y2="170"/>
-              <line x1="740" y1="284" x2="602" y2="284"/>
+              <line x1="602" y1="284" x2="740" y2="284"/>
             </g>
             <g class="d-label" text-anchor="middle">
               <text x="288" y="48">MCP</text>
@@ -204,7 +204,7 @@
               <text x="288" y="276">MCP</text>
               <text x="672" y="48">REST /api</text>
               <text x="672" y="162">REST /api</text>
-              <text x="672" y="276">jobs, HTTPS</text>
+              <text x="672" y="276">recordings, HTTPS</text>
             </g>
             <g class="d-title" text-anchor="middle">
               <text x="110" y="61">Claude Code</text>
@@ -222,13 +222,13 @@
             <g class="d-sub" text-anchor="middle">
               <text x="850" y="72">the web UI</text>
               <text x="850" y="186">syncs untracked files</text>
-              <text x="850" y="300">tabula worker, tray</text>
+              <text x="850" y="300">runs Fornax</text>
               <text x="480" y="66">Node.js, Fastify</text>
             </g>
           </svg>
 
           <svg class="diagram-tall" viewBox="0 0 340 460" role="img" aria-labelledby="dt-title">
-            <title id="dt-title">Claude Code, claude.ai and other MCP clients talk to the Tabula server over MCP. The web UI, the tabula command and the transcription worker talk to it over its REST API.</title>
+            <title id="dt-title">Claude Code, claude.ai and other MCP clients talk to the Tabula server over MCP. The web UI and the tabula command talk to it over its REST API; it sends recordings to Fornax, which runs on a PC with a GPU.</title>
             <defs>
               <marker id="dt-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
                 <path d="M0 0 10 5 0 10z" fill="currentColor"/>
@@ -255,7 +255,7 @@
               <line x1="288" y1="60" x2="288" y2="120"/>
               <line x1="52" y1="379" x2="52" y2="318"/>
               <line x1="170" y1="379" x2="170" y2="318"/>
-              <line x1="288" y1="379" x2="288" y2="318"/>
+              <line x1="288" y1="318" x2="288" y2="379"/>
             </g>
             <g class="d-label">
               <text x="60" y="95">MCP</text>
@@ -263,7 +263,7 @@
               <text x="296" y="95">MCP</text>
               <text x="60" y="353">/api</text>
               <text x="178" y="353">/api</text>
-              <text x="296" y="353">jobs</text>
+              <text x="296" y="353">audio</text>
             </g>
             <g class="d-title" text-anchor="middle">
               <text x="52" y="35">Claude Code</text>
@@ -283,7 +283,7 @@
               <text x="170" y="176">Node.js, Fastify</text>
               <text x="52" y="424">browser, phone</text>
               <text x="170" y="424">syncs files</text>
-              <text x="288" y="424">worker, tray</text>
+              <text x="288" y="424">runs Fornax</text>
             </g>
           </svg>
         </figure>
@@ -292,7 +292,7 @@
           <li><strong>Claude Code, claude.ai and other MCP clients</strong> connect to one Tabula server over MCP (Streamable HTTP). Claude Code sends a bearer token; claude.ai uses a connector URL with a secret.</li>
           <li><strong>The Tabula server</strong> is one Node.js process (Fastify) with Postgres 17. It serves the MCP endpoint, a REST API, the web UI and the <code>tabula</code> command itself.</li>
           <li><strong>The <code>tabula</code> command</strong> on each of your computers syncs a repository's untracked files: one dependency-free file for Node 22 or newer on Windows, macOS and Linux.</li>
-          <li><strong>The transcription worker</strong> runs on a PC with an NVIDIA GPU and pulls jobs from Tabula over HTTPS, so nothing connects to that computer. The tray app starts it with a click and shows what it does.</li>
+          <li><strong>Fornax</strong> runs on a PC with an NVIDIA GPU and transcribes recordings for Tabula: the server uploads each recording over HTTPS and fetches the transcript.</li>
         </ul>
         <p class="more"><a href="https://github.com/carnaby/tabula-mcp#how-it-works">Details in the README: what it stores, the recall digest and the MCP tools</a></p>
       </div>
@@ -343,7 +343,7 @@ node ~/.tabula/tabula.mjs login https://tabula.example.com</code></pre>
           </li>
         </ol>
 
-        <p class="note">Transcribing recordings is optional: set <code>TABULA_WORKER_TOKEN</code> on the server and run <code>tabula worker setup</code> on a PC with an NVIDIA GPU. See <a href="https://github.com/carnaby/tabula-mcp#transcription-worker">Transcription worker</a> and <a href="https://github.com/carnaby/tabula-mcp#tray-app">Tray app</a>.</p>
+        <p class="note">Transcribing recordings is optional: set <code>TABULA_FORNAX_URL</code> and <code>TABULA_FORNAX_TOKEN</code> on the server to use Fornax on a PC with an NVIDIA GPU. See <a href="https://github.com/carnaby/tabula-mcp#transcription-with-fornax">Transcription with Fornax</a>.</p>
       </div>
     </section>
   </main>

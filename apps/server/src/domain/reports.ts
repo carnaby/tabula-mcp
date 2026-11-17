@@ -291,7 +291,7 @@ export async function addAttachment(
     if (file.type.kind !== 'image') {
       if (file.type.ext === 'webm') file = await remuxed(store, paths, file);
       durationMs = await probeDurationMs(paths, file.tmpPath, file.type.mime);
-      // A video without a sound track has nothing to transcribe; when ffprobe can't tell, the worker finds out.
+      // A video without a sound track has nothing to transcribe; when ffprobe can't tell, Fornax finds out.
       transcribe = file.type.kind === 'audio' || (await hasAudioStream(paths, file.tmpPath, file.type.mime)) !== false;
     }
     await store.commit(file.tmpPath, key);
@@ -484,7 +484,7 @@ export async function purgeClosedMedia(
         const [still] = await tx.select({ id: reports.id }).from(reports).where(and(eq(reports.id, a.reportId), dueReport)).for('share');
         if (!still) return false;
         await store.remove(a.key);
-        // Job rows first, then the attachment row: completeJob locks them in that order too.
+        // Job rows first, then the attachment row: storeTranscript locks them in that order too.
         await failPendingJobs(tx, [a.id], now);
         await tx.update(reportAttachments).set({ purgedAt: now }).where(eq(reportAttachments.id, a.id));
         return true;

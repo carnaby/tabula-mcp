@@ -8,7 +8,6 @@ COPY apps/server/package.json apps/server/
 COPY apps/web/package.json apps/web/
 COPY apps/cli/package.json apps/cli/
 COPY packages/shared/package.json packages/shared/
-# apps/tray is not in the build context, so its dependencies are not installed.
 RUN pnpm install --frozen-lockfile
 COPY . .
 # The server with only its production dependencies, @tabula/shared (dist) and @tabula/cli (the CLI files) included.

@@ -71,7 +71,6 @@ A repository opts in with a `.tabula.json` in its root, committed:
 | `tabula rm <path>` | deletes a file on the server (restorable in the UI) |
 | `tabula pull --hook` | for the SessionStart hook: silent without `.tabula.json` or a login, at most 5 seconds (when time runs out it keeps what it restored and says how many files are missing), always exit 0 |
 | `tabula login <url>` · `install` · `update` | credentials (or `TABULA_URL` / `TABULA_TOKEN`), PATH shims and the hook snippet, self-update |
-| `tabula worker [--once] [--log]` · `worker setup` · `worker doctor` · `worker queue [--json]` | transcribes report recordings on a PC with an NVIDIA GPU — see [Transcription worker](#transcription-worker); `--events` and `worker queue --json` are for the [tray app](#tray-app) |
 
 Each clone keeps the hash it last synced for every file in `<git-dir>/tabula-sync.json` (per worktree, never committed). The server accepts a change only if it is based on the server's current version, so two machines editing the same file produce a **conflict** instead of a silent overwrite: merge by hand, or take one side with `--force`. Exit codes: 0 OK, 1 error, 2 finished with conflicts.
 
@@ -83,136 +82,23 @@ To restore the files at the start of every Claude Code session, add the hook fro
 
 On Windows use the absolute path that `tabula install` prints, e.g. `node "C:/Users/<you>/.tabula/tabula.mjs" pull --hook`.
 
-### Transcription worker
+### Transcription with Fornax
 
-Voice notes, screen recordings and recordings of meetings in reports are transcribed with timestamps, so an agent reads "[2:41] here the button stops responding" and asks `get_frame` for exactly that moment. Tabula itself runs on small hardware without a GPU, so the work is done by **`tabula worker`** on a computer with an NVIDIA GPU. The worker pulls jobs from Tabula over HTTPS — nothing connects to that computer — and while it is off, jobs wait in the queue. Recordings travel only between your own machines; no third-party service is involved.
+Voice notes, screen recordings and recordings of meetings in reports are transcribed with timestamps and speaker labels, so an agent reads "[2:41] Eva: here the button stops responding" and asks `get_frame` for exactly that moment. Tabula itself runs on small hardware without a GPU, so the work is done by [Fornax](https://github.com/carnaby/fornax-mcp), a small job queue for one GPU worker that runs on a PC with an NVIDIA GPU. Tabula uploads each recording to Fornax, follows the job and stores the transcript. Fornax keeps a job's files for 14 days; Tabula fetches the transcript as soon as the job is done.
 
-Requirements on that computer: an NVIDIA GPU with a current driver (RTX 50xx cards need a driver with CUDA 12.8 or newer), Python 3.9 or newer (on Windows from python.org, with the `py` launcher), `ffmpeg` on `PATH` (Windows: `winget install Gyan.FFmpeg`) and the `tabula` command. No CUDA toolkit is needed: the CUDA libraries come as pip packages.
+Tabula needs three settings (see [Configuration](#configuration)):
 
-1. On the server set `TABULA_WORKER_TOKEN` (at least 32 characters, e.g. `openssl rand -hex 32`, different from `TABULA_TOKEN`) and restart Tabula. This token opens only `/api/worker/*`. The worker does not use `TABULA_TOKEN` at all: it uses only its own worker token, which opens nothing but `/api/worker/*`. Without `TABULA_WORKER_TOKEN` recordings are still queued, but the app and the agent tools say "Transcription is not enabled on this server" (instead of asking you to start a worker) until you set it.
-2. On the GPU computer:
-
-   ```powershell
-   tabula worker setup https://tabula.example.com   # asks for the worker token, creates the Python environment, installs faster-whisper
-   tabula worker doctor                             # checks ffmpeg, Python, CUDA and the GPU, then transcribes a 5 s sample
-   ```
-
-   `setup` checks the token first, then creates a virtual environment in `%LOCALAPPDATA%\tabula\whisper\venv` (`$XDG_DATA_HOME/tabula/whisper/venv`, by default `~/.local/share/tabula/whisper/venv`, outside Windows) and installs `faster-whisper>=1.2.1,<2`, `ctranslate2>=4.8.4,<5`, `nvidia-cublas-cu12>=12.9,<13` and `nvidia-cudnn-cu12>=9,<10` into it. It puts `transcribe.py` into the `whisper` folder next to the environment (`%LOCALAPPDATA%\tabula\whisper\transcribe.py`) and saves the settings in the `worker` section of `~/.tabula/config.json`. The first transcription downloads the Whisper model (`large-v3`, about 3 GB) into the Hugging Face cache.
-
-   `setup` reuses a worker token stored for the same URL and never takes `TABULA_WORKER_TOKEN` from the environment: without a stored token it asks for one, or reads it from standard input with `--token-stdin` (for scripts).
-
-| Command | What it does |
+| Variable | |
 |---|---|
-| `tabula worker` | waits for jobs and transcribes them until Ctrl+C (a job in progress goes back to the queue) |
-| `tabula worker --once` | transcribes what is queued, then exits |
-| `tabula worker --log` | logs to `%LOCALAPPDATA%\tabula\worker.log` instead of the console (for the Task Scheduler) |
-| `tabula worker [--once] --events` | for the tray app: JSON events on stdout (one per line), `stop` on stdin, logs to `worker.log` |
-| `tabula worker queue [--json]` | how many recordings wait on the server and when this computer's worker was last seen (asking does not count as being seen) |
-| `tabula worker setup [<url>] [--token-stdin] [--diarize]` | creates or updates the Python environment and saves the worker token; `--diarize` also sets up speaker recognition |
-| `tabula worker doctor` | checks the whole chain and says what to fix |
+| `TABULA_FORNAX_URL` | address of your Fornax, e.g. `https://fornax.example.com` |
+| `TABULA_FORNAX_TOKEN` | the token Fornax gave Tabula (not shown in logs, errors or the API) |
+| `TABULA_FORNAX_PRIORITY` | optional: `high` (default) or `normal`, how Fornax orders Tabula's jobs against other clients'; `low` is accepted, but Fornax treats it as `normal` |
 
-Each job runs in its own Python process, which loads the model and exits, so a waiting worker holds no GPU memory and the GPU stays free for games and 3D work. There is no fallback to the CPU: without CUDA the worker gives the job back and stops, and `doctor` says why.
+Set the URL and the token together; with only one of them the server refuses to start and says which is missing. To get the token, run `fornax-admin tokens invite <name>` in Fornax, open the link it prints and approve the client after comparing the fingerprint; the steps are in Fornax's README under [Connect a client](https://github.com/carnaby/fornax-mcp#connect-a-client).
 
-The settings in `~/.tabula/config.json` (`setup` writes them; edit what you want to change):
+What you see: a recording in a report shows *waiting* with Fornax's reason (for example that the worker is offline), *running* with Fornax's progress (`Transcribing… 42 %`), *done* with the transcript, or *failed* with the reason and *Try again* (a new upload and a new job). A failed upload or an unreachable Fornax is retried after 1 and after 4 minutes before the transcription fails. Run one Tabula server per database: at start the server takes back the uploads to Fornax that its previous run did not finish. The dot next to the logo in the sidebar shows the Fornax worker (see [The web UI](#the-web-ui)).
 
-```json
-{
-  "worker": {
-    "url": "https://tabula.example.com",
-    "token": "<TABULA_WORKER_TOKEN>",
-    "model": "large-v3",
-    "language": "sk",
-    "device": "cuda",
-    "compute_type": "float16",
-    "beam_size": 5,
-    "initial_prompt": "Tabula, bug report, Fastify, Drizzle",
-    "ffmpeg": "ffmpeg"
-  }
-}
-```
-
-`setup` also writes `python` (the environment's interpreter) and `script` (`transcribe.py`); leave them as they are.
-
-- `model`: `large-v3`, or `large-v3-turbo` (faster, nearly as good).
-- `language`: a language code, or `auto` to detect it for each recording.
-- `initial_prompt`: names of your projects and technical words, so Whisper spells them right; the worker adds the report's project to it on every job (a report without a project adds nothing).
-- `diarize`: written by `setup --diarize`; remove it to turn speaker recognition off.
-- `ffmpeg`: the program to run, if it is not on `PATH` (a full path works).
-- `TABULA_WORKER_TOKEN` and `TABULA_URL` in the environment override the saved values; `TABULA_DATA_DIR` moves the data folder.
-
-The log shows job ids, sizes, lengths, times, project (or `no project`) and report title — never tokens or what was said. With speaker recognition it also logs how many speakers were found. A job that fails is offered again after 1 and after 4 minutes; after the third failure the report shows it as failed with *Try again*. If the computer sleeps or the worker stops in the middle of a job, its 10-minute lease runs out and the job goes back to the queue. Transcripts stay when the recording is deleted after the report is closed, and search finds their words. Reports without a project need `tabula` 1.4.1 for a clean log and tray display (`tabula update`); older versions transcribe them as well.
-
-#### Speaker recognition (optional)
-
-When a recording catches a conversation — one person asks while another shows the app — the transcript can say who speaks on each line. A second model, [pyannote](https://github.com/pyannote/pyannote-audio) `speaker-diarization-community-1`, finds the voices (`S1`, `S2` … numbered by who speaks first; it works out how many there are by itself) and the worker joins its result with Whisper's word times. You give the speakers names in the app with a click, or Claude does when the content makes it clear (`name_speakers`). It runs on the GPU only, after Whisper has finished, in its own Python environment (about 5 GB, mostly PyTorch with CUDA).
-
-```powershell
-tabula worker setup https://tabula.example.com --diarize
-tabula worker doctor
-```
-
-`--diarize` does the usual setup first, then creates `%LOCALAPPDATA%\tabula\diarize\venv` (Python 3.10 or newer), installs `pyannote.audio>=4.0.7,<5` with `torch==2.11.0`, `torchaudio==2.11.0` and `torchcodec==0.17.0`, and then — last, because pyannote's dependencies bring the CPU build — the CUDA 12.8 build of PyTorch from `https://download.pytorch.org/whl/cu128`. It puts `diarize.py` next to the environment and saves `"diarize": { "python": …, "script": … }` in the `worker` section of `config.json` once the model runs on the GPU. Without that entry the worker transcribes as before.
-
-The model is free but gated: Hugging Face hands it out after you accept its conditions once. `setup` stops and says so when it cannot download it:
-
-1. Sign in at [huggingface.co](https://huggingface.co) (a free account is enough).
-2. Open [pyannote/speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1) and accept the conditions.
-3. Create a token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens): type *Read* (or *Fine-grained* with "Read access to contents of all public gated repos you can access").
-4. Save it with the `hf` command of the new environment, e.g. `& "$env:LOCALAPPDATA\tabula\diarize\venv\Scripts\hf.exe" auth login`. The token stays in the Hugging Face cache (`~/.cache/huggingface/token`); Tabula never reads, prints or stores it.
-5. Run `tabula worker setup --diarize` again.
-
-The model is downloaded once; jobs then run offline from the cache, and pyannote's usage metrics are turned off. `doctor` checks the environment, that PyTorch sees the GPU, the token and the cached model, then recognizes the speakers of a 5 s sample. If speaker recognition fails for a recording (no GPU memory, a broken environment), the transcript is still delivered and the report says "Speakers not recognized: …". No voice prints are kept: speakers are only told apart within one recording.
-
-#### Starting the worker automatically (Windows)
-
-The [tray app](#tray-app) does this with a click and shows what the worker does; the Task Scheduler below remains an alternative without it.
-
-Usually you start the worker when you need it — `tabula worker --once` — and the report page reminds you when a recording waits and shows when the worker was last seen. To run it in the background whenever you sign in, create a task in PowerShell (creating a task that starts at sign-in needs a PowerShell opened with *Run as administrator*; the task still runs as you):
-
-```powershell
-$node = (Get-Command node).Source
-$cli = "$HOME\.tabula\tabula.mjs"
-schtasks /Create /TN "Tabula worker" /SC ONLOGON /IT /RL LIMITED /F /TR "powershell.exe -NoProfile -WindowStyle Hidden -Command & '$node' '$cli' worker --log"
-```
-
-At sign-in a console window may flash briefly; the worker itself then runs without a window.
-
-| To … | Run |
-|---|---|
-| start it now | `schtasks /Run /TN "Tabula worker"` |
-| stop it (a job in progress returns to the queue within 10 minutes) | `schtasks /End /TN "Tabula worker"` |
-| keep the task but stop starting it at sign-in | `schtasks /Change /TN "Tabula worker" /DISABLE` (`/ENABLE` turns it back on) |
-| remove it | `schtasks /Delete /TN "Tabula worker" /F` |
-| watch the log | `Get-Content "$env:LOCALAPPDATA\tabula\worker.log" -Tail 20 -Wait` |
-
-The Task Scheduler stops a task after 3 days by default; to keep the worker running longer, open *Task Scheduler → Tabula worker → Settings* and clear *Stop the task if it runs longer than*.
-
-#### Tray app
-
-The **Tabula tray** app (Windows; Ubuntu builds too) puts the worker next to the clock: its icon shows whether the worker runs, what it transcribes and whether a recording waits on the server. One click transcribes what is queued, or starts the worker until you stop it. The tray runs `tabula worker` for you; the URL and the worker token stay with the CLI (`tabula worker setup`), the tray never reads them.
-
-Install:
-
-1. Set up the worker first (`tabula worker setup`, `tabula worker doctor`, above). The tray needs `tabula` 1.3.0 or newer: `tabula update` (it also refreshes `transcribe.py` and `diarize.py`). With speaker recognition use a tray from this version on: it shows the step as *Recognizing speakers*; an older tray logs that step as an ignored line.
-2. Download the installer from the repository's Releases (tags `tray-v…`): the `.msi` for Windows, the `.deb` or the `.AppImage` for Ubuntu. The installers are not signed: the first time Windows SmartScreen says "Windows protected your PC" — choose *More info* → *Run anyway*. A tray started by the installer restarts itself once, because it would inherit the installer's Redirection Guard, under which programs behind folder links, such as scoop's, do not start.
-
-| Icon | Means |
-|---|---|
-| grey | the worker is stopped and nothing waits |
-| grey with an orange dot | recordings wait on the server (the tooltip says how many); one notification "New recording to transcribe" says so when the first arrives — clicking it opens the window, but only while the notification is still on screen (not from the Action Center) |
-| green | the worker is starting, waiting for jobs or stopping — or runs outside the tray (in a terminal, the Task Scheduler): then *Process queue*, *Start* and *Stop* are off and the tooltip says "Running outside the tray" |
-| blue | transcribing; the tooltip shows the step or the progress, the project and the report |
-| red | the worker stopped with an error, or the queue cannot be checked; the tooltip says why |
-
-Right click: a status line (e.g. "2 waiting · worker stopped"), *Process queue* (`tabula worker --once`), *Start* (until you stop it), *Stop* (a job in progress goes back to the queue; while stopping it reads *Stop now* and quits at once), *Open window*, *Start Tabula tray at sign-in* (starts the tray, not the worker), *Quit* (stops the worker first and waits up to 15 s). A left click on the icon opens the window: the current job with a link to its report, the queue on the server, the last 200 log lines, *Run doctor* (only while no worker runs) and *Open log folder*. Closing the window only hides it. The worker logs to `worker.log` in the data folder, as with `--log`.
-
-The tray runs `node` from `PATH` and the CLI at `~/.tabula/tabula.mjs`. If yours are elsewhere, say so in `tray.json` in the data folder (`%LOCALAPPDATA%\tabula\tray.json`; on Ubuntu `~/.local/share/tabula/tray.json`); both keys are optional, other keys are refused, and the file is read again at every start, so a fix needs no restart:
-
-```json
-{ "node": "C:/Program Files/nodejs/node.exe", "cli": "D:/tools/tabula/tabula.mjs" }
-```
-
-On Ubuntu the tray needs `libwebkit2gtk-4.1-0` and `libayatana-appindicator3-1` at run time (the `.deb` installs them; for the `.AppImage`: `sudo apt install libwebkit2gtk-4.1-0 libayatana-appindicator3-1`). GNOME shows tray icons with the AppIndicator extension, which Ubuntu enables by default. Linux reports no clicks on the icon, so there the menu's *Open window* is the way in.
+Without `TABULA_FORNAX_URL` and `TABULA_FORNAX_TOKEN` recordings are kept but not transcribed.
 
 ### The recall digest
 
@@ -300,12 +186,12 @@ You don't write it by hand: tell the agent *"use Tabula in this project"* and it
 
 A responsive React app with its own small UI kit (`apps/web/src/ui`), light and dark themes, and an installable icon for the home screen.
 
-- **Home** — the start page (`#/`; Thoughts stay at `#/thoughts`). *Waiting for you* lists, oldest first, new reports (a recording shows whether its transcript is done, waiting or running), triaged reports waiting to be fixed or closed, and failed transcriptions, with *Open* and *Copy for Claude*, *Mark done* (the same confirmation as in the report) or *Try again*. *Copy for Claude* copies your own text with `{ref}` replaced by the report's reference — `Process report {ref}.` by default; the gear next to the heading changes it, and the server keeps it for every device. *Recent activity* is a timeline by day of pushed and edited files (one row per push, opening into its files), new and changed reports, transcripts, thoughts and notes, with who did it and the reference; the last 48 hours, at most 25 rows at a time (*Show more* for older ones), with a filter. *Warnings* appear only when a project's recall had to be trimmed to fit 3 000 tokens (*State is cut off* when the state itself was cut), a project file is over half the 1 MB limit, or recordings have waited for the transcription worker for more than a day. A *Recall trimmed* warning has *Copy*: it copies instructions that make Claude move finished milestones and history from the project's state files to an archive file next to them (nothing is deleted; gotchas and rules stay), with the project filled in; the gear next to *Warnings* changes the text. *Projects* lists the projects by last activity with their files, open reports and a bar per day for the last 14 days of changes. The page refreshes every minute and when you come back to the window.
-- **Sidebar** — *Home*, *Notebook* (Notes, Thoughts, and Reports with the number of open reports), *For agents* (Global), and the projects with their file counts, the most recently active first (files, reports and notes count). The logo leads to Home. On phones it is a drawer. Next to the logo (on phones in the top bar) a dot shows the transcription worker: green *Worker* when it is online, pulsing *Transcribing* while it works, orange *Worker offline · N waiting* when recordings wait for it, grey *Worker offline*; a click shows when it last called in, what waits, runs and failed, and how to start it. Without `TABULA_WORKER_TOKEN` it is not shown.
+- **Home** — the start page (`#/`; Thoughts stay at `#/thoughts`). *Waiting for you* lists, oldest first, new reports (a recording shows whether its transcript is done, waiting or running), triaged reports waiting to be fixed or closed, and failed transcriptions, with *Open* and *Copy for Claude*, *Mark done* (the same confirmation as in the report) or *Try again*. *Copy for Claude* copies your own text with `{ref}` replaced by the report's reference — `Process report {ref}.` by default; the gear next to the heading changes it, and the server keeps it for every device. *Recent activity* is a timeline by day of pushed and edited files (one row per push, opening into its files), new and changed reports, transcripts, thoughts and notes, with who did it and the reference; the last 48 hours, at most 25 rows at a time (*Show more* for older ones), with a filter. *Warnings* appear only when a project's recall had to be trimmed to fit 3 000 tokens (*State is cut off* when the state itself was cut), a project file is over half the 1 MB limit, or recordings have waited for the Fornax worker for more than a day. A *Recall trimmed* warning has *Copy*: it copies instructions that make Claude move finished milestones and history from the project's state files to an archive file next to them (nothing is deleted; gotchas and rules stay), with the project filled in; the gear next to *Warnings* changes the text. *Projects* lists the projects by last activity with their files, open reports and a bar per day for the last 14 days of changes. The page refreshes every minute and when you come back to the window.
+- **Sidebar** — *Home*, *Notebook* (Notes, Thoughts, and Reports with the number of open reports), *For agents* (Global), and the projects with their file counts, the most recently active first (files, reports and notes count). The logo leads to Home. On phones it is a drawer. Next to the logo (on phones in the top bar) a dot shows the Fornax worker: green *Worker* when it is online (*Transcribing* while it works), orange *Worker offline · N waiting* when recordings wait for it, grey *Worker offline*, grey *Fornax unreachable* when Tabula cannot ask; a click shows how many recordings wait, run and failed, with a link to Fornax. Without `TABULA_FORNAX_URL` and `TABULA_FORNAX_TOKEN` it is not shown. The status is cached for 30 seconds.
 - **Thoughts** and **Notes** — card grids with search, tag chips, sort and pinning; a Markdown editor with Write / Split / Preview and Ctrl/⌘ S. Thoughts also keep a version history and warn when an agent changed the text while you were typing. On Thoughts, *Tidy with Claude* copies instructions that make Claude propose how to merge, split and de-duplicate thoughts (only the selected tag when one is chosen), wait for your OK, write the new thoughts with their sources and archive the originals; the gear next to it changes the text.
 - **Global** — the rules table (kind, author, status, prefix search; edit, retire, supersede) and the recall preview.
 - **Project** — **State** (the state files rendered as Markdown), **Files** (list, preview, the last 20 versions with restore, delete and restore), **Recall preview** (the exact digest with a budget meter) and **Setup** (the CLAUDE.md section, a `.tabula.json`, the install commands and the hook).
-- **Reports** — bugs captured on the phone while testing, and recordings of meetings, answers and conversations. No field is required: *Title*, *Description* and *Project* ("No project" is the first choice) can be filled in now or later; an empty title becomes the description's first line, or `Report <date and time>` (the browser's local time; a report Claude creates without a title gets the server's time zone, `TZ`). Add photos, screen recordings (from the gallery, or *Record screen* on a desktop) and voice notes; uploads start at once and show their progress. While a video is paused, *Save frame* keeps that moment as a picture; select a saved frame to play from there, add a note ("what the video doesn't say") or delete it. The transcript follows playback. An agent writes the **triage** (for a bug the cause and tasks, for a recording a summary, decisions and tasks) into the report; it shows up when you come back to the window. The list filters by *All projects / No project / <project>*, and each project has a *Reports* tab. *Keep media* keeps a report's video and audio after it is closed (off by default; turning it off once the grace period is over deletes them within 15 minutes). Videos and voice notes get a transcript with clickable times once the transcription worker has processed them (see below). Hover a line (on a phone, tap its text) and click the pencil to correct it: Enter saves, Esc cancels, and with several speakers you can also change who speaks. A corrected line shows a small pencil (*Edited by you* / *Edited by Claude*; Claude's also has a dashed underline), and *Restore original* brings back the worker's text; Claude never changes a line you edited. With speaker recognition each change of speaker shows a coloured label (`S1`, or the name); click it to name the speaker, with the names used before in the report and the project as suggestions. A name Claude gave has a dashed outline and *suggested by Claude* until you confirm it. *⋯ → Transcribe again* sends an open report's recording to the worker once more (the names and the corrected lines are replaced, since a new run may number the speakers differently).
+- **Reports** — bugs captured on the phone while testing, and recordings of meetings, answers and conversations. No field is required: *Title*, *Description* and *Project* ("No project" is the first choice) can be filled in now or later; an empty title becomes the description's first line, or `Report <date and time>` (the browser's local time; a report Claude creates without a title gets the server's time zone, `TZ`). Add photos, screen recordings (from the gallery, or *Record screen* on a desktop) and voice notes; uploads start at once and show their progress. While a video is paused, *Save frame* keeps that moment as a picture; select a saved frame to play from there, add a note ("what the video doesn't say") or delete it. The transcript follows playback. An agent writes the **triage** (for a bug the cause and tasks, for a recording a summary, decisions and tasks) into the report; it shows up when you come back to the window. The list filters by *All projects / No project / <project>*, and each project has a *Reports* tab. *Keep media* keeps a report's video and audio after it is closed (off by default; turning it off once the grace period is over deletes them within 15 minutes). Videos and voice notes get a transcript with clickable times once Fornax has transcribed them (see [Transcription with Fornax](#transcription-with-fornax)). Hover a line (on a phone, tap its text) and click the pencil to correct it: Enter saves, Esc cancels, and with several speakers you can also change who speaks. A corrected line shows a small pencil (*Edited by you* / *Edited by Claude*; Claude's also has a dashed underline), and *Restore original* brings back the transcribed text; Claude never changes a line you edited. With speaker recognition each change of speaker shows a coloured label (`S1`, or the name); click it to name the speaker, with the names used before in the report and the project as suggestions. A name Claude gave has a dashed outline and *suggested by Claude* until you confirm it. *⋯ → Transcribe again* sends an open report's recording to Fornax once more (the names and the corrected lines are replaced, since a new run may number the speakers differently).
 - **Search** (Ctrl/⌘ K) — global rules, project files, notes, thoughts and reports at once; words match as prefixes and diacritics are ignored. A pasted reference (`tabula:d86d86e7`) opens its record directly — a rule in its dialog, an attachment inside its report (a frame selected, the video at its moment); a shorter one (`tabula:d86d`) lists what it matches to pick from.
 - **References** — the Tabula icon in an editor's bar, a rule's dialog, a file and every attachment or frame copies the record's reference. Paste it into a chat with Claude and Claude opens exactly that record. A reference (`tabula:d86d86e7`) in Markdown text is a link that opens the record.
 
@@ -405,7 +291,9 @@ Any client that speaks Streamable HTTP with the classic `initialize` handshake (
 | `DATABASE_URL` | yes | — | Postgres connection string (set by Compose) |
 | `TABULA_TOKEN` | yes | — | Bearer token for MCP and the UI, at least 32 characters |
 | `TABULA_CONNECTOR_SECRET` | no | — | Enables `/mcp/<secret>` for clients that can't send headers, at least 32 characters |
-| `TABULA_WORKER_TOKEN` | no | — | Enables the transcription worker's API (`/api/worker/*`) for `tabula worker`; at least 32 characters and different from `TABULA_TOKEN`. Without it that API answers `503` |
+| `TABULA_FORNAX_URL` | no | — | Address of [Fornax](#transcription-with-fornax), which transcribes recordings. Set together with `TABULA_FORNAX_TOKEN` (one without the other: the server refuses to start). Without both, recordings are not transcribed |
+| `TABULA_FORNAX_TOKEN` | no | — | The token Fornax issued to Tabula; never logged or returned by the API |
+| `TABULA_FORNAX_PRIORITY` | no | `high` | `high`, `normal` or `low` (Fornax treats `low` as `normal`): the priority of Tabula's jobs in Fornax; anything else refuses to start |
 | `PORT` | no | `3000` | Port the server listens on |
 | `HOST` | no | `0.0.0.0` | Interface to bind |
 | `WEB_DIST` | no | `web/dist` | Path to the UI build (in the image `/app/web/dist`; for `pnpm dev` see `.env.example`) |
@@ -420,7 +308,7 @@ Any client that speaks Streamable HTTP with the classic `initialize` handshake (
 
 ## Development
 
-The repository is a pnpm workspace with [Nx](https://nx.dev): `apps/server`, `apps/web`, `apps/cli`, `apps/tray` and `packages/shared`. Each package's `package.json` scripts are its targets; `nx.json` builds `@tabula/shared` first and caches builds, type checks and the light tests (the server's tests always run).
+The repository is a pnpm workspace with [Nx](https://nx.dev): `apps/server`, `apps/web`, `apps/cli` and `packages/shared`. Each package's `package.json` scripts are its targets; `nx.json` builds `@tabula/shared` first and caches builds, type checks and the light tests (the server's tests always run).
 
 ```bash
 pnpm install                # the whole workspace, one lockfile
@@ -439,23 +327,12 @@ A `502 Bad Gateway` on `/api` in the browser means the server isn't running — 
 pnpm typecheck              # every package
 pnpm test                   # Vitest in every package, one at a time; the server's tests start a throwaway Postgres via Testcontainers (needs Docker)
 TEST_DATABASE_URL=postgres://… pnpm test   # or use an existing throwaway database (it is wiped; the database name must contain "test", e.g. tabula_test, and must differ from DATABASE_URL)
-pnpm build                  # shared, server and UI (the tray builds on its own, below)
+pnpm build                  # shared, server, UI and CLI
 pnpm affected               # typecheck, test and build only what changed against main
 pnpm graph                  # the project graph in the browser
 pnpm --filter @tabula/server exec vitest run test/unit/digest.test.ts   # one test file (run `pnpm build` once on a fresh clone: shared must be built first)
 pnpm db:generate --name <name>                                          # a new migration in apps/server/drizzle
 ```
-
-The tray app is the workspace package `@tabula/tray` in `apps/tray`:
-
-```bash
-pnpm --filter @tabula/tray dev     # the tray with the window on http://localhost:1420
-pnpm --filter @tabula/tray test    # cargo test: the state machine, the CLI processes (needs node on PATH)
-pnpm --filter @tabula/tray build   # Windows: .msi in apps/tray/src-tauri/target/release/bundle/msi/
-pnpm --filter @tabula/tray icons   # after changing apps/tray/icons/tray.svg: regenerates the committed PNGs
-```
-
-Building it needs Rust 1.90 or newer; on Windows also Visual Studio 2022 Build Tools with "Desktop development with C++" (WebView2 comes with Windows 11); on Ubuntu `sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev build-essential file`. A release: raise `version` in `apps/tray/package.json`, `apps/tray/src-tauri/Cargo.toml` (and its entry in `Cargo.lock`) and `apps/tray/src-tauri/tauri.conf.json`, then push a tag `tray-v<version>`; the Tray workflow attaches the `.msi`, `.deb` and `.AppImage`.
 
 The tests cover the domain rules, the digest builder, the REST API, the MCP endpoint through a real MCP client, and the `tabula` command end to end against a real server and temporary git repositories (git must be installed).
 
@@ -475,8 +352,7 @@ apps/
     templates/    protocol snippets for CLAUDE.md, claude.ai and the SessionStart hook
     test/         Vitest: unit, database, HTTP/MCP and end-to-end CLI tests against a real server
   web/            @tabula/web: React UI (src/ui is the UI kit)
-  cli/            @tabula/cli: the tabula command (one dependency-free file, served at /cli/tabula.mjs; the server reuses its glob matcher), the worker's Python scripts, unit tests
-  tray/           @tabula/tray: the tray app for tabula worker (Tauri 2: Rust core in src-tauri/, window in src/)
+  cli/            @tabula/cli: the tabula command (one dependency-free file, served at /cli/tabula.mjs; the server reuses its glob matcher), unit tests
 packages/
   shared/         @tabula/shared: pure helpers the server and the UI share (references, grouping files by folder, report titles), built to dist/
 deploy/           example production stack and backup script
@@ -493,8 +369,7 @@ deploy/           example production stack and backup script
 - **Report attachments** are accepted only as photos, video or audio, recognised from the file's bytes (never from the name or the client's content type), so an HTML or SVG file can't be uploaded and run on Tabula's origin. They are served from `/media/<id>` with a signed, expiring link instead of the token (`<video>` and `<img>` can't send one), with `nosniff`, a sandboxing CSP and range support. The signing key is derived from `TABULA_TOKEN`: rotating the token invalidates every link. Signatures are masked in request logs.
 - **ffmpeg reads untrusted files**, so it runs with only `PATH` in its environment (never the token or the database URL), reads local files only, with the demuxer fixed by the detected type, refuses pictures over 64 megapixels, and at most two ffmpeg/ffprobe processes run at once. Its error output stays in the server log.
 - **There is no total storage quota and no limit on concurrent uploads**, only `TABULA_MEDIA_MAX_MB` per file: with a single token, whoever can upload can already do everything else. Watch the free space of the media volume; video and audio of closed reports are deleted after `TABULA_MEDIA_PURGE_HOURS` unless *Keep media* is on.
-- **The transcription worker has its own token**, `TABULA_WORKER_TOKEN`, valid only on `/api/worker/*` (take a job, extend its lease, hand in the transcript or the error); `TABULA_TOKEN` is refused there and the worker token is refused everywhere else, including `/mcp`. The worker downloads recordings only through the signed, expiring `/media` links that come with its jobs. `/cli/transcribe.py` is public like the CLI. The worker passes its child processes (ffmpeg, Python) an environment without `TABULA_*` variables and never logs tokens or transcript text.
-- **The tray app never reads a token**: it runs the CLI, which keeps the URL and the worker token. `GET /api/worker/queue` (how many jobs wait) needs the worker token but does not count as a sign of life, so the tray's checks never make a stopped worker look alive.
+- **The Fornax token stays on the server.** `TABULA_FORNAX_TOKEN` is sent only to `TABULA_FORNAX_URL` as a bearer token and never appears in a log line, an error message or an API response. Tabula uploads a recording to Fornax and fetches the transcript; Fornax never calls Tabula and nothing connects to your GPU computer from outside. Transcript text is never logged.
 - `/cli/tabula.mjs` and `/cli/version` are public: they serve the CLI from this repository and no data.
 - Input is validated at the boundary: length limits, slug format, and NUL characters rejected before they reach Postgres.
 

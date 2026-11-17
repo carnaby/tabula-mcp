@@ -1,4 +1,2 @@
 # Served to every platform and parsed for its VERSION line: always LF.
 apps/cli/tabula.mjs text eol=lf
-apps/cli/transcribe.py text eol=lf
-apps/cli/diarize.py text eol=lf

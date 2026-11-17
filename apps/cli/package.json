@@ -2,13 +2,11 @@
   "name": "@tabula/cli",
   "private": true,
   "type": "module",
-  "description": "The tabula command: one dependency-free ES module (its VERSION line is the version) and the worker's Python scripts. The server serves these files at /cli/*.",
+  "description": "The tabula command: one dependency-free ES module (its VERSION line is the version). The server serves it at /cli/tabula.mjs.",
   "license": "MIT",
-  "files": ["tabula.mjs", "transcribe.py", "diarize.py"],
+  "files": ["tabula.mjs"],
   "exports": {
-    "./tabula.mjs": "./tabula.mjs",
-    "./transcribe.py": "./transcribe.py",
-    "./diarize.py": "./diarize.py"
+    "./tabula.mjs": "./tabula.mjs"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",

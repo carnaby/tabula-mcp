@@ -1,15 +1,10 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, ApiError } from '../../api';
 import { timeAgo } from '../../format';
-import type { Attachment, SpeakerName, TranscriptSegment, TranscriptState, WorkerStatus } from '../../types';
+import type { Attachment, SpeakerName, TranscriptProgress, TranscriptSegment, TranscriptState, WorkerStatus } from '../../types';
 import { Alert, Button, cx, Icon, Popover, Select, Spinner, Textarea, useConfirm, useToast } from '../../ui';
 import { clock } from './Recorder';
 import { SpeakerChip } from './Speakers';
-
-/** A worker that called in this recently is running: while it waits for work it calls every 30 s. */
-export const WORKER_ALIVE_MS = 2 * 60 * 1000;
-export const workerAlive = (w: WorkerStatus | undefined, now = Date.now()): boolean =>
-  !!w?.lastSeenAt && now - Date.parse(w.lastSeenAt) < WORKER_ALIVE_MS;
 
 /** After the user scrolls or touches the transcript, playback leaves it alone this long. */
 const USER_SCROLL_PAUSE_MS = 4000;
@@ -212,6 +207,23 @@ function LineEditor({
   );
 }
 
+/**
+ * Fornax's note on a waiting job in words for people: without its leading "waiting:" (the line says it already) and
+ * without the advice for agents that asking again changes nothing.
+ */
+function noteForPeople(note: string | null | undefined): string | null {
+  if (!note) return null;
+  return note.replace(/^waiting\s*[:,]\s*/i, '').replace(/[,;]?\s*asking again changes nothing\.?$/i, '').trim() || null;
+}
+
+/** " 42 % · transcribing 01:23 / 10:00": how far Fornax is, with its message when it is short. */
+function progressText(p: TranscriptProgress): string {
+  const parts: string[] = [];
+  if (p.progress != null) parts.push(`${p.progress} %`);
+  if (p.progressMessage && p.progressMessage.length <= 60) parts.push(p.progressMessage);
+  return parts.length ? ` ${parts.join(' · ')}` : '';
+}
+
 /** "Transcribe again" of a recording: whether it is allowed now, and the confirmed action. Used by the card's menu. */
 export function useTranscribeAgain(a: Attachment, closed: boolean, onChange: (t: TranscriptState) => void) {
   const notify = useToast();
@@ -223,7 +235,7 @@ export function useTranscribeAgain(a: Attachment, closed: boolean, onChange: (t:
     const lost = edited ? ` ${edited} edited line${edited === 1 ? '' : 's'} will be lost.` : '';
     const ok = await confirm({
       title: 'Transcribe again?',
-      message: `The worker transcribes the recording again and replaces this transcript when it is done. The speaker names are cleared, because a new run may number the speakers differently.${lost}`,
+      message: `Fornax transcribes the recording again and replaces this transcript when it is done. The speaker names are cleared, because a new run may number the speakers differently.${lost}`,
       confirmLabel: 'Transcribe again',
     });
     if (!ok) return;
@@ -404,9 +416,14 @@ export function Transcript({
         )}
         {notRecognized && <p className="transcript__note transcript__note--quiet">Speakers not recognized: {notRecognized}</p>}
         {pending?.status === 'queued' && (
-          <p className="transcript__note"><Icon name="inbox" /> Waiting to transcribe again; this transcript stays until the new one is ready.</p>
+          <p className="transcript__note">
+            <Icon name="inbox" />
+            <span>
+              Waiting to transcribe again{noteForPeople(pending.note) && ` — ${noteForPeople(pending.note)}`}. This transcript stays until the new one is ready.
+            </span>
+          </p>
         )}
-        {pending?.status === 'running' && <p className="transcript__note"><Spinner /> Transcribing again…</p>}
+        {pending?.status === 'running' && <p className="transcript__note"><Spinner /> Transcribing again…{progressText(pending)}</p>}
         {pending?.status === 'failed' && (
           <div className="transcript__note">
             <Alert tone="danger">Transcribing again failed{pending.error ? `: ${pending.error}` : ''}</Alert>
@@ -417,7 +434,7 @@ export function Transcript({
     );
   }
   if (t.status === 'running') {
-    return <p className="transcript__note"><Spinner /> Transcribing…</p>;
+    return <p className="transcript__note"><Spinner /> Transcribing…{progressText(t)}</p>;
   }
   if (t.status === 'failed') {
     return (
@@ -439,15 +456,13 @@ export function Transcript({
   if (worker && !worker.enabled) {
     return <p className="transcript__note"><Icon name="inbox" /> Transcription is not enabled on this server.</p>;
   }
-  const alive = workerAlive(worker);
   return (
     <p className="transcript__note">
       <Icon name="inbox" />
       <span>
         Waiting for transcription
-        {worker && (worker.lastSeenAt ? ` — worker last seen ${timeAgo(worker.lastSeenAt)}` : ' — the worker has never connected')}
+        {noteForPeople(t.note) && ` — ${noteForPeople(t.note)}`}
         {t.retryAt && ` · next try ${timeAgo(t.retryAt)}`}
-        {!alive && <> · start it on your PC: <code>tabula worker --once</code></>}
       </span>
     </p>
   );

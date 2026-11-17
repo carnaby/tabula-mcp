@@ -188,7 +188,7 @@ describe('dashboard: warnings', () => {
     await seedProject(db, 'demo');
     const r = await report({ title: 'Meeting', created: ago(60) });
     await recording(r.id, { job: { status: 'queued', runAfter: ago(25) } });
-    const off = await dashboard(db, new Date(), { workerEnabled: false });
+    const off = await dashboard(db, new Date(), { transcriptionEnabled: false });
     expect(off.warnings.filter((w) => w.type === 'recordings_waiting')).toEqual([]);
     expect(off.transcription_enabled).toBe(false);
     const on = await dashboard(db);

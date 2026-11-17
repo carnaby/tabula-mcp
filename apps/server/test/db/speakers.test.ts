@@ -3,10 +3,10 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { reportAttachments, reportJobs, reports, reportTranscripts } from '../../src/db/schema.js';
 import {
-  claimJob, completeJob, enqueueTranscription, transcribeAgain, type TranscriptInput, transcriptStates,
+  enqueueTranscription, transcribeAgain, type TranscriptInput, transcriptStates,
 } from '../../src/domain/jobs.js';
 import { nameSpeakersAsAgent, setSpeakerNames, speakerNameSuggestions } from '../../src/domain/speakers.js';
-import { seedProject, useTestDb } from '../helpers.js';
+import { finishNextJob, seedProject, useTestDb } from '../helpers.js';
 
 const db = useTestDb();
 beforeEach(async () => {
@@ -32,10 +32,9 @@ async function transcribed(project: string | null = 'demo') {
   return { reportId: r!.id, attachmentId: id };
 }
 
-/** The worker takes the next job and hands in a transcript. */
+/** Fornax finishes the next job: its transcript is stored. */
 async function finish(t: Pick<TranscriptInput, 'segments' | 'diarization'>) {
-  const claimed = (await claimJob(db, 'pc'))!;
-  await completeJob(db, claimed.job.id, claimed.job.leaseId!, { language: 'sk', model: 'large-v3', durationMs: 2000, ...t });
+  await finishNextJob(db, { language: 'sk', model: 'large-v3', durationMs: 2000, ...t });
 }
 
 const stateOf = async (id: string) => (await transcriptStates(db, [id])).get(id)!;
@@ -106,15 +105,15 @@ describe('speakers', () => {
     const { attachmentId, reportId } = await transcribed();
     await setSpeakerNames(db, attachmentId, { S1: 'Eva' });
     const job = await transcribeAgain(db, attachmentId);
-    expect(job).toMatchObject({ status: 'queued', attempts: 0, error: null, leaseId: null });
+    expect(job).toMatchObject({ status: 'queued', attempts: 0, error: null, fornaxJobId: null });
     expect(await stateOf(attachmentId)).toMatchObject({ status: 'done', speakers: { S1: { name: 'Eva' } }, again: { status: 'queued', error: null } });
-    await expect(transcribeAgain(db, attachmentId)).rejects.toThrow(/already waiting for the worker or being transcribed/);
+    await expect(transcribeAgain(db, attachmentId)).rejects.toThrow(/already waiting for Fornax or being transcribed/);
 
-    // A worker takes the job: it runs, and is refused just the same.
-    const claimed = (await claimJob(db, 'pc'))!;
+    // Fornax runs the job: it is refused just the same.
+    await db.update(reportJobs).set({ status: 'running', fornaxJobId: 'j_1' }).where(eq(reportJobs.attachmentId, attachmentId));
     expect(await stateOf(attachmentId)).toMatchObject({ status: 'done', again: { status: 'running' } });
-    await expect(transcribeAgain(db, attachmentId)).rejects.toThrow(/already waiting for the worker or being transcribed/);
-    await completeJob(db, claimed.job.id, claimed.job.leaseId!, {
+    await expect(transcribeAgain(db, attachmentId)).rejects.toThrow(/already waiting for Fornax or being transcribed/);
+    await finishNextJob(db, {
       language: 'sk', model: 'large-v3', durationMs: 2000,
       segments: [{ ...SEGMENTS[0]!, speaker: 'S2' }, { ...SEGMENTS[1]!, speaker: 'S1' }], diarization: PYANNOTE,
     });

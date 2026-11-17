@@ -12,7 +12,7 @@ import { DIGEST_BUDGET } from './tokens.js';
 
 /** A project file over this size gets a warning: half of what a file may hold. */
 export const LARGE_FILE_BYTES = FILE_LIMITS.contentBytes / 2;
-/** Recordings that have waited for the worker longer than this get a warning. */
+/** Recordings that have waited for transcription longer than this get a warning. */
 export const RECORDING_WAIT_MS = 24 * 3600 * 1000;
 
 /** The recordings of a report taken together: one running or waiting wins over a failed one, which wins over done. */
@@ -33,7 +33,7 @@ export type WaitingItem = {
   /** Video and audio of the report still on disk: the Mark done confirmation names them. */
   recordings: number;
   transcript: WaitingTranscript | null;
-  /** transcription_failed: the recording, its file name and the worker's error. */
+  /** transcription_failed: the recording, its file name and the error. */
   attachment_id?: string;
   file_name?: string;
   error?: string | null;
@@ -61,7 +61,7 @@ export type Dashboard = {
   warnings: DashboardWarning[];
   projects: DashboardProject[];
   recall_budget: number;
-  /** False on a server without a worker token: recordings are queued but nothing will transcribe them. */
+  /** False on a server without Fornax (no TABULA_FORNAX_URL): recordings are queued but nothing will transcribe them. */
   transcription_enabled: boolean;
 };
 
@@ -69,7 +69,7 @@ const OPEN = ['new', 'triaged'] as const;
 const RANK: Record<WaitingTranscript, number> = { done: 1, failed: 2, queued: 3, running: 4 };
 
 /** What the Home page shows besides the timeline. */
-export async function dashboard(db: Db, now = new Date(), { workerEnabled = true, tz = SERVER_TZ }: { workerEnabled?: boolean; tz?: string } = {}): Promise<Dashboard> {
+export async function dashboard(db: Db, now = new Date(), { transcriptionEnabled = true, tz = SERVER_TZ }: { transcriptionEnabled?: boolean; tz?: string } = {}): Promise<Dashboard> {
   const zone = checkTimeZone(tz);
   const [open, recordings, large, projectList, openCounts, activity] = await Promise.all([
     db
@@ -106,7 +106,7 @@ export async function dashboard(db: Db, now = new Date(), { workerEnabled = true
 
   type Recording = (typeof recordings)[number];
   const stateOf = (a: Recording): WaitingTranscript | null =>
-    // A purged recording is never worked on (the worker skips it, Try again refuses it): its job state means nothing.
+    // A purged recording is never worked on (the sync skips it, Try again refuses it): its job state means nothing.
     !a.purgedAt && (a.job === 'queued' || a.job === 'running' || a.job === 'failed') ? a.job : a.transcribed ? 'done' : null;
   const recordingsOf = new Map<string, Recording[]>();
   for (const a of recordings) {
@@ -142,8 +142,8 @@ export async function dashboard(db: Db, now = new Date(), { workerEnabled = true
   const warnings: DashboardWarning[] = [];
   const cutoff = now.getTime() - RECORDING_WAIT_MS;
   const stuck = recordings.filter((a) => a.job === 'queued' && !a.purgedAt && a.runAfter !== null && a.runAfter.getTime() < cutoff);
-  // Without a worker nothing is expected to transcribe: a waiting recording is no alarm.
-  if (workerEnabled && stuck.length) {
+  // Without Fornax nothing is expected to transcribe: a waiting recording is no alarm.
+  if (transcriptionEnabled && stuck.length) {
     const oldest = Math.min(...stuck.map((a) => a.runAfter!.getTime()));
     warnings.push({ type: 'recordings_waiting', project: null, count: stuck.length, oldest: new Date(oldest).toISOString() });
   }
@@ -164,6 +164,6 @@ export async function dashboard(db: Db, now = new Date(), { workerEnabled = true
       activity: activity.get(p.id) ?? Array(BAR_DAYS).fill(0),
     })),
     recall_budget: DIGEST_BUDGET,
-    transcription_enabled: workerEnabled,
+    transcription_enabled: transcriptionEnabled,
   };
 }

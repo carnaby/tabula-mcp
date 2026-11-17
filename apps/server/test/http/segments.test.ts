@@ -5,10 +5,9 @@ import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { type Diarization, reportAttachments, reports, type TranscriptSegment } from '../../src/db/schema.js';
-import { claimJob, completeJob } from '../../src/domain/jobs.js';
 import { buildApp } from '../../src/http/app.js';
 import { MediaStore } from '../../src/media/store.js';
-import { seedProject, TEST_TOKEN, testConfig, useTestDb } from '../helpers.js';
+import { finishNextJob, seedProject, TEST_TOKEN, testConfig, useTestDb } from '../helpers.js';
 import { silentWav } from '../media-fixtures.js';
 
 const db = useTestDb();
@@ -46,8 +45,7 @@ async function spoken(segments = SPOKEN, diarization: Diarization | null = PYANN
   const report = (await call('POST', '/reports', { title: 'Meeting' })).json();
   const res = await uploadWav(report.id, 'voice.wav');
   expect(res.statusCode).toBe(201);
-  const c = (await claimJob(db, 'pc'))!;
-  await completeJob(db, c.job.id, c.job.leaseId!, { language: 'sk', model: 'large-v3', durationMs: 2000, segments, diarization });
+  await finishNextJob(db, { language: 'sk', model: 'large-v3', durationMs: 2000, segments, diarization });
   return { report, audio: res.json() };
 }
 

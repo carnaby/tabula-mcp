@@ -4,7 +4,7 @@ import { type Diarization, reportAttachments, reports, reportTranscripts, type S
 import { badRequest, notFound } from './errors.js';
 import { charCount } from './validation.js';
 
-/** "S1" … "S99", as the worker numbers the speakers. */
+/** "S1" … "S99", as Fornax numbers the speakers. */
 export const SPEAKER_ID = /^S[0-9]{1,2}$/;
 export const SPEAKER_NAME_MAX = 60;
 export const SUGGESTIONS_MAX = 20;
@@ -103,7 +103,7 @@ export function speakerView(segments: readonly TranscriptSegment[], diarization:
   return { header: `Speakers: ${parts.join(', ')}`, labels: Object.fromEntries(ids.map((id) => [id, speakers[id]?.name ?? id])) };
 }
 
-/** The worker's diarization as stored: an error on one line of at most 2 000 characters, or a model and a count. */
+/** The diarization from Fornax as stored: an error on one line of at most 2 000 characters, or a model and a count. */
 export function cleanDiarization(input: Diarization | null | undefined): Diarization | null {
   if (input === null || input === undefined) return null;
   if (typeof input !== 'object' || Array.isArray(input)) throw badRequest('diarization must be an object, or null');

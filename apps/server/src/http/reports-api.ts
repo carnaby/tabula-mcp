@@ -8,6 +8,8 @@ import {
 } from '../domain/reports.js';
 import { editSegmentAsUser, restoreSegment, SegmentChangedError } from '../domain/transcript-edits.js';
 import { isRecording, retryTranscription, transcribeAgain, transcriptionStatus, transcriptStates } from '../domain/jobs.js';
+import { fornaxClient } from '../fornax/client.js';
+import { createStatusCache } from '../fornax/status.js';
 import { setSpeakerNames, speakerNameSuggestions } from '../domain/speakers.js';
 import { MAX_PAGE_SIZE } from '../domain/paging.js';
 import { badRequest, conflict, notFound } from '../domain/errors.js';
@@ -177,7 +179,7 @@ export const reportRoutes: FastifyPluginAsync<MediaDeps> = async (app, { db, con
     return (await transcriptStates(db, [id])).get(id);
   });
 
-  /** "Restore original": the worker's text and speaker of one line. */
+  /** "Restore original": the text and speaker of one line as Fornax transcribed it. */
   app.post('/attachments/:id/segments/:index/restore', async (req) => {
     const { id, index } = parse(segmentParams, req.params);
     await requireAttachment(db, id);
@@ -185,8 +187,14 @@ export const reportRoutes: FastifyPluginAsync<MediaDeps> = async (app, { db, con
     return (await transcriptStates(db, [id])).get(id);
   });
 
-  /** When the worker was last seen and how many recordings of open reports wait. */
-  app.get('/transcription/status', async () => ({ enabled: !!config.workerToken, ...(await transcriptionStatus(db)) }));
+  /** Whether Fornax is online and offers transcription (null when unknown, cached 30 s), and how many recordings of open reports wait, run and failed. */
+  const fornax = config.fornax ? createStatusCache(fornaxClient(config.fornax)) : null;
+  app.get('/transcription/status', async () => ({
+    enabled: fornax !== null,
+    ...(fornax ? await fornax.get() : { online: null, offered: null }),
+    url: config.fornax?.url ?? null,
+    ...(await transcriptionStatus(db)),
+  }));
 
   // Uploads: the raw file is the request body (no multipart), streamed straight to disk.
   await app.register(async (upload) => {

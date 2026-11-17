@@ -48,8 +48,12 @@ export type FakeFornax = {
   requests: FakeRequest[];
   /** Whether the worker is online and whether `transcribe` is among the offered types (GET /api/types). */
   worker: { online: boolean; offered: boolean };
-  /** Patch a job and give it a new change value. Output files: `setJob(id, { files: new Map([['transcript.json', {...}]]) })`. */
-  setJob(id: string, patch: Partial<Omit<FakeJob, 'id' | 'change'>>): FakeJob;
+  /**
+   * Patch a job and give it a new change value. Output files: `setJob(id, { files: new Map([['transcript.json', {...}]]) })`.
+   * `sameChange`: keep the change value, as the real server does when only the note changes (its change hash leaves the
+   * note out), so a waiting long poll is not woken.
+   */
+  setJob(id: string, patch: Partial<Omit<FakeJob, 'id' | 'change'>>, opts?: { sameChange?: boolean }): FakeJob;
   /** Every request to `path` (without the query string) answers `status`, or drops the connection with 'network'; null removes the rule. */
   fail(path: string, how: number | 'network' | null): void;
   close(): Promise<void>;
@@ -190,10 +194,10 @@ export async function startFakeFornax(opts: { token?: string } = {}): Promise<Fa
     files,
     requests,
     worker,
-    setJob(id, patch) {
+    setJob(id, patch, opts = {}) {
       const job = jobs.get(id);
       if (!job) throw new Error(`fake Fornax has no job ${id}`);
-      Object.assign(job, patch, { change: nextChange() });
+      Object.assign(job, patch, opts.sameChange ? {} : { change: nextChange() });
       return job;
     },
     fail(path, how) {

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Readable } from 'node:stream';
@@ -9,7 +9,7 @@ import { projects, reportAttachments, reportJobs, reports, reportTranscripts } f
 import {
   enqueueTranscription, failPendingJobs, MAX_ATTEMPTS, MEDIA_GONE, retryTranscription, transcribeAgain, transcriptStates,
 } from '../../src/domain/jobs.js';
-import { type FornaxClient, fornaxClient } from '../../src/fornax/client.js';
+import { type FornaxClient, fornaxClient, FornaxError } from '../../src/fornax/client.js';
 import { createFornaxSync, FORNAX_CANCELED, FORNAX_FORGOT } from '../../src/fornax/sync.js';
 import { MediaStore } from '../../src/media/store.js';
 import { type FakeFornax, startFakeFornax } from '../fake-fornax.js';
@@ -121,6 +121,62 @@ describe('the Fornax sync', () => {
     await sync.syncOnce(at(2000));
     expect(await stateOf(a.id, at(2000))).toMatchObject({ status: 'running', note: null });
     expect((await jobOf(a.id)).fornaxChange).toBe((await fornaxJob(a.id)).change);
+  });
+
+  it('stores a new note even when Fornax keeps the change value (its change leaves the note out)', async () => {
+    const a = await recording();
+    const sync = newSync();
+    await sync.syncOnce(at(0));
+    const id = (await jobOf(a.id)).fornaxJobId!;
+    const change = (await jobOf(a.id)).fornaxChange;
+    fake.setJob(id, { note: 'the worker is offline since 13:40' }, { sameChange: true });
+    await sync.syncOnce(at(1000));
+    expect(await stateOf(a.id, at(1000))).toMatchObject({ status: 'queued', note: 'the worker is offline since 13:40' });
+    expect((await jobOf(a.id)).fornaxChange).toBe(change);
+  });
+
+  it('does not write the row for progress alone', async () => {
+    const a = await recording();
+    const sync = newSync();
+    await sync.syncOnce(at(0));
+    const id = (await jobOf(a.id)).fornaxJobId!;
+    fake.setJob(id, { state: 'running', note: null, progress: 0.1 });
+    await sync.syncOnce(at(1000));
+    const running = await jobOf(a.id);
+    expect(running).toMatchObject({ status: 'running', updatedAt: at(1000) });
+    for (const [i, progress] of [0.2, 0.5, 0.9].entries()) {
+      fake.setJob(id, { progress, progress_message: `transcribing ${progress}` });
+      await sync.syncOnce(at(2000 + i));
+    }
+    expect(await jobOf(a.id)).toMatchObject({ status: 'running', updatedAt: at(1000), fornaxChange: running.fornaxChange });
+    fake.setJob(id, succeeded());
+    await sync.syncOnce(at(3000));
+    expect((await jobOf(a.id)).status).toBe('done');
+  });
+
+  it('says when the recording could not be read, and tries again after the back-off', async () => {
+    const a = await recording();
+    // A directory in place of the file: stat works, reading fails.
+    await store.remove(a.storageKey);
+    mkdirSync(store.path(a.storageKey));
+    // Like the real client, a body that fails to read surfaces as "unreachable".
+    const reading: FornaxClient = {
+      ...client,
+      uploadFile: async (_name: string, body: Readable | ReadableStream) => {
+        try {
+          for await (const _chunk of body as Readable) {
+            // drain
+          }
+        } catch {
+          throw new FornaxError('Fornax is unreachable', null, false);
+        }
+        throw new Error('the directory was read');
+      },
+    };
+    await newSync(reading).syncOnce(at(0));
+    const job = await jobOf(a.id);
+    expect(job).toMatchObject({ status: 'queued', attempts: 1, runAfter: at(60_000) });
+    expect(job.error).toMatch(/^the recording could not be read \(E[A-Z]+\)$/);
   });
 
   it('stores the transcript when Fornax is done, and fills a missing duration only', async () => {
@@ -341,6 +397,16 @@ describe('the running Fornax sync', () => {
     fake.setJob(id, succeeded());
     await vi.waitFor(async () => expect((await jobOf(a.id)).status).toBe('done'), { timeout: 5000 });
     expect(fake.requests.some((r) => r.path === `/api/jobs/${id}` && /wait=1/.test(r.query))).toBe(true);
+  });
+
+  it('picks up a note-only change when the long poll times out', async () => {
+    const a = await recording();
+    await newSync().syncOnce(at(0));
+    const sync = newSync(client, fast);
+    sync.start();
+    await vi.waitFor(() => expect(fake.requests.some((r) => /wait=1/.test(r.query))).toBe(true), { timeout: 5000 });
+    fake.setJob((await jobOf(a.id)).fornaxJobId!, { note: 'the queue is paused' }, { sameChange: true });
+    await vi.waitFor(async () => expect((await jobOf(a.id)).note).toBe('the queue is paused'), { timeout: 5000 });
   });
 
   it('follows other jobs while an upload hangs, and gives the job back when stopped', async () => {

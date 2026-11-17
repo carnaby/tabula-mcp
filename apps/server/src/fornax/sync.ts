@@ -54,7 +54,8 @@ function transcriptInput(raw: unknown): TranscriptInput {
 }
 
 type Claimed = { id: string; attempts: number; attachmentId: string; storageKey: string; purgedAt: Date | null; project: string | null };
-type Followed = { id: string; fornaxJobId: string; fornaxChange: string | null };
+/** A job Fornax works on, as last stored here; `fornaxChange` also as last seen (kept in memory between stored states). */
+type Followed = { id: string; fornaxJobId: string; fornaxChange: string | null; status: 'queued' | 'running'; note: string | null };
 
 /**
  * Moves transcription jobs to Fornax and back. Submitting: a due queued job is claimed (FOR UPDATE SKIP LOCKED, then
@@ -151,6 +152,11 @@ export function createFornaxSync(deps: { db: Db; store: MediaStore; client: Forn
     let submitted: FornaxJob;
     // A fresh stream for every attempt: a stream an attempt read cannot be sent again.
     const body = store.open(job.storageKey);
+    // A read error reaches the client as a broken request ("Fornax is unreachable"): remember the real cause.
+    let readError: NodeJS.ErrnoException | null = null;
+    body.once('error', (e: NodeJS.ErrnoException) => {
+      readError = e;
+    });
     try {
       // The name carries the extension Fornax checks, not the user's file name.
       const name = job.storageKey.slice(job.storageKey.lastIndexOf('/') + 1);
@@ -160,7 +166,9 @@ export function createFornaxSync(deps: { db: Db; store: MediaStore; client: Forn
     } catch (e) {
       // Stopped: the abort is no failure of Fornax and costs no attempt.
       if (stopping.signal.aborted && !(e instanceof FornaxError)) return release(job, clock());
-      return submitFailed(job, e, clock());
+      // The code only: the error's message holds the file's path on this host.
+      const failure = readError ? new Error(`the recording could not be read (${(readError as NodeJS.ErrnoException).code ?? 'read error'})`, { cause: e }) : e;
+      return submitFailed(job, failure, clock());
     } finally {
       body.destroy();
     }
@@ -196,7 +204,9 @@ export function createFornaxSync(deps: { db: Db; store: MediaStore; client: Forn
   /** The jobs Fornax works on: queued or running here, with a Fornax id. */
   const followedJobs = (): Promise<Followed[]> =>
     db
-      .select({ id: reportJobs.id, fornaxJobId: reportJobs.fornaxJobId, fornaxChange: reportJobs.fornaxChange })
+      .select({
+        id: reportJobs.id, fornaxJobId: reportJobs.fornaxJobId, fornaxChange: reportJobs.fornaxChange, status: reportJobs.status, note: reportJobs.note,
+      })
       .from(reportJobs)
       .where(and(inArray(reportJobs.status, ['queued', 'running']), isNotNull(reportJobs.fornaxJobId))) as Promise<Followed[]>;
 
@@ -252,14 +262,20 @@ export function createFornaxSync(deps: { db: Db; store: MediaStore; client: Forn
         await failFollowed(job, FORNAX_CANCELED, now);
         return false;
       default: {
-        if (seen.change === job.fornaxChange) return true;
+        // Fornax's change value follows progress too, and not the note: the row is written only when what it shows
+        // (state, the note) changed. The change value itself only needs to be current after a restart, where a stale
+        // one costs a single immediate answer.
+        if (seen.state === job.status && seen.note === job.note) {
+          job.fornaxChange = seen.change;
+          return true;
+        }
         const [row] = await db
           .update(reportJobs)
           .set({ status: seen.state, note: seen.note, fornaxChange: seen.change, updatedAt: now })
           .where(stillFollowed(job))
           .returning({ id: reportJobs.id });
         if (!row) return false;
-        job.fornaxChange = seen.change;
+        Object.assign(job, { status: seen.state, note: seen.note, fornaxChange: seen.change });
         return true;
       }
     }

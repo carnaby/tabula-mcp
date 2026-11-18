@@ -43,8 +43,8 @@ const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt
 /**
  * Markdown for text from someone nobody verified. It must not be able to change the app around it or make the browser
  * fetch anything, so HTML typed into the text stays visible as text, an image becomes a link to it, and a task list
- * keeps its marks as text. References stay plain text: internal links are not accepted here. Nothing may vanish either:
- * the owner decides from this view while agents read the raw text.
+ * keeps its marks as text. References stay plain text: internal links are not accepted here. The result is not a faithful
+ * copy, since Markdown itself can drop parts of a text, so a page that shows such text for a decision opens the exact text.
  */
 const untrustedMarked = new Marked({
   gfm: true,

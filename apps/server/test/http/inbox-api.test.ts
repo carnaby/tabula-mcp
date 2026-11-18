@@ -59,6 +59,14 @@ describe('narrow token issuing', () => {
     expect(logs.join()).not.toContain(token);
   });
 
+  it('masks a token sent by mistake in the URL', async () => {
+    logs.length = 0;
+    const res = await app.inject({ method: 'GET', url: `${base}?token=${token}` });
+    expect(res.statusCode).toBe(401);
+    expect(logs.join()).toContain('token=tabula_inbox_***');
+    expect(logs.join()).not.toContain(token.slice('tabula_inbox_'.length));
+  });
+
   it('records when the token was last used', async () => {
     expect((await listMessageTokens(db))[0]!.last_used_at).toBeNull();
     await call('GET', base);
@@ -188,6 +196,19 @@ describe('malformed input', () => {
     expect((await call('GET', `${base}/not-a-uuid`)).statusCode).toBe(400);
     expect((await call('PATCH', `${base}/not-a-uuid`, { expected_version: 1, reply: 'x' })).statusCode).toBe(400);
     expect((await call('GET', `${base}?since=yesterday`)).statusCode).toBe(400);
+  });
+
+  it.each(['0000-01-01T00:00:00Z', '9999-12-31T23:59:59-23:59', '1999-12-31T23:59:59Z', '2100-01-01T00:00:00Z'])(
+    'answers 400 for since %s, outside the years 2000 to 2099',
+    async (since) => {
+      expect((await call('GET', `${base}?since=${encodeURIComponent(since)}`)).statusCode).toBe(400);
+    },
+  );
+
+  it('accepts since at the edges of the allowed years', async () => {
+    for (const since of ['2000-01-01T00:00:00Z', '2099-12-31T23:59:59Z']) {
+      expect((await call('GET', `${base}?since=${encodeURIComponent(since)}`)).statusCode).toBe(200);
+    }
   });
 
   it.each([

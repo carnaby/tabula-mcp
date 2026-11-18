@@ -9,7 +9,15 @@ import { parse } from './parse.js';
 
 const BODY_LIMIT = 128 * 1024;
 const idParams = z.object({ id: z.uuid() });
-const listQuery = z.object({ since: z.iso.datetime({ offset: true }).optional() });
+/** Bounds of `since`: some well-formed dates, such as the year 0000, make the query fail. */
+const SINCE_MIN = Date.UTC(2000, 0, 1);
+const SINCE_MAX = Date.UTC(2100, 0, 1);
+const listQuery = z.object({
+  since: z.iso
+    .datetime({ offset: true })
+    .refine((s) => Date.parse(s) >= SINCE_MIN && Date.parse(s) < SINCE_MAX, { error: 'since must be in the years 2000 to 2099' })
+    .optional(),
+});
 
 /**
  * The API of a narrow token: the messages of one project and nothing else. It is registered next to the /api plugin, so

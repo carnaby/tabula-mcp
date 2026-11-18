@@ -26,6 +26,7 @@ export function Sidebar({
   const canInstall = useCanInstall();
   const reportCounts = useQuery((s) => api.reportCounts(s), [], { topics: ['reports'] });
   const openReports = Object.values(reportCounts.data ?? {}).reduce((a, b) => a + b, 0);
+  const messageCounts = useQuery((s) => api.messageCounts(s), [], { topics: ['messages'] });
   const [filter, setFilter] = useState('');
   const { confirm } = useConfirm();
   // A report opened from a project's Reports tab highlights that project, not the global list.
@@ -59,6 +60,7 @@ export function Sidebar({
         <NavItem to={href.reports()} icon="inbox" label="Reports" count={openReports || undefined} active={section.name === 'reports' || section.name === 'report'} />
 
         <div className="nav-section">For agents</div>
+        <NavItem to={href.inbox()} icon="mail" label="Inbox" count={messageCounts.data?.open || undefined} active={section.name === 'inbox' || section.name === 'message'} />
         <NavItem to={href.global()} icon="globe" label="Global" count={global?.memory_count} active={section.name === 'global'} />
 
         <div className="nav-section">

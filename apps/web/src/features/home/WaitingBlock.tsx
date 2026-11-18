@@ -14,6 +14,7 @@ const KIND: Record<WaitingItem['type'], { icon: IconName; label: string }> = {
   new_report: { icon: 'inbox', label: 'New report' },
   triaged: { icon: 'bot', label: 'Triaged' },
   transcription_failed: { icon: 'alert', label: 'Transcription failed' },
+  message_waiting: { icon: 'mail', label: 'Message' },
 };
 
 const TRANSCRIPT: Record<WaitingTranscript, { tone: BadgeTone; label: string }> = {
@@ -23,7 +24,7 @@ const TRANSCRIPT: Record<WaitingTranscript, { tone: BadgeTone; label: string }> 
   failed: { tone: 'danger', label: 'Transcription failed' },
 };
 
-/** Reports that wait for the user, oldest first, with what can be done about them right here. */
+/** Reports and messages that wait for the user, oldest first, with what can be done about them right here. */
 export function WaitingBlock({
   dashboard, failed, projects, onChanged,
 }: { dashboard: Dashboard | undefined; failed?: boolean; projects: Project[] | undefined; onChanged: () => void }) {
@@ -87,7 +88,9 @@ function WaitingRow({
   const { confirm } = useConfirm();
   const [busy, setBusy] = useState(false);
   const kind = KIND[w.type];
-  const open = w.type === 'transcription_failed' && w.attachment_id ? href.attachment(w.id, w.attachment_id, href.home()) : href.report(w.id, undefined, href.home());
+  const open = w.type === 'message_waiting'
+    ? href.message(w.id, href.home())
+    : w.type === 'transcription_failed' && w.attachment_id ? href.attachment(w.id, w.attachment_id, href.home()) : href.report(w.id, undefined, href.home());
 
   const copy = async () => {
     if (prompt === undefined) return;
@@ -144,6 +147,7 @@ function WaitingRow({
               : <Badge tone={TRANSCRIPT[w.transcript].tone}>{TRANSCRIPT[w.transcript].label}</Badge>
           )}
           {w.type === 'transcription_failed' && <span className="t-subtle t-truncate" title={w.error ?? undefined}>{w.file_name}</span>}
+          {w.type === 'message_waiting' && w.from && <span className="t-subtle t-truncate" title="Declared by the sender, not verified">from {w.from}</span>}
           <time className="t-subtle t-nowrap" dateTime={w.since} title={fullDate(w.since)}>{age(w.since)}</time>
         </div>
       </div>

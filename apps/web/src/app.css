@@ -921,3 +921,15 @@ span.transcript__time { color: var(--text-subtle); }
   .waiting-row { flex-wrap: wrap; }
   .waiting-row__actions { width: 100%; padding-left: 44px; }
 }
+
+.waiting-row__icon[data-type='message_waiting'] { background: var(--accent-soft); color: var(--accent-soft-fg); }
+.message-body { padding: 16px; }
+.message-history { display: grid; gap: 8px; list-style: none; margin: 0; padding: 0; }
+.message-history__item { display: grid; gap: 6px; padding: 12px 16px; }
+.message-history__meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: var(--text-sm); }
+.message-reply { display: grid; gap: 12px; padding: 16px; }
+.message-reply__actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.message-tokens { display: grid; gap: 12px; padding: 16px; }
+.message-tokens__form { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; }
+.message-tokens__row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: var(--text-sm); }
+.message-tokens__value { overflow-wrap: anywhere; }

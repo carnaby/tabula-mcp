@@ -5,6 +5,8 @@ import { REFRESH_MS, useInterval, useQuery } from './hooks/data';
 import { Sidebar } from './layout/Sidebar';
 import { GlobalPage } from './pages/GlobalPage';
 import { HomePage } from './pages/HomePage';
+import { InboxPage } from './pages/InboxPage';
+import { MessagePage } from './pages/MessagePage';
 import { NewProjectDialog } from './pages/NewProjectDialog';
 import { NoteEditorPage } from './pages/NoteEditorPage';
 import { NotesPage } from './pages/NotesPage';
@@ -29,6 +31,8 @@ function title(route: Route, projects: Project[] | undefined): string {
     case 'search': return 'Search';
     case 'reports': return 'Reports';
     case 'report': return route.id === 'new' ? 'New report' : 'Report';
+    case 'inbox': return 'Inbox';
+    case 'message': return 'Message';
     case 'project': return projects?.find((x) => x.id === route.project)?.name ?? route.project;
     default: return 'Tabula';
   }
@@ -98,6 +102,8 @@ function Page({ route, projects }: { route: Route; projects: Project[] | undefin
     case 'search': return <SearchPage q={route.q} projects={projects} />;
     case 'reports': return <ReportsPage projects={projects} />;
     case 'report': return <ReportPage id={route.id} project={route.project} from={route.from} attachment={route.attachment} projects={projects} />;
+    case 'inbox': return <InboxPage projects={projects} />;
+    case 'message': return <MessagePage id={route.id} from={route.from} projects={projects} />;
     case 'project': return <ProjectPage project={route.project} tab={route.tab} path={route.path} from={route.from} projects={projects} />;
     default:
       return (

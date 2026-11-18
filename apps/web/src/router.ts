@@ -13,6 +13,8 @@ export type Route =
   | { name: 'reports' }
   /** `project` preselects the project of a new report; `from` is where the back button leads; `attachment` is shown first. */
   | { name: 'report'; id: string | 'new'; project?: string; from?: string; attachment?: string }
+  | { name: 'inbox' }
+  | { name: 'message'; id: string; from?: string }
   | { name: 'project'; project: string; tab: ProjectTab; path?: string; from?: string }
   | { name: 'notFound' };
 
@@ -36,6 +38,8 @@ export const href = {
   global: (tab: GlobalTab = 'rules') => `#/global${tab === 'rules' ? '' : `/${tab}`}`,
   reports: () => '#/reports',
   report: (id: string, project?: string, from?: string) => `#/reports/${id}${query({ project, from })}`,
+  inbox: () => '#/inbox',
+  message: (id: string, from?: string) => `#/inbox/${id}${query({ from })}`,
   search: (q = '') => `#/search${q ? `?q=${encodeURIComponent(q)}` : ''}`,
   project: (p: string, tab: ProjectTab = 'state') =>
     `#/p/${encodeURIComponent(p)}${tab === 'state' ? '' : `/${tab}`}`,
@@ -68,6 +72,7 @@ export function parse(hash: string): Route {
       ? { name: 'report', id: b, project: params.get('project') ?? undefined, from, attachment: params.get('attachment') ?? undefined }
       : { name: 'reports' };
   }
+  if (a === 'inbox') return b ? { name: 'message', id: b, from } : { name: 'inbox' };
   // Links from earlier versions of the UI.
   if (a === 'memories' && !b) return { name: 'global', tab: 'rules' };
   if (a === 'recall' && !b) return { name: 'global', tab: 'recall' };
@@ -113,6 +118,7 @@ function backLabel(route: Route, name: (slug: string) => string): string | null 
     case 'thoughts': return 'Back to Thoughts';
     case 'notes': return 'Back to Notes';
     case 'reports': return 'Back to Reports';
+    case 'inbox': return 'Back to Inbox';
     case 'global': return 'Back to Global';
     case 'search': return route.q ? `Back to search “${route.q}”` : 'Back to Search';
     case 'project':

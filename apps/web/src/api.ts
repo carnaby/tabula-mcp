@@ -2,6 +2,7 @@ import type {
   FileRevision, FileRevisionContent, Memory, MemoryKind, MemorySort, Note, NoteSort, Page, Project, RecallPreview, RefTarget, SearchHit, Source, Thought,
   ProjectFile, ProjectFileContent, ThoughtRevision, ThoughtSort,
   ActivityPage, ActivityType, Attachment, Dashboard, TranscriptState, WorkerStatus, ReportDetail, Report, ReportSort, ReportStatus, ReportSummary,
+  MessageCounts, MessageDetail, MessagePatch, MessageStatusFilter, MessageSummary, MessageToken, MessageType,
 } from './types';
 
 const TOKEN_KEY = 'tabula.token';
@@ -130,6 +131,15 @@ export const api = {
 
   search: (q: string, signal?: S) => request<SearchHit[]>('GET', `/search${qs({ q, limit: 30 })}`, undefined, signal),
   resolve: (ref: string, signal?: S) => request<RefTarget>('GET', `/resolve/${encodeURIComponent(ref)}`, undefined, signal),
+  messages: (f: { to?: string; from?: string; type?: MessageType | ''; status?: MessageStatusFilter; page?: number; pageSize?: number }, signal?: S) =>
+    request<Page<MessageSummary>>('GET', `/messages${qs(f)}`, undefined, signal),
+  messageCounts: (signal?: S) => request<MessageCounts>('GET', '/messages/counts', undefined, signal),
+  message: (id: string, signal?: S) => request<MessageDetail>('GET', `/messages/${id}`, undefined, signal),
+  updateMessage: (id: string, patch: MessagePatch) => request<MessageSummary>('PATCH', `/messages/${id}`, patch),
+  deleteMessage: (id: string) => request<void>('DELETE', `/messages/${id}`),
+  messageTokens: (signal?: S) => request<MessageToken[]>('GET', '/message-tokens', undefined, signal),
+  createMessageToken: (project: string, name: string) => request<{ token: MessageToken; value: string }>('POST', '/message-tokens', { project, name }),
+  revokeMessageToken: (id: string) => request<MessageToken>('DELETE', `/message-tokens/${id}`),
   recall: (project: string, signal?: S) => request<RecallPreview>('GET', `/recall/${encodeURIComponent(project)}`, undefined, signal),
   dashboard: (tz: string, signal?: S) => request<Dashboard>('GET', `/dashboard${qs({ tz })}`, undefined, signal),
   activity: (f: { before?: string; after?: string; type?: ActivityType; tz?: string }, signal?: S) =>

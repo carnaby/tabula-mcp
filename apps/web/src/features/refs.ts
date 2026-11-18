@@ -10,5 +10,6 @@ export function refHref(t: RefTarget): string {
     case 'file': return href.file(t.project ?? '', t.path ?? t.title);
     case 'memory': return href.memory(t.id);
     case 'attachment': return href.attachment(t.report_id ?? '', t.id);
+    case 'message': return href.message(t.id);
   }
 }

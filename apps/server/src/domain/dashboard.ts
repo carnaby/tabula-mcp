@@ -1,7 +1,7 @@
 import { refOf } from '@tabula/shared/refs';
 import { and, asc, desc, eq, gt, inArray, isNull, ne } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
-import { projectFiles, reportAttachments, reportJobs, reports, reportTranscripts } from '../db/schema.js';
+import { messages, projectFiles, reportAttachments, reportJobs, reports, reportTranscripts } from '../db/schema.js';
 import { BAR_DAYS, checkTimeZone, projectActivity, SERVER_TZ } from './activity.js';
 import type { TrimStep } from './digest.js';
 import { FILE_LIMITS } from './files.js';
@@ -19,8 +19,8 @@ export const RECORDING_WAIT_MS = 24 * 3600 * 1000;
 export type WaitingTranscript = 'running' | 'queued' | 'failed' | 'done';
 
 export type WaitingItem = {
-  type: 'new_report' | 'triaged' | 'transcription_failed';
-  /** The report's id and reference. */
+  type: 'new_report' | 'triaged' | 'transcription_failed' | 'message_waiting';
+  /** The report's or message's id and reference. */
   id: string;
   ref: string;
   title: string;
@@ -37,6 +37,8 @@ export type WaitingItem = {
   attachment_id?: string;
   file_name?: string;
   error?: string | null;
+  /** message_waiting: the project that declares it sent the message; `project` is the recipient. */
+  from?: string;
 };
 
 export type DashboardWarning =
@@ -71,7 +73,7 @@ const RANK: Record<WaitingTranscript, number> = { done: 1, failed: 2, queued: 3,
 /** What the Home page shows besides the timeline. */
 export async function dashboard(db: Db, now = new Date(), { transcriptionEnabled = true, tz = SERVER_TZ }: { transcriptionEnabled?: boolean; tz?: string } = {}): Promise<Dashboard> {
   const zone = checkTimeZone(tz);
-  const [open, recordings, large, projectList, openCounts, activity] = await Promise.all([
+  const [open, recordings, large, projectList, openCounts, activity, waitingMessages] = await Promise.all([
     db
       .select({
         id: reports.id, projectId: reports.projectId, title: reports.title, status: reports.status, version: reports.version,
@@ -100,6 +102,13 @@ export async function dashboard(db: Db, now = new Date(), { transcriptionEnabled
     listProjects(db),
     openReportCounts(db),
     projectActivity(db, now, zone),
+    db
+      .select({
+        id: messages.id, title: messages.title, toProject: messages.toProject, fromProject: messages.fromProject,
+        version: messages.version, updatedAt: messages.updatedAt,
+      })
+      .from(messages)
+      .where(and(eq(messages.status, 'waiting'), eq(messages.waitingOn, 'author'))),
   ]);
   const projects = projectList.filter((p) => p.id !== 'global');
   const digests = await recallDigests(db, projects.map((p) => p.id), now);
@@ -136,6 +145,12 @@ export async function dashboard(db: Db, now = new Date(), { transcriptionEnabled
         attachment_id: a.id, file_name: a.fileName, error: a.error,
       });
     }
+  }
+  for (const m of waitingMessages) {
+    waiting.push({
+      type: 'message_waiting', id: m.id, ref: refOf(m.id), title: m.title, project: m.toProject, from: m.fromProject,
+      since: m.updatedAt.toISOString(), version: m.version, keep_media: false, recordings: 0, transcript: null,
+    });
   }
   waiting.sort((a, b) => a.since.localeCompare(b.since) || a.id.localeCompare(b.id));
 

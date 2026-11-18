@@ -830,6 +830,8 @@ span.transcript__time { color: var(--text-subtle); }
 .waiting-row__title:hover { text-decoration: underline; }
 .waiting-row__meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; font-size: var(--text-sm); }
 .waiting-row__kind { color: var(--text-muted); }
+.waiting-row__from { display: inline-flex; gap: 0.3em; min-width: 0; max-width: 100%; }
+.waiting-row__from > .t-nowrap { flex: none; }
 .waiting-row__actions { display: flex; gap: 6px; flex: none; }
 
 .copy-preview { display: grid; gap: 4px; margin-top: 12px; }
@@ -921,3 +923,32 @@ span.transcript__time { color: var(--text-subtle); }
   .waiting-row { flex-wrap: wrap; }
   .waiting-row__actions { width: 100%; padding-left: 44px; }
 }
+
+.waiting-row__icon[data-type='message_waiting'] { background: var(--accent-soft); color: var(--accent-soft-fg); }
+.message-body { padding: 16px; }
+/* A sender's text may hold lines with no break point: they wrap or scroll inside their card and never widen the page. */
+.message-page > *, .message-page .t-stack > *, .message-history > *, .message-history__item > *, .message-reply > *, .message-body > * { min-width: 0; }
+.message-page h1 { overflow-wrap: anywhere; }
+.message-text { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
+.message-text__source {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.message-text__note { margin: 0; font-size: var(--text-sm); }
+.message-text__toggle { justify-self: start; }
+.message-history { display: grid; gap: 8px; list-style: none; margin: 0; padding: 0; }
+.message-history__item { display: grid; gap: 6px; padding: 12px 16px; }
+.message-history__meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: var(--text-sm); }
+.message-reply { display: grid; gap: 12px; padding: 16px; }
+.message-reply__actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.message-tokens { display: grid; gap: 12px; padding: 16px; }
+.message-tokens__form { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; }
+.message-tokens__row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: var(--text-sm); }
+.message-tokens__value { overflow-wrap: anywhere; }

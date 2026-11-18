@@ -81,7 +81,7 @@ export type SearchHit = {
   updated_at: string;
 };
 
-export type RecordType = 'memory' | 'note' | 'thought' | 'report' | 'file' | 'attachment';
+export type RecordType = 'memory' | 'note' | 'thought' | 'report' | 'file' | 'attachment' | 'message';
 /** What a reference points at (GET /api/resolve/:ref). */
 export type RefTarget = {
   ref: string; type: RecordType; id: string; project: string | null; title: string;
@@ -191,8 +191,8 @@ export type ReportSort = 'createdAt' | 'updatedAt' | 'title' | 'status';
 export type WaitingTranscript = 'running' | 'queued' | 'failed' | 'done';
 /** Something that waits for the user on Home (GET /api/dashboard), oldest first. */
 export type WaitingItem = {
-  type: 'new_report' | 'triaged' | 'transcription_failed';
-  /** The report. */
+  type: 'new_report' | 'triaged' | 'transcription_failed' | 'message_waiting';
+  /** The report or message. */
   id: string;
   ref: string;
   title: string;
@@ -208,6 +208,8 @@ export type WaitingItem = {
   attachment_id?: string;
   file_name?: string;
   error?: string | null;
+  /** message_waiting: the project that declares it sent the message. */
+  from?: string;
 };
 export type TrimStep = 'files-collapsed' | 'facts-omitted' | 'gotchas-first-sentence' | 'rules-first-sentence' | 'state-truncated';
 export type DashboardWarning =
@@ -255,3 +257,24 @@ export type ActivityItem = {
 };
 export type ActivityDay = { date: string; items: ActivityItem[] };
 export type ActivityPage = { days: ActivityDay[]; next_before: string | null };
+
+export type MessageType = 'request' | 'report';
+export type MessageStatus = 'new' | 'in_progress' | 'waiting' | 'done' | 'rejected';
+export type MessageWaitingOn = 'author' | 'sender';
+export type MessageStatusFilter = MessageStatus | 'open' | 'archive' | 'all';
+export const MESSAGE_STATUS_LABEL: Record<MessageStatus, string> = {
+  new: 'New', in_progress: 'In progress', waiting: 'Waiting', done: 'Done', rejected: 'Rejected',
+};
+export const MESSAGE_WAITING_LABEL: Record<MessageWaitingOn, string> = { author: 'you', sender: 'the sender' };
+export type MessageSummary = {
+  id: string; ref: string; to: string; from: string; type: MessageType; title: string; status: MessageStatus;
+  waiting_on: MessageWaitingOn | null; related_to: string | null; version: number; created_at: string; updated_at: string;
+};
+export type MessageEvent = {
+  at: string; actor: string; source: Source; version: number; from_status: MessageStatus | null; to_status: MessageStatus | null;
+  waiting_on: MessageWaitingOn | null; reply: string | null;
+};
+export type MessageDetail = MessageSummary & { body: string; source: Source; created_by: string; closed_at: string | null; events: MessageEvent[] };
+export type MessageCounts = { open: number; waiting_author: number };
+export type MessageToken = { id: string; project: string; name: string; created_at: string; last_used_at: string | null; revoked_at: string | null };
+export type MessagePatch = { expected_version: number; reply?: string; status?: MessageStatus; waiting_on?: MessageWaitingOn };

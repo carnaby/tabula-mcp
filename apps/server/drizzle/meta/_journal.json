@@ -120,6 +120,13 @@
       "when": 1794901260496,
       "tag": "0016_fornax_jobs",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1794994969832,
+      "tag": "0017_inbox",
+      "breakpoints": true
     }
   ]
 }

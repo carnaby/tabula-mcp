@@ -8,11 +8,16 @@ import { DomainError, loggableError } from '../domain/errors.js';
 import { registerMcpRoutes } from '../mcp/routes.js';
 import { apiRoutes } from './api.js';
 import { registerCliRoutes } from './cli.js';
+import { inboxApiRoutes } from './inbox-api.js';
 import { MediaStore } from '../media/store.js';
 import { registerMediaRoute } from './reports-api.js';
 
-// The secret in the /mcp/<secret> path and the signature of /media links (valid for hours) must never reach the logs.
-const maskUrl = (url: string) => url.replace(/^\/mcp\/[^/?#]+/, '/mcp/***').replace(/([?&]sig=)[^&#]*/g, '$1***');
+// The secret in the /mcp/<secret> path, the signature of /media links (valid for hours) and an Inbox token put in a URL by mistake must never reach the logs.
+const maskUrl = (url: string) =>
+  url
+    .replace(/^\/mcp\/[^/?#]+/, '/mcp/***')
+    .replace(/([?&]sig=)[^&#]*/g, '$1***')
+    .replace(/tabula_inbox_[A-Za-z0-9_-]+/g, 'tabula_inbox_***');
 
 export async function buildApp(deps: {
   config: Config;
@@ -65,6 +70,7 @@ export async function buildApp(deps: {
   registerMcpRoutes(app, { ...deps, store });
   registerMediaRoute(app, { db: deps.db, config: deps.config, store });
   await app.register(apiRoutes, { prefix: '/api', db: deps.db, config: deps.config, store });
+  await app.register(inboxApiRoutes, { prefix: '/inbox-api/v1', db: deps.db });
 
   const webRoot = resolve(deps.config.webDist);
   if (existsSync(webRoot)) {

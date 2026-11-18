@@ -1,6 +1,6 @@
 import { findRef } from '@tabula/shared/refs';
 import DOMPurify from 'dompurify';
-import { marked } from 'marked';
+import { Marked, marked } from 'marked';
 import { useMemo, useState } from 'react';
 import { cx } from './Button';
 import { Textarea } from './Field';
@@ -38,8 +38,57 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
 
 export const renderMarkdown = (src: string) => DOMPurify.sanitize(marked.parse(src, { async: false }) as string);
 
-export function Markdown({ source, className }: { source: string; className?: string }) {
-  const html = useMemo(() => renderMarkdown(source), [source]);
+const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+
+/**
+ * Markdown for text from someone nobody verified. It must not be able to change the app around it or make the browser
+ * fetch anything, so HTML typed into the text stays visible as text, an image becomes a link to it, and a task list
+ * keeps its marks as text. References stay plain text: internal links are not accepted here. The result is not a faithful
+ * copy, since Markdown itself can drop parts of a text, so a page that shows such text for a decision opens the exact text.
+ */
+const untrustedMarked = new Marked({
+  gfm: true,
+  breaks: true,
+  renderer: {
+    html({ text, block }) {
+      return block ? `<p>${escapeHtml(text)}</p>\n` : escapeHtml(text);
+    },
+    // After an inline <kbd>, <code>, <pre> or <script> marked treats what follows as already escaped, so a tag left open
+    // there would swallow the text up to its closing quote. The default renderer escapes it once the flag is off.
+    text(token) {
+      if ('escaped' in token) token.escaped = false;
+      return false;
+    },
+    // A link definition renders nothing by default, which would make it a place to hide text.
+    def({ raw }) {
+      return `<p>${escapeHtml(raw)}</p>\n`;
+    },
+    image({ href, title, text, tokens }) {
+      const alt = tokens ? this.parser.parseInline(tokens, this.parser.textRenderer) : text;
+      return `<a href="${escapeHtml(href)}"${title ? ` title="${escapeHtml(title)}"` : ''}>${escapeHtml(alt || href)}</a>`;
+    },
+    checkbox({ checked }) {
+      return checked ? '[x] ' : '[ ] ';
+    },
+  },
+});
+
+/** The second line of defence: whatever the renderer lets through, only text elements and plain links remain. */
+const UNTRUSTED_HTML = {
+  ALLOWED_TAGS: [
+    'p', 'br', 'strong', 'em', 'del', 'code', 'pre', 'blockquote', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr',
+    'table', 'thead', 'tbody', 'tr', 'th', 'td', 'a',
+  ],
+  ALLOWED_ATTR: ['href', 'title'],
+  ALLOWED_URI_REGEXP: /^(?:https?|mailto):/i,
+  ALLOW_DATA_ATTR: false,
+  ALLOW_ARIA_ATTR: false,
+};
+
+const renderUntrustedMarkdown = (src: string) => DOMPurify.sanitize(untrustedMarked.parse(src, { async: false }) as string, UNTRUSTED_HTML);
+
+export function Markdown({ source, className, untrusted }: { source: string; className?: string; untrusted?: boolean }) {
+  const html = useMemo(() => (untrusted ? renderUntrustedMarkdown(source) : renderMarkdown(source)), [source, untrusted]);
   return <div className={cx('t-md', className)} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 

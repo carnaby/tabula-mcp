@@ -17,6 +17,7 @@ const TYPE: Record<RecordType, { icon: IconName; label: string }> = {
   thought: { icon: 'lightbulb', label: 'Thought' },
   file: { icon: 'fileText', label: 'File' },
   attachment: { icon: 'paperclip', label: 'Attachment' },
+  message: { icon: 'mail', label: 'Message' },
 };
 
 /** One record a reference leads to, as a card; tapping it opens the record by its full reference. */

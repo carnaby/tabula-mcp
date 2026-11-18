@@ -11,7 +11,7 @@ import { Alert } from '../ui';
 
 /** Home reloads every minute and when the window regains focus (useQuery), like the worker indicator. */
 export function HomePage({ projects }: { projects: Project[] | undefined }) {
-  const dash = useQuery((s) => api.dashboard(TZ, s), [], { topics: ['reports', 'files', 'projects', 'memories'] });
+  const dash = useQuery((s) => api.dashboard(TZ, s), [], { topics: ['reports', 'files', 'projects', 'memories', 'messages'] });
   useInterval(dash.reload, REFRESH_MS);
 
   return (

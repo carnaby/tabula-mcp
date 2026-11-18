@@ -1,9 +1,10 @@
 import { sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
-import { AGENT_READ_ONLY, badRequest, forbidden, notFound } from '../domain/errors.js';
+import { AGENT_READ_ONLY, badRequest, DomainError, forbidden, notFound } from '../domain/errors.js';
 import { getFile, listFiles, type ProjectFile } from '../domain/files.js';
 import { isRecording, type TranscriptState, transcriptStates } from '../domain/jobs.js';
 import { createMemory, deprecateMemory, type Memory } from '../domain/memories.js';
+import { findMessageByRef } from '../domain/messages.js';
 import { findNotes, type Note, type NoteHit } from '../domain/notes.js';
 import { listProjects, type ProjectSummary } from '../domain/projects.js';
 import { recall } from '../domain/recall.js';
@@ -216,7 +217,16 @@ export const agentSearch = async (ctx: AgentContext, p: SearchParams): Promise<A
 
 /** Any record by reference, uuid or short id; the first block always says what it is. */
 export async function agentGet(ctx: AgentContext, id: string): Promise<AgentBlock[]> {
-  const r = await resolveRecord(ctx.db, id);
+  let r: ResolvedRecord;
+  try {
+    r = await resolveRecord(ctx.db, id);
+  } catch (e) {
+    if (!(e instanceof DomainError) || e.code !== 'not_found') throw e;
+    // Message text never travels through get: only the dedicated tool shows it, with its warning.
+    const message = await findMessageByRef(ctx.db, id);
+    if (!message) throw e;
+    return [textBlock(`${refOf(message.id)} is an Inbox message; read it with get_message.`)];
+  }
   const head = textBlock(recordHeadline(r));
   switch (r.type) {
     case 'memory':

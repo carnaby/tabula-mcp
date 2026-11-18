@@ -138,6 +138,22 @@ describe('what the narrow token never opens', () => {
     expect((await call('PATCH', `${base}/${message.id}`, { expected_version: 2, reply: 'Late' })).statusCode).toBe(403);
   });
 
+  it.each([
+    ['in_progress', { status: 'in_progress' }],
+    ['waiting for the sender', { status: 'waiting', waiting_on: 'sender' }],
+  ])('refuses to move a message waiting for the author to %s', async (_name, change) => {
+    await updateMessage(db, message.id, { expectedVersion: 1, status: 'waiting', waitingOn: 'author' }, { source: 'human', label: 'human', access: 'full' });
+    expect((await call('PATCH', `${base}/${message.id}`, { expected_version: 2, ...change })).statusCode).toBe(403);
+    expect(await getMessage(db, message.id)).toMatchObject({ status: 'waiting', waitingOn: 'author', version: 2 });
+  });
+
+  it('still replies to a message waiting for the author, which keeps waiting', async () => {
+    await updateMessage(db, message.id, { expectedVersion: 1, status: 'waiting', waitingOn: 'author' }, { source: 'human', label: 'human', access: 'full' });
+    const res = await call('PATCH', `${base}/${message.id}`, { expected_version: 2, reply: 'One more detail' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ status: 'waiting', waiting_on: 'author', version: 3 });
+  });
+
   it('has no way to create or delete', async () => {
     expect((await call('POST', base, { to: 'beta' })).statusCode).toBe(404);
     expect((await call('DELETE', `${base}/${message.id}`)).statusCode).toBe(404);

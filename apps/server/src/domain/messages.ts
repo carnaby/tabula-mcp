@@ -96,6 +96,10 @@ export async function updateMessage(db: Db, id: string, patch: MessagePatch, act
     if (actor.access === 'inbox') {
       if (wasClosed) throw forbidden('a closed message cannot be changed with an inbox token');
       if (patch.status && !INBOX_TOKEN_STATUSES.includes(patch.status)) throw forbidden('an inbox token can only set in_progress or waiting');
+      // Only the author takes a message out of "waiting for the author"; until then a token can add a reply.
+      if (patch.status && cur.status === 'waiting' && cur.waitingOn === 'author') {
+        throw forbidden('an inbox token cannot change the status of a message waiting for the author');
+      }
     }
     if (patch.expectedVersion !== cur.version) {
       throw conflict(`message was changed meanwhile (now version ${cur.version}, you read ${patch.expectedVersion}). Read it again.`);

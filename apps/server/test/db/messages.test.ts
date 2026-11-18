@@ -132,6 +132,32 @@ describe('updateMessage', () => {
     const foreign = await send({ to: 'alpha', from: 'beta' });
     await expect(move(foreign, { reply: 'Hi' }, narrow)).rejects.toMatchObject({ code: 'not_found' });
   });
+
+  it.each([
+    ['in progress', { status: 'in_progress' as const }],
+    ['in progress with a reply', { status: 'in_progress' as const, reply: 'Taking it' }],
+    ['waiting for the sender', { status: 'waiting' as const, waitingOn: 'sender' as const }],
+  ])('does not let a narrow token move a message waiting for the author to %s', async (_name, patch) => {
+    const m = await move(await send(), { status: 'waiting', waitingOn: 'author' });
+    await expect(move(m, patch, narrow)).rejects.toMatchObject({ code: 'forbidden' });
+    expect(await getMessage(db, m.id)).toMatchObject({ status: 'waiting', waitingOn: 'author', version: m.version });
+    expect(await listMessageEvents(db, m.id)).toHaveLength(2);
+  });
+
+  it('lets a narrow token reply to a message waiting for the author, which keeps waiting', async () => {
+    const m = await move(await send(), { status: 'waiting', waitingOn: 'author' });
+    expect(await move(m, { reply: 'One more detail' }, narrow)).toMatchObject({ status: 'waiting', waitingOn: 'author', version: m.version + 1 });
+  });
+
+  it('lets a narrow token move a message waiting for the sender', async () => {
+    const m = await move(await send(), { status: 'waiting', waitingOn: 'sender' });
+    expect(await move(m, { status: 'in_progress' }, narrow)).toMatchObject({ status: 'in_progress', waitingOn: null });
+  });
+
+  it('lets full access move a message waiting for the author', async () => {
+    const m = await move(await send(), { status: 'waiting', waitingOn: 'author' });
+    expect(await move(m, { status: 'in_progress' })).toMatchObject({ status: 'in_progress', waitingOn: null });
+  });
 });
 
 describe('reading', () => {

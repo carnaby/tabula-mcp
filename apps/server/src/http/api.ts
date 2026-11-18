@@ -14,7 +14,8 @@ import {
   createThought, deleteThought, getThought, HUMAN, listRevisions, pageThoughts, restoreRevision, THOUGHT_SORTS,
   thoughtTags, updateThought,
 } from '../domain/thoughts.js';
-import { AmbiguousRefError, refTarget, resolveRecord } from '../domain/records.js';
+import { AmbiguousRefError } from '../domain/records.js';
+import { resolveForUi } from '../domain/ref-targets.js';
 import { claudeMdSection, TABULA_JSON } from '../mcp/snippet.js';
 import { recall } from '../domain/recall.js';
 import { DIGEST_BUDGET, estimateTokens, wordCount } from '../domain/tokens.js';
@@ -23,6 +24,7 @@ import { requireBearer } from './auth.js';
 import { fileRoutes } from './files-api.js';
 import { reportRoutes } from './reports-api.js';
 import { homeRoutes } from './home-api.js';
+import { messageRoutes } from './messages-api.js';
 import type { MediaStore } from '../media/store.js';
 import { parse } from './parse.js';
 
@@ -45,6 +47,7 @@ export const apiRoutes: FastifyPluginAsync<{ db: Db; config: Config; store: Medi
   await app.register(fileRoutes, { db });
   await app.register(reportRoutes, { db, config, store });
   await app.register(homeRoutes, { db, config });
+  await app.register(messageRoutes, { db });
 
   // Projects
   app.get('/projects', () => listProjects(db));
@@ -200,7 +203,7 @@ export const apiRoutes: FastifyPluginAsync<{ db: Db; config: Config; store: Medi
   app.get('/resolve/:ref', async (req, reply) => {
     const { ref } = parse(z.object({ ref: z.string() }), req.params);
     try {
-      return refTarget(await resolveRecord(db, ref));
+      return await resolveForUi(db, ref);
     } catch (e) {
       if (e instanceof AmbiguousRefError) return reply.code(400).send({ error: e.code, message: e.message, candidates: e.candidates });
       throw e;

@@ -367,3 +367,76 @@ export const settings = pgTable('settings', {
   value: jsonb('value').$type<unknown>().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const messageType = pgEnum('message_type', ['request', 'report']);
+export const messageStatus = pgEnum('message_status', ['new', 'in_progress', 'waiting', 'done', 'rejected']);
+export const messageWaitingOn = pgEnum('message_waiting_on', ['author', 'sender']);
+
+/**
+ * Inbox: messages between projects. What was sent never changes (a trigger enforces it); only the state moves.
+ * Kept apart from recall and search so that text written by another agent never reaches an unrelated session.
+ */
+export const messages = pgTable(
+  'messages',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    toProject: text('to_project').notNull().references(() => projects.id, { onDelete: 'restrict' }),
+    /** Declared by the sender; nothing verifies it. */
+    fromProject: text('from_project').notNull().references(() => projects.id, { onDelete: 'restrict' }),
+    type: messageType('type').notNull(),
+    title: text('title').notNull(),
+    body: text('body').notNull(),
+    relatedTo: uuid('related_to').references((): AnyPgColumn => messages.id, { onDelete: 'set null' }),
+    status: messageStatus('status').notNull().default('new'),
+    waitingOn: messageWaitingOn('waiting_on'),
+    version: integer('version').notNull().default(1),
+    source: memorySource('source').notNull(),
+    createdBy: text('created_by').notNull(),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+    ...timestamps,
+  },
+  (t) => [
+    index('messages_to_status_idx').on(t.toProject, t.status),
+    index('messages_from_status_idx').on(t.fromProject, t.status),
+    index('messages_updated_idx').on(t.updatedAt),
+    check('messages_title_len', sql`char_length(${t.title}) between 1 and 200`),
+    check('messages_body_len', sql`char_length(${t.body}) between 1 and 50000`),
+    check('messages_waiting_on', sql`(${t.status} = 'waiting') = (${t.waitingOn} IS NOT NULL)`),
+  ],
+);
+
+/** The history of a message, one entry per version; entries are never changed. */
+export const messageEvents = pgTable(
+  'message_events',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    messageId: uuid('message_id').notNull().references(() => messages.id, { onDelete: 'cascade' }),
+    at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+    source: memorySource('source').notNull(),
+    actor: text('actor').notNull(),
+    version: integer('version').notNull(),
+    fromStatus: messageStatus('from_status'),
+    toStatus: messageStatus('to_status'),
+    waitingOn: messageWaitingOn('waiting_on'),
+    reply: text('reply'),
+  },
+  (t) => [
+    uniqueIndex('message_events_version_idx').on(t.messageId, t.version),
+    check('message_events_reply_len', sql`char_length(${t.reply}) <= 20000`),
+  ],
+);
+
+/** Narrow tokens: each opens only the Inbox of one project. The value itself is never stored. */
+export const messageTokens = pgTable(
+  'message_tokens',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'restrict' }),
+    name: text('name').notNull(),
+    tokenSha256: text('token_sha256').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  },
+  (t) => [uniqueIndex('message_tokens_sha256_idx').on(t.tokenSha256)],
+);

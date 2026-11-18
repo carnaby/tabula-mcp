@@ -1,11 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api, ApiError } from '../api';
 import { TimeAgo } from '../features/common';
 import { CopyRefButton } from '../features/CopyRefButton';
 import { EditorBar } from '../features/EditorBar';
 import { MESSAGE_TONE, statusText } from '../features/inbox/InboxList';
 import { PageHeader } from '../features/PageHeader';
-import { invalidate, useQuery } from '../hooks/data';
+import { invalidate, useQuery, useUnsavedGuard } from '../hooks/data';
 import { backTarget, href, navigate } from '../router';
 import {
   MESSAGE_STATUS_LABEL, MESSAGE_WAITING_LABEL, type MessageDetail, type MessageEvent, type MessagePatch, type Project,
@@ -13,6 +13,8 @@ import {
 import { Alert, Badge, Button, ButtonLink, EmptyState, Field, IconButton, Markdown, Select, Skeleton, Textarea, useConfirm, useToast } from '../ui';
 
 type Action = 'reply' | 'in_progress' | 'wait_author' | 'wait_sender' | 'done' | 'rejected';
+/** What the owner picked, and on which version: a choice made on one state of the message says nothing about the next. */
+type Choice = { action: Action; version: number };
 
 const PATCH: Record<Action, Pick<MessagePatch, 'status' | 'waiting_on'>> = {
   reply: {},
@@ -23,9 +25,12 @@ const PATCH: Record<Action, Pick<MessagePatch, 'status' | 'waiting_on'>> = {
   rejected: { status: 'rejected' },
 };
 
-function actionsFor(m: MessageDetail): { value: Action; label: string }[] {
-  if (m.status === 'done' || m.status === 'rejected') {
+const isClosed = (m: MessageDetail) => m.status === 'done' || m.status === 'rejected';
+
+function actionsFor(m: MessageDetail): { value: Action | ''; label: string }[] {
+  if (isClosed(m)) {
     return [
+      { value: '', label: 'Choose how to reopen' },
       { value: 'in_progress', label: 'Reopen: in progress' },
       { value: 'wait_author', label: 'Reopen: waiting for you' },
       { value: 'wait_sender', label: 'Reopen: waiting for the sender' },
@@ -50,34 +55,48 @@ function eventText(e: MessageEvent): string {
 
 export function MessagePage({ id, from, projects }: { id: string; from?: string; projects: Project[] | undefined }) {
   const back = backTarget(from, href.inbox(), projects);
-  const loaded = useQuery((s) => api.message(id, s), [id], { topics: ['messages'] });
   const notify = useToast();
   const { confirm } = useConfirm();
   const [reply, setReply] = useState('');
-  const [picked, setPicked] = useState<Action>('reply');
+  const [choice, setChoice] = useState<Choice | null>(null);
   const [busy, setBusy] = useState(false);
+  const text = reply.trim();
+  // While the owner is writing or has chosen, the message does not change under them when the window regains focus.
+  const loaded = useQuery((s) => api.message(id, s), [id], { topics: ['messages'], refetchOnFocus: !text && !choice });
   const m = loaded.data;
+  const error = loaded.error;
+  const gone = error instanceof ApiError && error.status === 404;
+  const guard = useUnsavedGuard(!!text && !gone);
 
-  if (loaded.error && !m) {
+  useEffect(() => {
+    if (m && choice && choice.version !== m.version) setChoice(null);
+  }, [m, choice]);
+
+  if (gone || (error && !m)) {
     return (
       <main className="content">
-        <EmptyState icon="alert" title="Message not found" action={<ButtonLink href={back.href}>{back.label}</ButtonLink>}>{loaded.error.message}</EmptyState>
+        <EmptyState icon="alert" title={gone ? 'Message not found' : 'Could not load the message'} action={<ButtonLink href={back.href}>{back.label}</ButtonLink>}>
+          {gone ? 'It may have been deleted.' : error?.message}
+        </EmptyState>
       </main>
     );
   }
   if (!m) return <main className="content"><Skeleton height={36} width="50%" /><Skeleton height={240} /></main>;
 
-  const options = actionsFor(m);
-  const action = options.some((o) => o.value === picked) ? picked : options[0]!.value;
-  const text = reply.trim();
-  const canSend = action === 'rejected' ? !!text : action !== 'reply' || !!text;
+  const closed = isClosed(m);
+  const chosen = choice?.version === m.version ? choice.action : null;
+  // Nothing is sent by default except the reply itself: a closed message waits for the owner's choice.
+  const action: Action | '' = chosen ?? (closed ? '' : 'reply');
+  const canSend = action === 'reply' || action === 'rejected' ? !!text : action !== '';
 
   const send = async () => {
+    if (action === '') return;
     setBusy(true);
     try {
       await api.updateMessage(m.id, { expected_version: m.version, ...(text && { reply: text }), ...PATCH[action] });
+      guard.current = false;
       setReply('');
-      setPicked('reply');
+      setChoice(null);
       invalidate('messages');
     } catch (e) {
       const changed = e instanceof ApiError && e.status === 409;
@@ -93,6 +112,8 @@ export function MessagePage({ id, from, projects }: { id: string; from?: string;
     if (!ok) return;
     try {
       await api.deleteMessage(m.id);
+      guard.current = false;
+      setReply('');
       invalidate('messages');
       navigate(back.href);
     } catch (e) {
@@ -101,13 +122,14 @@ export function MessagePage({ id, from, projects }: { id: string; from?: string;
   };
 
   return (
-    <main className="content">
+    <main className="content message-page">
       <EditorBar back={back} meta={<span className="t-subtle">Updated <TimeAgo iso={m.updated_at} /></span>}>
         <CopyRefButton id={m.id} />
         <IconButton icon="trash" label="Delete message" onClick={() => void remove()} />
       </EditorBar>
 
       <div className="t-stack">
+        {error && <Alert tone="danger">Could not refresh this message, so it may be out of date: {error.message}</Alert>}
         <PageHeader title={m.title} chip={<Badge tone={MESSAGE_TONE[m.status]}>{statusText(m)}</Badge>} />
         <div className="report-card__meta">
           <span className="t-subtle">From (declared)</span>
@@ -118,30 +140,35 @@ export function MessagePage({ id, from, projects }: { id: string; from?: string;
           {m.related_to && <a href={href.message(m.related_to)}>Related message</a>}
         </div>
 
-        <div className="t-card message-body"><Markdown source={m.body} /></div>
+        <div className="t-card message-body"><Markdown untrusted source={m.body} /></div>
 
         <h2>History</h2>
         <ol className="message-history">
           {m.events.map((e) => (
             <li key={e.version} className="t-card message-history__item">
               <div className="message-history__meta">
-                <strong>{e.actor}</strong>
+                <strong>{e.source === 'human' ? 'You' : e.actor}</strong>
                 <span>{eventText(e)}</span>
                 <span className="t-spacer" />
                 <span className="t-subtle"><TimeAgo iso={e.at} /></span>
               </div>
-              {e.reply && <Markdown source={e.reply} />}
+              {e.reply && <Markdown untrusted source={e.reply} />}
             </li>
           ))}
         </ol>
 
         <section className="t-card message-reply" aria-label="Reply">
-          {(m.status === 'done' || m.status === 'rejected') && <Alert>This message is closed. Reopen it to continue.</Alert>}
+          {closed && <Alert>This message is closed. Reopen it to continue.</Alert>}
           <Field label="Reply">
-            {(fid) => <Textarea id={fid} rows={4} value={reply} onChange={(e) => setReply(e.target.value)} />}
+            {(fid) => <Textarea id={fid} rows={4} value={reply} disabled={busy} onChange={(e) => setReply(e.target.value)} />}
           </Field>
           <div className="message-reply__actions">
-            <Select aria-label="Status" value={action} onChange={setPicked} options={options} />
+            <Select
+              aria-label="Status"
+              value={action}
+              onChange={(v) => setChoice(v === '' || v === 'reply' ? null : { action: v, version: m.version })}
+              options={actionsFor(m)}
+            />
             <Button variant="primary" icon="check" loading={busy} disabled={!canSend} onClick={() => void send()}>Save</Button>
           </div>
         </section>

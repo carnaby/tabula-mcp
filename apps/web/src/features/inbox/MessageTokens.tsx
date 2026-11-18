@@ -49,7 +49,7 @@ export function MessageTokens({ projects }: { projects: Project[] | undefined })
   return (
     <section className="t-card message-tokens" aria-labelledby="inbox-tokens">
       <h2 id="inbox-tokens">Inbox tokens</h2>
-      <p className="t-subtle">A token reads the open messages of one project and can reply or set In progress and Waiting. It opens nothing else in Tabula.</p>
+      <p className="t-subtle">A token lists the open messages of one project and can read any message of that project by its id. It can reply to open messages and set them In progress or Waiting. It opens nothing else in Tabula.</p>
       <div className="message-tokens__form">
         <Field label="Project">
           {(id) => <ProjectSelect id={id} projects={projects?.filter((p) => p.id !== 'global')} value={project} onChange={setProject} placeholder />}

@@ -83,3 +83,14 @@ BEGIN
 END $$;
 --> statement-breakpoint
 CREATE TRIGGER message_events_append_only BEFORE UPDATE ON message_events FOR EACH ROW EXECUTE FUNCTION message_events_append_only();
+--> statement-breakpoint
+CREATE FUNCTION message_events_no_direct_delete() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  -- Depth 1 is a DELETE on this table itself; the cascade from messages runs one level deeper.
+  IF pg_trigger_depth() < 2 THEN
+    RAISE EXCEPTION 'message history cannot be changed';
+  END IF;
+  RETURN OLD;
+END $$;
+--> statement-breakpoint
+CREATE TRIGGER message_events_no_direct_delete BEFORE DELETE ON message_events FOR EACH ROW EXECUTE FUNCTION message_events_no_direct_delete();

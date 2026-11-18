@@ -61,6 +61,7 @@ describe('message tables', () => {
     const m = await insertMessage();
     await db.insert(messageEvents).values({ messageId: m.id, source: 'agent', actor: 'test', version: 1, toStatus: 'new' });
     await expect(db.execute(sql`UPDATE message_events SET actor = 'other' WHERE message_id = ${m.id}`)).rejects.toMatchObject(refused);
+    await expect(db.execute(sql`DELETE FROM message_events WHERE message_id = ${m.id}`)).rejects.toMatchObject(refused);
     await db.delete(messages).where(eq(messages.id, m.id));
     expect(await db.select().from(messageEvents)).toHaveLength(0);
   });

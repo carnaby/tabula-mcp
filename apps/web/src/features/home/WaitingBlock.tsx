@@ -147,7 +147,11 @@ function WaitingRow({
               : <Badge tone={TRANSCRIPT[w.transcript].tone}>{TRANSCRIPT[w.transcript].label}</Badge>
           )}
           {w.type === 'transcription_failed' && <span className="t-subtle t-truncate" title={w.error ?? undefined}>{w.file_name}</span>}
-          {w.type === 'message_waiting' && w.from && <span className="t-subtle t-truncate" title="Declared by the sender, not verified">from {w.from}</span>}
+          {w.type === 'message_waiting' && w.from && (
+            <span className="waiting-row__from t-subtle" title="Declared by the sender, not verified">
+              <span className="t-truncate">from {w.from}</span> <span className="t-nowrap">(declared)</span>
+            </span>
+          )}
           <time className="t-subtle t-nowrap" dateTime={w.since} title={fullDate(w.since)}>{age(w.since)}</time>
         </div>
       </div>

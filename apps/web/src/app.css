@@ -830,6 +830,8 @@ span.transcript__time { color: var(--text-subtle); }
 .waiting-row__title:hover { text-decoration: underline; }
 .waiting-row__meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; font-size: var(--text-sm); }
 .waiting-row__kind { color: var(--text-muted); }
+.waiting-row__from { display: inline-flex; gap: 0.3em; min-width: 0; max-width: 100%; }
+.waiting-row__from > .t-nowrap { flex: none; }
 .waiting-row__actions { display: flex; gap: 6px; flex: none; }
 
 .copy-preview { display: grid; gap: 4px; margin-top: 12px; }

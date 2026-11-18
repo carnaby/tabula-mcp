@@ -70,7 +70,7 @@ export function InboxList({ projects }: { projects: Project[] | undefined }) {
                 <Badge tone={MESSAGE_TONE[m.status]}>{statusText(m)}</Badge>
               </div>
               <div className="report-card__meta">
-                <Badge tone="outline" title="Declared by the sender, not verified">{m.from}</Badge>
+                <Badge tone="outline" title="Declared by the sender, not verified">from {m.from} (declared)</Badge>
                 <span className="t-subtle">to</span>
                 <Badge tone="outline" icon="folder">{m.to}</Badge>
                 <Badge>{m.type === 'request' ? 'Request' : 'Report'}</Badge>

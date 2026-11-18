@@ -43,7 +43,8 @@ const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt
 /**
  * Markdown for text from someone nobody verified. It must not be able to change the app around it or make the browser
  * fetch anything, so HTML typed into the text stays visible as text, an image becomes a link to it, and a task list
- * keeps its marks as text. References stay plain text: internal links are not accepted here.
+ * keeps its marks as text. References stay plain text: internal links are not accepted here. Nothing may vanish either:
+ * the owner decides from this view while agents read the raw text.
  */
 const untrustedMarked = new Marked({
   gfm: true,
@@ -51,6 +52,16 @@ const untrustedMarked = new Marked({
   renderer: {
     html({ text, block }) {
       return block ? `<p>${escapeHtml(text)}</p>\n` : escapeHtml(text);
+    },
+    // After an inline <kbd>, <code>, <pre> or <script> marked treats what follows as already escaped, so a tag left open
+    // there would swallow the text up to its closing quote. The default renderer escapes it once the flag is off.
+    text(token) {
+      if ('escaped' in token) token.escaped = false;
+      return false;
+    },
+    // A link definition renders nothing by default, which would make it a place to hide text.
+    def({ raw }) {
+      return `<p>${escapeHtml(raw)}</p>\n`;
     },
     image({ href, title, text, tokens }) {
       const alt = tokens ? this.parser.parseInline(tokens, this.parser.textRenderer) : text;

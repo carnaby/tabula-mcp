@@ -4,13 +4,14 @@ import { TimeAgo } from '../features/common';
 import { CopyRefButton } from '../features/CopyRefButton';
 import { EditorBar } from '../features/EditorBar';
 import { MESSAGE_TONE, statusText } from '../features/inbox/InboxList';
+import { MessageText } from '../features/inbox/MessageText';
 import { PageHeader } from '../features/PageHeader';
 import { invalidate, useQuery, useUnsavedGuard } from '../hooks/data';
 import { backTarget, href, navigate } from '../router';
 import {
   MESSAGE_STATUS_LABEL, MESSAGE_WAITING_LABEL, type MessageDetail, type MessageEvent, type MessagePatch, type Project,
 } from '../types';
-import { Alert, Badge, Button, ButtonLink, EmptyState, Field, IconButton, Markdown, Select, Skeleton, Textarea, useConfirm, useToast } from '../ui';
+import { Alert, Badge, Button, ButtonLink, EmptyState, Field, IconButton, Select, Skeleton, Textarea, useConfirm, useToast } from '../ui';
 
 type Action = 'reply' | 'in_progress' | 'wait_author' | 'wait_sender' | 'done' | 'rejected';
 /** What the owner picked, and on which version: a choice made on one state of the message says nothing about the next. */
@@ -140,7 +141,7 @@ export function MessagePage({ id, from, projects }: { id: string; from?: string;
           {m.related_to && <a href={href.message(m.related_to)}>Related message</a>}
         </div>
 
-        <div className="t-card message-body"><Markdown untrusted source={m.body} /></div>
+        <div className="t-card message-body"><MessageText text={m.body} /></div>
 
         <h2>History</h2>
         <ol className="message-history">
@@ -152,7 +153,7 @@ export function MessagePage({ id, from, projects }: { id: string; from?: string;
                 <span className="t-spacer" />
                 <span className="t-subtle"><TimeAgo iso={e.at} /></span>
               </div>
-              {e.reply && <Markdown untrusted source={e.reply} />}
+              {e.reply && <MessageText text={e.reply} />}
             </li>
           ))}
         </ol>

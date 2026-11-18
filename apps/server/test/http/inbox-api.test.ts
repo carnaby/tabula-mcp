@@ -50,6 +50,7 @@ describe('narrow token issuing', () => {
     await expect(createMessageToken(db, { projectId: 'beta', name: 'Bad Name' })).rejects.toMatchObject({ code: 'bad_request' });
     await expect(createMessageToken(db, { projectId: 'nope', name: 'x' })).rejects.toMatchObject({ code: 'not_found' });
     await expect(createMessageToken(db, { projectId: 'global', name: 'x' })).rejects.toMatchObject({ code: 'bad_request' });
+    await expect(createMessageToken(db, { projectId: `a${String.fromCharCode(0)}b`, name: 'x' })).rejects.toMatchObject({ code: 'bad_request' });
   });
 
   it('never writes the token to the log', async () => {

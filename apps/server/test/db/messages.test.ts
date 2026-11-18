@@ -44,6 +44,8 @@ describe('createMessage', () => {
     ['long body', { body: 'x'.repeat(50_001) }],
     ['NUL in title', { title: `a${NUL}b` }],
     ['NUL in body', { body: `a${NUL}b` }],
+    ['NUL in the recipient', { to: `a${NUL}b` }],
+    ['NUL in the sender', { from: `a${NUL}b` }],
   ])('refuses %s', async (_name, over) => {
     await expect(send(over)).rejects.toMatchObject({ code: 'bad_request' });
   });

@@ -7,6 +7,7 @@ import {
   pageMessages, requireMessage, updateMessage,
 } from '../domain/messages.js';
 import { MAX_PAGE_SIZE } from '../domain/paging.js';
+import { rejectNul } from '../domain/validation.js';
 import { messagePatchBody, toMessagePatch } from './message-body.js';
 import { parse } from './parse.js';
 
@@ -27,6 +28,8 @@ export const messageRoutes: FastifyPluginAsync<{ db: Db }> = async (app, { db })
       }),
       req.query,
     );
+    if (q.to) rejectNul(q.to, 'to');
+    if (q.from) rejectNul(q.from, 'from');
     const page = await pageMessages(db, q);
     return { ...page, items: page.items.map(messageSummaryView) };
   });

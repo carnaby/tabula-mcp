@@ -57,6 +57,7 @@ function checkLimit(value: string, field: 'title' | 'body' | 'reply'): void {
 }
 
 async function checkProject(db: Db, id: string, field: 'to' | 'from'): Promise<void> {
+  rejectNul(id, field);
   if (id === 'global') throw badRequest(`${field} must be a project, not "global"`);
   await requireProject(db, id);
 }

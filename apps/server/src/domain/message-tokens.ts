@@ -4,6 +4,7 @@ import type { Db } from '../db/client.js';
 import { messageTokens } from '../db/schema.js';
 import { badRequest, notFound } from './errors.js';
 import { requireProject } from './projects.js';
+import { rejectNul } from './validation.js';
 
 const PREFIX = 'tabula_inbox_';
 const NAME = /^[a-z0-9-]{1,60}$/;
@@ -28,6 +29,7 @@ export type MessageTokenView = ReturnType<typeof view>;
 /** The only moment the value exists outside the caller's hands: it is returned once and never stored. */
 export async function createMessageToken(db: Db, input: { projectId: string; name: string }): Promise<{ token: MessageTokenView; value: string }> {
   if (!NAME.test(input.name)) throw badRequest('name must be 1 to 60 lowercase letters, digits or dashes');
+  rejectNul(input.projectId, 'project');
   if (input.projectId === 'global') throw badRequest('a token belongs to a project, not to "global"');
   await requireProject(db, input.projectId);
   const value = `${PREFIX}${randomBytes(32).toString('base64url')}`;

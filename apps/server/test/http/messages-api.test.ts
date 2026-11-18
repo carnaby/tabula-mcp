@@ -66,9 +66,14 @@ describe('/api/messages', () => {
   });
 
   it('never changes the sent text', async () => {
-    const res = await call('PATCH', `/api/messages/${message.id}`, { expected_version: 1, body: 'New', title: 'New' });
+    // The reply makes the patch valid otherwise, so only the strict schema can refuse it.
+    const res = await call('PATCH', `/api/messages/${message.id}`, { expected_version: 1, reply: 'x', body: 'New', title: 'New' });
     expect(res.statusCode).toBe(400);
-    expect(await getMessage(db, message.id)).toMatchObject({ body: 'Text', title: 'Open a port' });
+    expect(await getMessage(db, message.id)).toMatchObject({ body: 'Text', title: 'Open a port', version: 1 });
+  });
+
+  it.each(['to', 'from'])('answers 400 for a NUL in %s', async (field) => {
+    expect((await call('GET', `/api/messages?${field}=%00`)).statusCode).toBe(400);
   });
 
   it('answers a stale version with 409', async () => {
@@ -98,6 +103,10 @@ describe('/api/message-tokens', () => {
     expect((await call('DELETE', `/api/message-tokens/${token.id}`)).json().revoked_at).toEqual(expect.any(String));
     expect((await app.inject({ method: 'GET', url: '/inbox-api/v1/messages', headers: { authorization: `Bearer ${value}` } })).statusCode).toBe(401);
     expect((await call('GET', '/api/message-tokens')).json()).toHaveLength(1);
+  });
+
+  it('answers 400 for a NUL in the project', async () => {
+    expect((await call('POST', '/api/message-tokens', { project: `a${String.fromCharCode(0)}b`, name: 'reader' })).statusCode).toBe(400);
   });
 });
 

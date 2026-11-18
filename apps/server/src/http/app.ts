@@ -8,6 +8,7 @@ import { DomainError, loggableError } from '../domain/errors.js';
 import { registerMcpRoutes } from '../mcp/routes.js';
 import { apiRoutes } from './api.js';
 import { registerCliRoutes } from './cli.js';
+import { inboxApiRoutes } from './inbox-api.js';
 import { MediaStore } from '../media/store.js';
 import { registerMediaRoute } from './reports-api.js';
 
@@ -65,6 +66,7 @@ export async function buildApp(deps: {
   registerMcpRoutes(app, { ...deps, store });
   registerMediaRoute(app, { db: deps.db, config: deps.config, store });
   await app.register(apiRoutes, { prefix: '/api', db: deps.db, config: deps.config, store });
+  await app.register(inboxApiRoutes, { prefix: '/inbox-api/v1', db: deps.db });
 
   const webRoot = resolve(deps.config.webDist);
   if (existsSync(webRoot)) {

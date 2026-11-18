@@ -1,3 +1,4 @@
+import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { messages } from '../../src/db/schema.js';
 import {
@@ -174,9 +175,12 @@ describe('reading', () => {
     expect(first.items.map((m) => m.id)).toEqual([a.id, b.id]);
     expect(first.truncated).toBe(false);
     expect(first.nextSince.getTime()).toBe(now.getTime() - 5000);
-    await move(a, { reply: 'Changed' });
-    const later = await inboxFeed(db, 'beta', new Date(Date.now() - 1000));
-    expect(later.items.map((m) => m.id)).toContain(a.id);
+    // Backdated, so only the change itself can bring the message back into the feed.
+    await db.update(messages).set({ updatedAt: new Date(Date.now() - 3_600_000) }).where(eq(messages.id, a.id));
+    const since = new Date(Date.now() - 60_000);
+    expect((await inboxFeed(db, 'beta', since)).items.map((m) => m.id)).not.toContain(a.id);
+    await move((await getMessage(db, a.id))!, { reply: 'Changed' });
+    expect((await inboxFeed(db, 'beta', since)).items.map((m) => m.id)).toContain(a.id);
     const none = await inboxFeed(db, 'beta', new Date(Date.now() + 60_000));
     expect(none.items).toEqual([]);
   });

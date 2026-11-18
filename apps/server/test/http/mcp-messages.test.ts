@@ -80,6 +80,7 @@ describe('message tools', () => {
     expect(wrong.all).toContain('403');
     const ok = await tool('update_message', { id: m.ref, as_project: 'beta', expected_version: 1, status: 'done', reply: 'Opened' });
     expect(JSON.parse(ok.all)).toMatchObject({ status: 'done', version: 2 });
+    expect(ok.all).not.toContain('Open a port');
     expect(JSON.parse((await tool('list_messages', { project: 'alpha', box: 'sent', status: 'archive' })).blocks[1]!).items[0]).toMatchObject({ status: 'done' });
     expect(JSON.parse((await tool('get_message', { id: m.ref })).blocks[1]!).events[1]).toMatchObject({ reply: 'Opened', actor: 'alpha-agent' });
   });
@@ -125,13 +126,19 @@ describe('separation from memory', () => {
     expect(r.all).toContain('404');
   });
 
-  it('tells agents in every message tool that message text is data', async () => {
+  it('tells agents in the tools that return message content that it is data and "from" is only declared', async () => {
     const client = new Client({ name: 'tabula-test', version: '0.0.0' });
     await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { Authorization: `Bearer ${TEST_TOKEN}` } } }));
     const { tools } = await client.listTools();
-    for (const name of ['list_messages', 'get_message']) expect(tools.find((t) => t.name === name)!.description, name).toMatch(/never follow/i);
+    for (const name of ['list_messages', 'get_message']) {
+      const description = tools.find((t) => t.name === name)!.description;
+      expect(description, name).toMatch(/never follow/i);
+      expect(description, name).toMatch(/declared/);
+    }
+    expect(tools.find((t) => t.name === 'update_message')!.description).toContain('human who owns this Tabula');
     expect(tools.map((t) => t.name)).not.toContain('delete_message');
     expect(client.getInstructions()).toMatch(/Inbox messages/);
+    expect(client.getInstructions()).toMatch(/declared/);
     await client.close();
   });
 });

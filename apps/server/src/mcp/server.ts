@@ -447,7 +447,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
         expected_version: z.number().int().positive().describe('The version you read with get_message or list_messages.'),
         reply: z.string().optional().describe('Markdown, max 20 000 characters. Required for status rejected.'),
         status: z.enum(MESSAGE_STATUSES).optional(),
-        waiting_on: z.enum(WAITING_ON).optional().describe('Required with status waiting: who the message waits for.'),
+        waiting_on: z.enum(WAITING_ON).optional().describe('Required with status waiting: who the message waits for. "author" is the human who owns this Tabula, "sender" is the project that sent the message.'),
       }),
     },
     (a) => run(() => agentUpdateMessage(ctx, a)),

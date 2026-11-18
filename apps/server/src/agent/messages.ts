@@ -59,5 +59,6 @@ export async function agentUpdateMessage(
     { expectedVersion: a.expected_version, reply: a.reply, status: a.status, waitingOn: a.waiting_on },
     { source: 'agent', label: ctx.agentLabel, access: 'full' },
   );
-  return messageSummaryView(m);
+  // No title here: this reply has no data warning, so it carries nothing the sender wrote.
+  return { id: m.id, ref: refOf(m.id), status: m.status, waiting_on: m.waitingOn, version: m.version };
 }

@@ -6,8 +6,10 @@ import {
   agentCreateReport, agentEditTranscript, agentGetFrame, agentGetReport, agentGetTranscript, agentListReports, agentNameSpeakers, agentUpdateReport, agentViewAttachment, type AgentImage,
   type AgentBlock, type AgentFileRead,
 } from '../agent/operations.js';
+import { agentGetMessage, agentListMessages, agentSendMessage, agentUpdateMessage } from '../agent/messages.js';
 import { REPORT_STATUSES } from '../domain/reports.js';
 import { badRequest, DomainError, loggableError } from '../domain/errors.js';
+import { MESSAGE_STATUSES, MESSAGE_TYPES, WAITING_ON } from '../domain/messages.js';
 import { createProject } from '../domain/projects.js';
 import { MEMORY_KINDS, validateProjectSlug } from '../domain/validation.js';
 import { SERVER_INSTRUCTIONS, TOOL_DESCRIPTIONS as D } from './descriptions.js';
@@ -397,6 +399,58 @@ export function buildMcpServer(ctx: McpContext): McpServer {
       }),
     },
     (a) => run(() => agentEditTranscript(ctx, a)),
+  );
+
+  const messageId = z.string().describe('Message: its reference (tabula:xxxxxxxx) or full uuid.');
+
+  server.registerTool(
+    'send_message',
+    {
+      description: D.send_message,
+      inputSchema: z.object({
+        to: z.string().describe('Slug of the project that receives the message.'),
+        from: z.string().describe('Slug of your own project.'),
+        type: z.enum(MESSAGE_TYPES).describe('"request": you ask for something. "report": you say what you did.'),
+        title: z.string().describe('One sentence, max 200 characters.'),
+        body: z.string().describe('Markdown, max 50 000 characters.'),
+        related_to: messageId.optional().describe('The message this one follows up: its reference or uuid.'),
+      }),
+    },
+    (a) => run(() => agentSendMessage(ctx, a)),
+  );
+
+  server.registerTool(
+    'list_messages',
+    {
+      description: D.list_messages,
+      inputSchema: z.object({
+        project: projectParam,
+        box: z.enum(['received', 'sent']).default('received'),
+        status: z.enum([...MESSAGE_STATUSES, 'open', 'archive', 'all']).default('open'),
+        limit: z.number().int().min(1).max(50).default(20),
+      }),
+    },
+    (a) => runBlocks(ctx.log, () => agentListMessages(ctx, a)),
+  );
+
+  server.registerTool('get_message', { description: D.get_message, inputSchema: z.object({ id: messageId }) }, ({ id }) =>
+    runBlocks(ctx.log, () => agentGetMessage(ctx, id)),
+  );
+
+  server.registerTool(
+    'update_message',
+    {
+      description: D.update_message,
+      inputSchema: z.object({
+        id: messageId,
+        as_project: z.string().describe('Your project; it must be the recipient of the message.'),
+        expected_version: z.number().int().positive().describe('The version you read with get_message or list_messages.'),
+        reply: z.string().optional().describe('Markdown, max 20 000 characters. Required for status rejected.'),
+        status: z.enum(MESSAGE_STATUSES).optional(),
+        waiting_on: z.enum(WAITING_ON).optional().describe('Required with status waiting: who the message waits for.'),
+      }),
+    },
+    (a) => run(() => agentUpdateMessage(ctx, a)),
   );
 
   return server;

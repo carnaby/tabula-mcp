@@ -36,13 +36,13 @@ type Content = Array<{ type: string; text: string }>;
 const textOf = (r: { content?: unknown }) => (r.content as Content)[0]!.text;
 
 describe('MCP endpoint', () => {
-  it('exposes exactly the twenty-four tools', async () => {
+  it('exposes exactly the twenty-eight tools', async () => {
     const client = await connect('/mcp', bearer);
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
-      'create_report', 'delete_file', 'deprecate', 'edit_transcript', 'find_notes', 'find_thoughts', 'get', 'get_frame', 'get_report', 'get_transcript',
-      'list_files', 'list_projects', 'list_reports', 'name_speakers', 'read_file', 'recall', 'remember', 'save_thought', 'search', 'setup_project',
-      'update_report', 'update_thought', 'view_attachment', 'write_file',
+      'create_report', 'delete_file', 'deprecate', 'edit_transcript', 'find_notes', 'find_thoughts', 'get', 'get_frame', 'get_message', 'get_report', 'get_transcript',
+      'list_files', 'list_messages', 'list_projects', 'list_reports', 'name_speakers', 'read_file', 'recall', 'remember', 'save_thought', 'search', 'send_message', 'setup_project',
+      'update_message', 'update_report', 'update_thought', 'view_attachment', 'write_file',
     ]);
     expect(tools.find((t) => t.name === 'recall')!.description).toMatch(/^Call at the start of a session/);
     await client.close();

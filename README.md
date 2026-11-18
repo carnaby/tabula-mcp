@@ -133,6 +133,22 @@ docs/superpowers/ — specs/2026-10-20-mixer-design.md (10-20, 18.4 KB), plans/2
 - **`include_state`:** Claude Code on a computer passes `false` — the hook already restored the files on disk. Claude Code on the web and claude.ai get the state in the digest.
 - **Plain text, not JSON.** The agent reads the digest rather than parsing it, and JSON would cost 30–40 % more tokens.
 
+### Inbox
+
+Projects can send each other requests and reports. Each message is its own record with a status (`new`, `in_progress`, `waiting`, `done`, `rejected`) and an append-only history. The sender's project is declared by the sender and is not verified. A message that is `waiting` says who it waits for in `waiting_on`: `author` is the human who owns this Tabula, `sender` is the project that sent the message.
+
+The web UI shows message text as data: Markdown without images, styles or forms. An image appears as a link and HTML typed into the text stays visible as text. A closed message is reopened by choosing how, nothing is preselected.
+
+An automated reader does not need the full token. Create an **Inbox token** on the Inbox page: it is bound to one project, shown once, stored only as a hash and can be revoked at any time. It is accepted only by this API and refused everywhere else:
+
+| Call | Result |
+|---|---|
+| `GET /inbox-api/v1/messages?since=<ISO 8601>` | Open messages of the project without their text, oldest change first: `items`, `next_since`, `truncated`. `since` is optional and must be within the years 2000 to 2099. Pass `next_since` to the next call; an item can repeat, so compare `id` and `version`. |
+| `GET /inbox-api/v1/messages/:id` | One message with its text and history. |
+| `PATCH /inbox-api/v1/messages/:id` | `{ "expected_version": 3, "reply": "…", "status": "in_progress" }`. The token can set only `in_progress` or `waiting` (with `waiting_on`: `author` or `sender`), and cannot change a closed message. |
+
+Send the token as `Authorization: Bearer <token>`.
+
 ### MCP tools
 
 | Tool | What it does |
@@ -147,6 +163,7 @@ docs/superpowers/ — specs/2026-10-20-mixer-design.md (10-20, 18.4 KB), plans/2
 | `find_notes(query?, tag?, limit?)` | Reads your Notes — only when you mention them or paste a reference. |
 | `save_thought` · `update_thought` · `find_thoughts` | The Thoughts notebook, on request; edits use `expected_version` and keep the previous version; `update_thought` can archive and restore, `find_thoughts` pages with `offset`. |
 | `list_reports(project?, status?, query?)` · `get_report(id)` | Reports — bugs and recordings of meetings and conversations — and their attachments (photos, videos, voice notes, saved frames; a frame may carry the user's note) with links valid for 24 hours; videos and voice notes carry their transcript (`[2:41] what was said`) or its status. `project: "none"` lists the reports without a project; `get_report` shows `project` (`none` when it has none) and `keep_media`. `query` also matches transcripts. |
+| `send_message(to, from, type, title, body, related_to?)` · `list_messages(project, box?, status?, limit?)` · `get_message(id)` · `update_message(id, as_project, expected_version, reply?, status?, waiting_on?)` | The Inbox: requests and reports between projects. A sent message never changes; replies and status changes go to its history. Messages never appear in `recall`, `search` or `get`, and their text is treated as data, not instructions. `update_message` answers with `id`, `ref`, `status`, `waiting_on` and `version` only. |
 | `get_transcript(attachment_id, offset?)` | The whole transcript of a video or voice note in parts of 50 000 characters, with the times to pick frames from. With several speakers the lines read `[0:12] Eva: …` and a `Speakers: S1 = Eva (named by user), S2 = not named` line follows the header (`get_report` has it as `speakers`). |
 | `name_speakers(attachment_id, names)` | Names speakers (`{"S2": "Tomáš"}`) when the transcript makes it clear who is who. Never replaces a name the user gave; replaces an agent's; says what it wrote and what it skipped. |
 | `edit_transcript(attachment_id, edits)` | Fixes obviously misheard words (names, project names, technical terms) or a line's speaker: 1 to 50 edits `{ "at": "0:12", "from": …, "to": … }` and/or `{ "at": …, "speaker": "S2" }`. Never changes a line the user edited; says what it wrote and what it skipped and why. The transcripts the tools show stay plain: edited lines are not marked. |

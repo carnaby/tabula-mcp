@@ -125,6 +125,20 @@ describe('what the narrow token never opens', () => {
     expect((await getMessage(db, foreign.id))!.version).toBe(1);
   });
 
+  it('answers a message of another project exactly like a message that does not exist', async () => {
+    const foreign = await send('alpha', 'beta');
+    const missing = '00000000-0000-4000-8000-000000000000';
+    const answer = async (method: 'GET' | 'PATCH', id: string) => {
+      const res = await call(method, `${base}/${id}`, method === 'PATCH' ? { expected_version: 1, reply: 'Hi' } : undefined);
+      return { status: res.statusCode, body: res.body.replaceAll(id, '<id>') };
+    };
+    for (const method of ['GET', 'PATCH'] as const) {
+      const a = await answer(method, foreign.id);
+      expect(a.status, method).toBe(404);
+      expect(a, method).toEqual(await answer(method, missing));
+    }
+  });
+
   it.each([
     ['done', { expected_version: 1, status: 'done' }],
     ['rejected', { expected_version: 1, status: 'rejected', reply: 'No' }],

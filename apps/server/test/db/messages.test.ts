@@ -105,6 +105,12 @@ describe('updateMessage', () => {
     await expect(move(await send(), patch)).rejects.toMatchObject({ code: 'bad_request' });
   });
 
+  it('refuses a return to new from in_progress', async () => {
+    const m = await move(await send(), { status: 'in_progress' });
+    await expect(move(m, { status: 'new' })).rejects.toMatchObject({ code: 'bad_request' });
+    expect((await getMessage(db, m.id))!).toMatchObject({ status: 'in_progress', version: 2 });
+  });
+
   it('follows the state table', async () => {
     let m = await move(await send(), { status: 'waiting', waitingOn: 'author' });
     expect(m).toMatchObject({ status: 'waiting', waitingOn: 'author' });
@@ -235,8 +241,11 @@ describe('reading', () => {
   it('deletes a message and leaves a message that pointed to it', async () => {
     const first = await send();
     const second = await send({ relatedTo: first.id });
+    await move(first, { reply: 'Looking' });
     await deleteMessage(db, first.id);
     expect(await getMessage(db, first.id)).toBeUndefined();
+    expect(await listMessageEvents(db, first.id)).toEqual([]);
+    expect(await listMessageEvents(db, second.id)).toHaveLength(1);
     expect((await getMessage(db, second.id))!.relatedTo).toBeNull();
     await expect(deleteMessage(db, first.id)).rejects.toMatchObject({ code: 'not_found' });
   });

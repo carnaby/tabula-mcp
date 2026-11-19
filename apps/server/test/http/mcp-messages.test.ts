@@ -3,6 +3,7 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 import { refOf } from '@tabula/shared/refs';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { memories } from '../../src/db/schema.js';
 import { getMessage } from '../../src/domain/messages.js';
 import { buildApp } from '../../src/http/app.js';
 import { seedProject, TEST_SECRET, TEST_TOKEN, testConfig, useTestDb } from '../helpers.js';
@@ -137,6 +138,17 @@ describe('separation from memory', () => {
       expect(r.all).not.toContain(SECRET_WORD);
       expect(r.all).not.toContain('Open a port');
     }
+  });
+
+  it('gives a record precedence over a message that shares its eight characters', async () => {
+    const m = await send();
+    const twin = `${m.id.slice(0, 8)}-0000-4000-8000-000000000000`;
+    await db.insert(memories).values({ id: twin, projectId: 'global', kind: 'rule', title: 'Twin rule', body: 'b', source: 'human' });
+    const r = await tool('get', { id: m.ref });
+    expect(r.isError).toBe(false);
+    expect(r.all).toContain('Twin rule');
+    expect(r.all).not.toContain('get_message');
+    expect(r.all).not.toContain('Open a port');
   });
 
   it('still reports an unknown reference', async () => {

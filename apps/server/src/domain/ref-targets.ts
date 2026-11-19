@@ -11,8 +11,10 @@ const messageTarget = (m: Message): UiRefTarget => ({ ref: refOf(m.id), type: 'm
 
 /**
  * What a reference opens in the UI. Messages are looked up only here: resolveRecord also serves the agents' `get`,
- * which must not hand out text written by another project. For a `tabula:` prefix a message is a candidate like any
- * record, so a prefix that matches a message and anything else is ambiguous. The old short form never means a message.
+ * which must not hand out text written by another project. For a prefix that reaches every record type (`tabula:` and
+ * 4 or more hex, or 8 or more hex without it, `#` or not) a message is a candidate like any record, so a prefix that
+ * matches a message and anything else is ambiguous. The old short form (fewer than 8 hex without `tabula:`, e.g. `#a1f3`)
+ * never means a message.
  */
 export async function resolveForUi(db: Db, raw: string): Promise<UiRefTarget> {
   const ref = parseIdRef(raw);

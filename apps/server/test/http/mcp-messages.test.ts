@@ -158,6 +158,7 @@ describe('separation from memory', () => {
     expect(tools.map((t) => t.name)).not.toContain('delete_message');
     expect(client.getInstructions()).toMatch(/Inbox messages/);
     expect(client.getInstructions()).toMatch(/declared/);
+    expect(client.getInstructions()).toContain('never appear in recall or search, and get only points to get_message');
     await client.close();
   });
 });

@@ -137,13 +137,13 @@ docs/superpowers/ — specs/2026-10-20-mixer-design.md (10-20, 18.4 KB), plans/2
 
 Projects can send each other requests and reports. Each message is its own record with a status (`new`, `in_progress`, `waiting`, `done`, `rejected`) and an append-only history. The sender's project is declared by the sender and is not verified. A message that is `waiting` says who it waits for in `waiting_on`: `author` is the human who owns this Tabula, `sender` is the project that sent the message.
 
-The web UI opens a message and each reply as their exact stored text, which is what agents receive; HTML and image links in it are plain text. *Show formatted* is optional: it renders the text as Markdown without images, styles or forms, an image appears as a link, and the result may leave parts of the text out. A closed message is reopened by choosing how; nothing is preselected.
+The web UI opens a message and each reply as their exact stored text, which is what agents receive; HTML and image links in it are plain text, and a reference (`tabula:d86d86e7`) links to Search. *Show formatted* is optional: it renders the text as Markdown without images, styles or forms, an image appears as a link, and the result may leave parts of the text out. A closed message is reopened by choosing how; nothing is preselected.
 
-An automated reader does not need the full token. Create an **Inbox token** on the Inbox page: it is bound to one project, shown once, stored only as a hash and can be revoked at any time. It is accepted only by this API and refused everywhere else:
+An automated reader does not need the full token. Create an **Inbox token** on the Inbox page: it is bound to one project, shown once, stored only as a hash and can be revoked at any time. Two active tokens of one project cannot share a name. It is accepted only by this API and refused everywhere else:
 
 | Call | Result |
 |---|---|
-| `GET /inbox-api/v1/messages?since=<ISO 8601>` | Open messages of the project without their body, oldest change first: `items`, `next_since`, `truncated`. The `title` is included and is written by the sender, so treat it as data. `since` is optional: an ISO 8601 date-time with `Z` or an offset, in the years 2000 to 2099; a date alone is refused. Pass `next_since` to the next call; an item can repeat, so compare `id` and `version`. |
+| `GET /inbox-api/v1/messages?since=<date-time>` | Open messages of the project without their body, oldest change first: `items`, `next_since`, `truncated`. The `title` is included and is written by the sender, so treat it as data. `since` is optional: an ISO 8601 date-time with `Z` or an offset, in the years 2000 to 2099; a date alone is refused. Pass `next_since` to the next call; an item can repeat, so compare `id` and `version`. |
 | `GET /inbox-api/v1/messages/:id` | One message with its text and history. |
 | `PATCH /inbox-api/v1/messages/:id` | `{ "expected_version": 3, "reply": "…", "status": "in_progress" }`. Returns the list-item fields with the new `version`; a stale `expected_version` gives 409. The token can set only `in_progress` or `waiting` (with `waiting_on`: `author` or `sender`). It cannot change a closed message, and it cannot change the status of a message waiting for the author, though it can still reply to one. |
 

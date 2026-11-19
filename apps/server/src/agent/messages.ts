@@ -5,6 +5,7 @@ import {
   messageSummaryView, pageMessages, requireMessageByRef, updateMessage,
 } from '../domain/messages.js';
 import { requireProject } from '../domain/projects.js';
+import { rejectNul } from '../domain/validation.js';
 import type { AgentBlock, AgentContext } from './operations.js';
 
 /** The first block of every reply that carries message content. */
@@ -32,6 +33,7 @@ export async function agentListMessages(
   ctx: AgentContext,
   a: { project: string; box: 'received' | 'sent'; status: MessageStatusFilter; limit: number },
 ): Promise<AgentBlock[]> {
+  rejectNul(a.project, 'project');
   await requireProject(ctx.db, a.project);
   const page = await pageMessages(ctx.db, {
     ...(a.box === 'received' ? { to: a.project } : { from: a.project }),

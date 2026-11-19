@@ -19,8 +19,11 @@ export type ResolvedRecord =
   | { type: 'file'; record: ProjectFile }
   | { type: 'attachment'; record: Attachment; report: Report };
 
-/** One of the records a short reference matches; `ref` is long enough to tell it from the others. */
-export type RefCandidate = { type: RecordType; id: string; ref: string; title: string };
+/**
+ * One of the records a short reference matches; `ref` is long enough to tell it from the others. A message is a
+ * candidate only where the UI resolves a reference (see resolveForUi).
+ */
+export type RefCandidate = { type: RecordType | 'message'; id: string; ref: string; title: string };
 
 /** A short reference that matches more than one record (400); the UI lists the candidates. */
 export class AmbiguousRefError extends DomainError {
@@ -60,7 +63,7 @@ async function byId(db: Db, id: string): Promise<ResolvedRecord | undefined> {
 }
 
 /** Records whose id starts with the hex prefix (dashes ignored), at most 6 per type (lowest ids first, so the shortest unique prefix does not depend on row order). */
-async function candidatesOf(db: Db, prefix: string, legacy: boolean): Promise<{ id: string; type: RecordType; title: string }[]> {
+export async function recordCandidates(db: Db, prefix: string, legacy: boolean): Promise<{ id: string; type: RecordType; title: string }[]> {
   const match = sql`replace(id::text, '-', '') LIKE ${`${prefix}%`}`;
   const filesAndAttachments = legacy
     ? sql``
@@ -88,21 +91,24 @@ export async function resolveRecord(db: Db, raw: string): Promise<ResolvedRecord
     return found;
   }
   const shown = ref.legacy ? `#${ref.prefix}` : `${REF_PREFIX}${ref.prefix}`;
-  const list = await candidatesOf(db, ref.prefix, ref.legacy);
+  const list = await recordCandidates(db, ref.prefix, ref.legacy);
   if (list.length === 0) {
     const hint = ref.legacy ? `; files and attachments are found with ${REF_PREFIX}${ref.prefix}` : '';
     throw notFound(`no record matches ${shown}${hint}`);
   }
-  if (list.length > 1) {
-    const hexOf = (id: string) => id.replace(/-/g, '');
-    const short = shortIds(list.map((c) => hexOf(c.id)), 8);
-    const candidates = list.map((c) => ({ type: c.type, id: c.id, ref: `${REF_PREFIX}${short.get(hexOf(c.id))!}`, title: c.title }));
-    const names = candidates.map((c) => `${c.ref} (${c.type}: ${c.title})`).join('; ');
-    throw new AmbiguousRefError(`${shown} is ambiguous; it matches ${names}. Pass more characters.`, candidates);
-  }
+  if (list.length > 1) throw ambiguousRef(shown, list);
   const found = await byId(db, list[0]!.id);
   if (!found) throw notFound(`no record matches ${shown}`);
   return found;
+}
+
+/** The error for a reference `shown` that matches every record in `list` (more than one). */
+export function ambiguousRef(shown: string, list: readonly { id: string; type: RefCandidate['type']; title: string }[]): AmbiguousRefError {
+  const hexOf = (id: string) => id.replace(/-/g, '');
+  const short = shortIds(list.map((c) => hexOf(c.id)), 8);
+  const candidates = list.map((c) => ({ type: c.type, id: c.id, ref: `${REF_PREFIX}${short.get(hexOf(c.id))!}`, title: c.title }));
+  const names = candidates.map((c) => `${c.ref} (${c.type}: ${c.title})`).join('; ');
+  return new AmbiguousRefError(`${shown} is ambiguous; it matches ${names}. Pass more characters.`, candidates);
 }
 
 export function refTarget(r: ResolvedRecord): RefTarget {

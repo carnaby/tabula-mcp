@@ -10,6 +10,8 @@ import { charCount, rejectNul } from './validation.js';
 
 export const MESSAGE_TYPES = ['request', 'report'] as const;
 export const MESSAGE_STATUSES = ['new', 'in_progress', 'waiting', 'done', 'rejected'] as const;
+/** What an update can set: `new` is only where a message starts. */
+export const UPDATE_STATUSES = ['in_progress', 'waiting', 'done', 'rejected'] as const;
 export const OPEN_STATUSES = ['new', 'in_progress', 'waiting'] as const;
 export const CLOSED_STATUSES = ['done', 'rejected'] as const;
 export const WAITING_ON = ['author', 'sender'] as const;
@@ -148,6 +150,17 @@ export async function findMessageByRef(db: Db, raw: string): Promise<Message | u
   const rows = await db.select().from(messages).where(sql`replace(${messages.id}::text, '-', '') LIKE ${`${ref.prefix}%`}`).limit(2);
   if (rows.length > 1) throw badRequest(`${REF_PREFIX}${ref.prefix} matches several messages; pass more characters`);
   return rows[0];
+}
+
+/** Messages whose id starts with the hex prefix (dashes ignored), at most 6, lowest ids first, like recordCandidates. */
+export async function messageCandidates(db: Db, prefix: string): Promise<{ id: string; type: 'message'; title: string }[]> {
+  const rows = await db
+    .select({ id: messages.id, title: messages.title })
+    .from(messages)
+    .where(sql`replace(${messages.id}::text, '-', '') LIKE ${`${prefix}%`}`)
+    .orderBy(asc(messages.id))
+    .limit(6);
+  return rows.map((r) => ({ ...r, type: 'message' as const }));
 }
 
 export async function requireMessageByRef(db: Db, raw: string): Promise<Message> {

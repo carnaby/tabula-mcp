@@ -1,8 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { and, desc, eq, isNull, lt, or } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
-import { messageTokens } from '../db/schema.js';
-import { badRequest, notFound } from './errors.js';
+import { messageTokens, projects } from '../db/schema.js';
+import { badRequest, conflict, notFound } from './errors.js';
 import { requireProject } from './projects.js';
 import { rejectNul } from './validation.js';
 
@@ -33,8 +33,20 @@ export async function createMessageToken(db: Db, input: { projectId: string; nam
   if (input.projectId === 'global') throw badRequest('a token belongs to a project, not to "global"');
   await requireProject(db, input.projectId);
   const value = `${PREFIX}${randomBytes(32).toString('base64url')}`;
-  const [row] = await db.insert(messageTokens).values({ projectId: input.projectId, name: input.name, tokenSha256: sha256(value) }).returning();
-  return { token: view(row!), value };
+  // The history names a token, so two active tokens of one project must not share a name. An app check rather than a
+  // unique index: an index could not be created where such a pair already exists. Locking the project row serializes
+  // two creations for the same project.
+  const row = await db.transaction(async (tx) => {
+    await tx.select({ id: projects.id }).from(projects).where(eq(projects.id, input.projectId)).for('no key update');
+    const [twin] = await tx
+      .select({ id: messageTokens.id })
+      .from(messageTokens)
+      .where(and(eq(messageTokens.projectId, input.projectId), eq(messageTokens.name, input.name), isNull(messageTokens.revokedAt)));
+    if (twin) throw conflict(`project "${input.projectId}" already has an active token named "${input.name}"; choose another name or revoke that token first`);
+    const [inserted] = await tx.insert(messageTokens).values({ projectId: input.projectId, name: input.name, tokenSha256: sha256(value) }).returning();
+    return inserted!;
+  });
+  return { token: view(row), value };
 }
 
 export async function listMessageTokens(db: Db): Promise<MessageTokenView[]> {

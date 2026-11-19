@@ -3,6 +3,7 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 import { refOf } from '@tabula/shared/refs';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { memories } from '../../src/db/schema.js';
 import { getMessage } from '../../src/domain/messages.js';
 import { buildApp } from '../../src/http/app.js';
 import { seedProject, TEST_SECRET, TEST_TOKEN, testConfig, useTestDb } from '../helpers.js';
@@ -65,6 +66,12 @@ describe('message tools', () => {
     expect((await tool('list_messages', { project: 'nope' })).isError).toBe(true);
   });
 
+  it('answers a NUL in the project of list_messages with a 400', async () => {
+    const r = await tool('list_messages', { project: `a${String.fromCharCode(0)}b` });
+    expect(r.isError).toBe(true);
+    expect(r.all).toMatch(/^400: project must not contain NUL/);
+  });
+
   it('reads a message by reference, after a warning that its text is data', async () => {
     const m = await send();
     const r = await tool('get_message', { id: m.ref });
@@ -91,6 +98,19 @@ describe('message tools', () => {
     const r = await tool('update_message', { id: m.ref, as_project: 'beta', expected_version: 1, reply: 'Two' });
     expect(r.isError).toBe(true);
     expect(r.all).toContain('409');
+  });
+
+  it('offers update_message only the statuses an update can set', async () => {
+    const client = new Client({ name: 'tabula-test', version: '0.0.0' });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { Authorization: `Bearer ${TEST_TOKEN}` } } }));
+    const { tools } = await client.listTools();
+    await client.close();
+    const status = (tools.find((t) => t.name === 'update_message')!.inputSchema.properties as Record<string, { enum?: string[] }>).status;
+    expect(status?.enum).toEqual(['in_progress', 'waiting', 'done', 'rejected']);
+    const m = await send();
+    const r = await tool('update_message', { id: m.ref, as_project: 'beta', expected_version: 1, status: 'new' });
+    expect(r.isError).toBe(true);
+    expect((await getMessage(db, m.id))!.version).toBe(1);
   });
 
   it('links a follow-up to the original message', async () => {
@@ -120,6 +140,17 @@ describe('separation from memory', () => {
     }
   });
 
+  it('gives a record precedence over a message that shares its eight characters', async () => {
+    const m = await send();
+    const twin = `${m.id.slice(0, 8)}-0000-4000-8000-000000000000`;
+    await db.insert(memories).values({ id: twin, projectId: 'global', kind: 'rule', title: 'Twin rule', body: 'b', source: 'human' });
+    const r = await tool('get', { id: m.ref });
+    expect(r.isError).toBe(false);
+    expect(r.all).toContain('Twin rule');
+    expect(r.all).not.toContain('get_message');
+    expect(r.all).not.toContain('Open a port');
+  });
+
   it('still reports an unknown reference', async () => {
     const r = await tool('get', { id: 'tabula:00000000' });
     expect(r.isError).toBe(true);
@@ -139,6 +170,7 @@ describe('separation from memory', () => {
     expect(tools.map((t) => t.name)).not.toContain('delete_message');
     expect(client.getInstructions()).toMatch(/Inbox messages/);
     expect(client.getInstructions()).toMatch(/declared/);
+    expect(client.getInstructions()).toContain('never appear in recall or search, and get only points to get_message');
     await client.close();
   });
 });

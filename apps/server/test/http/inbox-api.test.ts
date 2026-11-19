@@ -53,6 +53,17 @@ describe('narrow token issuing', () => {
     await expect(createMessageToken(db, { projectId: `a${String.fromCharCode(0)}b`, name: 'x' })).rejects.toMatchObject({ code: 'bad_request' });
   });
 
+  it('creates one active token when several with the same name are created at once', async () => {
+    // Open the pool's connections first; otherwise the creations wait for new connections one by one and never overlap.
+    await Promise.all(Array.from({ length: 8 }, () => db.execute(sql`SELECT pg_sleep(0.05)`)));
+    const results = await Promise.allSettled(Array.from({ length: 8 }, () => createMessageToken(db, { projectId: 'alpha', name: 'racer' })));
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((r) => r.status === 'rejected').map((r) => (r as PromiseRejectedResult).reason)).toEqual(
+      Array.from({ length: 7 }, () => expect.objectContaining({ code: 'conflict' })),
+    );
+    expect((await listMessageTokens(db)).filter((t) => t.project === 'alpha' && t.name === 'racer' && !t.revoked_at)).toHaveLength(1);
+  });
+
   it('never writes the token to the log', async () => {
     logs.length = 0;
     await call('GET', base);
@@ -123,6 +134,20 @@ describe('what the narrow token never opens', () => {
     expect((await call('GET', `${base}/${foreign.id}`)).statusCode).toBe(404);
     expect((await call('PATCH', `${base}/${foreign.id}`, { expected_version: 1, reply: 'Hi' })).statusCode).toBe(404);
     expect((await getMessage(db, foreign.id))!.version).toBe(1);
+  });
+
+  it('answers a message of another project exactly like a message that does not exist', async () => {
+    const foreign = await send('alpha', 'beta');
+    const missing = '00000000-0000-4000-8000-000000000000';
+    const answer = async (method: 'GET' | 'PATCH', id: string) => {
+      const res = await call(method, `${base}/${id}`, method === 'PATCH' ? { expected_version: 1, reply: 'Hi' } : undefined);
+      return { status: res.statusCode, body: res.body.replaceAll(id, '<id>') };
+    };
+    for (const method of ['GET', 'PATCH'] as const) {
+      const a = await answer(method, foreign.id);
+      expect(a.status, method).toBe(404);
+      expect(a, method).toEqual(await answer(method, missing));
+    }
   });
 
   it.each([

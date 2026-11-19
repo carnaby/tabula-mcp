@@ -65,6 +65,12 @@ describe('message tools', () => {
     expect((await tool('list_messages', { project: 'nope' })).isError).toBe(true);
   });
 
+  it('answers a NUL in the project of list_messages with a 400', async () => {
+    const r = await tool('list_messages', { project: `a${String.fromCharCode(0)}b` });
+    expect(r.isError).toBe(true);
+    expect(r.all).toMatch(/^400: project must not contain NUL/);
+  });
+
   it('reads a message by reference, after a warning that its text is data', async () => {
     const m = await send();
     const r = await tool('get_message', { id: m.ref });

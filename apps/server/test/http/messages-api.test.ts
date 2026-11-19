@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { refOf } from '@tabula/shared/refs';
 import { createMessageToken } from '../../src/domain/message-tokens.js';
 import { createMessage, getMessage, type Message, updateMessage } from '../../src/domain/messages.js';
+import { memories, messages } from '../../src/db/schema.js';
 import { buildApp } from '../../src/http/app.js';
 import { seedProject, TEST_TOKEN, testConfig, useTestDb } from '../helpers.js';
 
@@ -115,6 +116,32 @@ describe('references and Home', () => {
     expect((await call('GET', `/api/resolve/${refOf(message.id)}`)).json()).toMatchObject({
       type: 'message', id: message.id, project: 'beta', title: 'Open a port', status: 'new',
     });
+  });
+
+  it('lists a message among the candidates of a short reference, like any other record', async () => {
+    const msg = { toProject: 'beta', fromProject: 'alpha', type: 'request' as const, body: 'x', source: 'agent' as const, createdBy: 'test' };
+    await db.insert(memories).values({ id: 'abcd1000-0000-4000-8000-000000000000', projectId: 'global', kind: 'rule', title: 'Rule', body: 'b', source: 'human' });
+    await db.insert(messages).values([
+      { ...msg, id: 'abcd2000-0000-4000-8000-000000000000', title: 'Message' },
+      { ...msg, id: 'abce1000-0000-4000-8000-000000000000', title: 'First message' },
+      { ...msg, id: 'abce2000-0000-4000-8000-000000000000', title: 'Second message' },
+    ]);
+    const candidates = async (ref: string) => {
+      const res = await call('GET', `/api/resolve/${ref}`);
+      expect(res.statusCode).toBe(400);
+      expect(res.json().message).toMatch(/ambiguous/);
+      return (res.json().candidates as Array<{ type: string; ref: string; title: string }>).sort((a, b) => a.ref.localeCompare(b.ref));
+    };
+    expect(await candidates('tabula:abcd')).toEqual([
+      { type: 'memory', id: 'abcd1000-0000-4000-8000-000000000000', ref: 'tabula:abcd1000', title: 'Rule' },
+      { type: 'message', id: 'abcd2000-0000-4000-8000-000000000000', ref: 'tabula:abcd2000', title: 'Message' },
+    ]);
+    expect((await candidates('tabula:abce')).map((c) => [c.type, c.ref])).toEqual([['message', 'tabula:abce1000'], ['message', 'tabula:abce2000']]);
+    expect((await call('GET', '/api/resolve/tabula:abce1')).json()).toMatchObject({ type: 'message', id: 'abce1000-0000-4000-8000-000000000000' });
+    expect((await call('GET', '/api/resolve/tabula:abcd1')).json()).toMatchObject({ type: 'memory', id: 'abcd1000-0000-4000-8000-000000000000' });
+    // Eight characters shared by a record and a message are ambiguous too, as for two records.
+    await db.insert(messages).values({ ...msg, id: 'abcd1000-0000-4000-8000-000000000001', title: 'Twin' });
+    expect((await candidates('tabula:abcd1000')).map((c) => c.type)).toEqual(['memory', 'message']);
   });
 
   it('still answers 404 for an unknown reference', async () => {

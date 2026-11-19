@@ -10,6 +10,8 @@ import { charCount, rejectNul } from './validation.js';
 
 export const MESSAGE_TYPES = ['request', 'report'] as const;
 export const MESSAGE_STATUSES = ['new', 'in_progress', 'waiting', 'done', 'rejected'] as const;
+/** What an update can set: `new` is only where a message starts. */
+export const UPDATE_STATUSES = ['in_progress', 'waiting', 'done', 'rejected'] as const;
 export const OPEN_STATUSES = ['new', 'in_progress', 'waiting'] as const;
 export const CLOSED_STATUSES = ['done', 'rejected'] as const;
 export const WAITING_ON = ['author', 'sender'] as const;

@@ -93,6 +93,19 @@ describe('message tools', () => {
     expect(r.all).toContain('409');
   });
 
+  it('offers update_message only the statuses an update can set', async () => {
+    const client = new Client({ name: 'tabula-test', version: '0.0.0' });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { Authorization: `Bearer ${TEST_TOKEN}` } } }));
+    const { tools } = await client.listTools();
+    await client.close();
+    const status = (tools.find((t) => t.name === 'update_message')!.inputSchema.properties as Record<string, { enum?: string[] }>).status;
+    expect(status?.enum).toEqual(['in_progress', 'waiting', 'done', 'rejected']);
+    const m = await send();
+    const r = await tool('update_message', { id: m.ref, as_project: 'beta', expected_version: 1, status: 'new' });
+    expect(r.isError).toBe(true);
+    expect((await getMessage(db, m.id))!.version).toBe(1);
+  });
+
   it('links a follow-up to the original message', async () => {
     const m = await send();
     const next = await send({ related_to: m.ref, title: 'More details' });

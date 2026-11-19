@@ -9,7 +9,7 @@ import {
 import { agentGetMessage, agentListMessages, agentSendMessage, agentUpdateMessage } from '../agent/messages.js';
 import { REPORT_STATUSES } from '../domain/reports.js';
 import { badRequest, DomainError, loggableError } from '../domain/errors.js';
-import { MESSAGE_STATUSES, MESSAGE_TYPES, WAITING_ON } from '../domain/messages.js';
+import { MESSAGE_STATUSES, MESSAGE_TYPES, UPDATE_STATUSES, WAITING_ON } from '../domain/messages.js';
 import { createProject } from '../domain/projects.js';
 import { MEMORY_KINDS, validateProjectSlug } from '../domain/validation.js';
 import { SERVER_INSTRUCTIONS, TOOL_DESCRIPTIONS as D } from './descriptions.js';
@@ -446,7 +446,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
         as_project: z.string().describe('Your project; it must be the recipient of the message.'),
         expected_version: z.number().int().positive().describe('The version you read with get_message or list_messages.'),
         reply: z.string().optional().describe('Markdown, max 20 000 characters. Required for status rejected.'),
-        status: z.enum(MESSAGE_STATUSES).optional(),
+        status: z.enum(UPDATE_STATUSES).optional(),
         waiting_on: z.enum(WAITING_ON).optional().describe('Required with status waiting: who the message waits for. "author" is the human who owns this Tabula, "sender" is the project that sent the message.'),
       }),
     },

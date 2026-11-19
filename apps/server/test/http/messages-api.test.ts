@@ -106,6 +106,17 @@ describe('/api/message-tokens', () => {
     expect((await call('GET', '/api/message-tokens')).json()).toHaveLength(1);
   });
 
+  it('refuses a second active token with the same name in one project, and allows it once the first is revoked', async () => {
+    const first = (await call('POST', '/api/message-tokens', { project: 'beta', name: 'reader' })).json();
+    const twin = await call('POST', '/api/message-tokens', { project: 'beta', name: 'reader' });
+    expect(twin.statusCode).toBe(409);
+    expect(twin.json()).toMatchObject({ error: 'conflict', message: expect.stringMatching(/"beta" already has an active token named "reader"/) });
+    expect((await call('POST', '/api/message-tokens', { project: 'alpha', name: 'reader' })).statusCode).toBe(201);
+    await call('DELETE', `/api/message-tokens/${first.token.id}`);
+    expect((await call('POST', '/api/message-tokens', { project: 'beta', name: 'reader' })).statusCode).toBe(201);
+    expect((await call('GET', '/api/message-tokens')).json()).toHaveLength(3);
+  });
+
   it('answers 400 for a NUL in the project', async () => {
     expect((await call('POST', '/api/message-tokens', { project: `a${String.fromCharCode(0)}b`, name: 'reader' })).statusCode).toBe(400);
   });

@@ -53,6 +53,17 @@ describe('narrow token issuing', () => {
     await expect(createMessageToken(db, { projectId: `a${String.fromCharCode(0)}b`, name: 'x' })).rejects.toMatchObject({ code: 'bad_request' });
   });
 
+  it('creates one active token when several with the same name are created at once', async () => {
+    // Open the pool's connections first; otherwise the creations wait for new connections one by one and never overlap.
+    await Promise.all(Array.from({ length: 8 }, () => db.execute(sql`SELECT pg_sleep(0.05)`)));
+    const results = await Promise.allSettled(Array.from({ length: 8 }, () => createMessageToken(db, { projectId: 'alpha', name: 'racer' })));
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((r) => r.status === 'rejected').map((r) => (r as PromiseRejectedResult).reason)).toEqual(
+      Array.from({ length: 7 }, () => expect.objectContaining({ code: 'conflict' })),
+    );
+    expect((await listMessageTokens(db)).filter((t) => t.project === 'alpha' && t.name === 'racer' && !t.revoked_at)).toHaveLength(1);
+  });
+
   it('never writes the token to the log', async () => {
     logs.length = 0;
     await call('GET', base);

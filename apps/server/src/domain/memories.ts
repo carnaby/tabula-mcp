@@ -18,6 +18,7 @@ const cols = {
   deprecatedReason: memories.deprecatedReason,
   source: memories.source,
   agentLabel: memories.agentLabel,
+  agentModel: memories.agentModel,
   createdAt: memories.createdAt,
   updatedAt: memories.updatedAt,
 };
@@ -34,6 +35,7 @@ export type Memory = {
   deprecatedReason: string | null;
   source: 'agent' | 'human';
   agentLabel: string | null;
+  agentModel: string | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -47,6 +49,7 @@ export type NewMemory = {
   supersedesId?: string | null;
   source: 'agent' | 'human';
   agentLabel?: string | null;
+  agentModel?: string | null;
 };
 
 export async function getMemory(db: Db, id: string): Promise<Memory | undefined> {
@@ -82,6 +85,7 @@ export async function createMemory(db: Db, input: NewMemory): Promise<Memory> {
         supersedesId: input.supersedesId ?? null,
         source: input.source,
         agentLabel: input.agentLabel ?? null,
+        agentModel: input.agentModel ?? null,
       })
       .returning(cols);
     if (input.supersedesId) {

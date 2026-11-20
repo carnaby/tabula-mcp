@@ -30,8 +30,8 @@ export type MessageStatusFilter = MessageStatus | 'open' | 'archive' | 'all';
 
 /** Who changes a message. `inbox` is a narrow token, bound to the project it may read. */
 export type MessageActor =
-  | { source: 'agent' | 'human'; label: string; access: 'full' }
-  | { source: 'agent'; label: string; access: 'inbox'; project: string };
+  | { source: 'agent' | 'human'; label: string; access: 'full'; model?: string | null }
+  | { source: 'agent'; label: string; access: 'inbox'; project: string; model?: string | null };
 
 export type MessagePatch = {
   /** The version the writer read; any other current version is a conflict. */
@@ -67,7 +67,7 @@ async function checkProject(db: Db, id: string, field: 'to' | 'from'): Promise<v
 export async function createMessage(
   db: Db,
   input: { to: string; from: string; type: MessageType; title: string; body: string; relatedTo?: string },
-  editor: { source: 'agent' | 'human'; label: string },
+  editor: { source: 'agent' | 'human'; label: string; model?: string | null },
 ): Promise<Message> {
   const title = input.title.replace(/\s+/g, ' ').trim();
   const body = input.body.trim();
@@ -81,9 +81,14 @@ export async function createMessage(
   return db.transaction(async (tx) => {
     const [row] = await tx
       .insert(messages)
-      .values({ toProject: input.to, fromProject: input.from, type: input.type, title, body, relatedTo, source: editor.source, createdBy: editor.label })
+      .values({
+        toProject: input.to, fromProject: input.from, type: input.type, title, body, relatedTo, source: editor.source, createdBy: editor.label,
+        createdByModel: editor.model ?? null,
+      })
       .returning();
-    await tx.insert(messageEvents).values({ messageId: row!.id, source: editor.source, actor: editor.label, version: 1, toStatus: 'new' });
+    await tx.insert(messageEvents).values({
+      messageId: row!.id, source: editor.source, actor: editor.label, actorModel: editor.model ?? null, version: 1, toStatus: 'new',
+    });
     return row!;
   });
 }
@@ -122,7 +127,7 @@ export async function updateMessage(db: Db, id: string, patch: MessagePatch, act
     const version = cur.version + 1;
     const [row] = await tx.update(messages).set({ status, waitingOn, closedAt, version }).where(eq(messages.id, id)).returning();
     await tx.insert(messageEvents).values({
-      messageId: id, source: actor.source, actor: actor.label, version, reply: reply ?? null,
+      messageId: id, source: actor.source, actor: actor.label, actorModel: actor.model ?? null, version, reply: reply ?? null,
       fromStatus: patch.status ? cur.status : null,
       toStatus: patch.status ?? null,
       waitingOn: patch.status === 'waiting' ? patch.waitingOn : null,
@@ -244,6 +249,7 @@ export const messageSummaryView = (m: Message) => ({
 const eventView = (e: MessageEvent) => ({
   at: e.at.toISOString(),
   actor: e.actor,
+  model: e.actorModel,
   source: e.source,
   version: e.version,
   from_status: e.fromStatus,
@@ -257,6 +263,7 @@ export const messageDetailView = (m: Message, events: MessageEvent[]) => ({
   body: m.body,
   source: m.source,
   created_by: m.createdBy,
+  model: m.createdByModel,
   closed_at: m.closedAt?.toISOString() ?? null,
   events: events.map(eventView),
 });

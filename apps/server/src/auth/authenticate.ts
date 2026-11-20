@@ -113,3 +113,12 @@ export function apiWriterLabel(req: FastifyRequest): string {
   }
   return 'human';
 }
+
+/**
+ * The editor of a write over /api, labelled by apiWriterLabel: only "human" (the web UI) writes as the human; an app
+ * connection, or the old token with an X-Tabula-Agent header, writes as an agent. /api never carries a model.
+ */
+export function apiEditor(req: FastifyRequest): { source: 'agent' | 'human'; label: string } {
+  const label = apiWriterLabel(req);
+  return { source: label === 'human' ? 'human' : 'agent', label };
+}

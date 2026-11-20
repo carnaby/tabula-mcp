@@ -16,7 +16,7 @@ export type ReportStatus = (typeof REPORT_STATUSES)[number];
 export const REPORT_LIMITS = { title: 200, body: 20_000, triage: 50_000, fileName: 200, frameNote: 2000 } as const;
 
 /** Who is writing: the human in the UI, or an agent with its label. */
-export type Editor = { source: 'agent' | 'human'; label: string };
+export type Editor = { source: 'agent' | 'human'; label: string; model?: string | null };
 
 const cols = {
   id: reports.id,
@@ -27,6 +27,7 @@ const cols = {
   status: reports.status,
   source: reports.source,
   editedBy: reports.editedBy,
+  editedByModel: reports.editedByModel,
   version: reports.version,
   closedAt: reports.closedAt,
   keepMedia: reports.keepMedia,
@@ -44,6 +45,7 @@ export type Report = {
   status: ReportStatus;
   source: 'agent' | 'human';
   editedBy: string;
+  editedByModel: string | null;
   version: number;
   closedAt: Date | null;
   /** Video and audio stay after closing. */
@@ -107,7 +109,7 @@ export async function createReport(
   const title = cleanTitle(input.title ?? '') || defaultTitle(body, now);
   const [row] = await db
     .insert(reports)
-    .values({ projectId, title, body, source: editor.source, editedBy: editor.label })
+    .values({ projectId, title, body, source: editor.source, editedBy: editor.label, editedByModel: editor.model ?? null })
     .returning(cols);
   return row!;
 }
@@ -152,7 +154,10 @@ export async function updateReport(db: Db, id: string, patch: ReportPatch, edito
     const closedAt = status === 'done' ? (cur.status === 'done' ? cur.closedAt : new Date()) : null;
     const [row] = await tx
       .update(reports)
-      .set({ title, body, triage, status, projectId, keepMedia, closedAt, editedBy: editor.label, version: cur.version + 1 })
+      .set({
+        title, body, triage, status, projectId, keepMedia, closedAt, editedBy: editor.label, editedByModel: editor.model ?? null,
+        version: cur.version + 1,
+      })
       .where(eq(reports.id, id))
       .returning(cols);
     return row!;
@@ -302,6 +307,7 @@ export async function addAttachment(
         .values({
           id, reportId, kind: file.type.kind, mime: file.type.mime, size: file.size, sha256: file.sha256,
           fileName: safeFileName(fileName, file.type.ext), storageKey: key, durationMs, createdBy: editor.label,
+          createdByModel: editor.model ?? null,
         })
         .returning();
       row = inserted!;
@@ -408,6 +414,7 @@ export async function frameAt(
         sha256: createHash('sha256').update(image).digest('hex'),
         fileName: `${video.fileName.replace(/\.[^.]+$/, '')}-${label}.jpg`, storageKey: key, sourceId: videoId, atMs,
         createdBy: editor.label,
+        createdByModel: editor.model ?? null,
       })
       // The same moment asked for twice at once: the first one wins.
       .onConflictDoNothing({ target: [reportAttachments.sourceId, reportAttachments.atMs] })

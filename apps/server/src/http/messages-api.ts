@@ -1,9 +1,10 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+import { apiEditor } from '../auth/authenticate.js';
 import type { Db } from '../db/client.js';
 import { createMessageToken, listMessageTokens, revokeMessageToken } from '../domain/message-tokens.js';
 import {
-  deleteMessage, listMessageEvents, MESSAGE_STATUSES, MESSAGE_TYPES, type MessageActor, messageCounts, messageDetailView, messageSummaryView,
+  deleteMessage, listMessageEvents, MESSAGE_STATUSES, MESSAGE_TYPES, messageCounts, messageDetailView, messageSummaryView,
   pageMessages, requireMessage, updateMessage,
 } from '../domain/messages.js';
 import { MAX_PAGE_SIZE } from '../domain/paging.js';
@@ -11,7 +12,6 @@ import { rejectNul } from '../domain/validation.js';
 import { messagePatchBody, toMessagePatch } from './message-body.js';
 import { parse } from './parse.js';
 
-const HUMAN: MessageActor = { source: 'human', label: 'human', access: 'full' };
 const idParams = z.object({ id: z.uuid() });
 
 /** The Inbox for the web UI. Registered inside the /api plugin, so only the full token opens it. */
@@ -43,7 +43,7 @@ export const messageRoutes: FastifyPluginAsync<{ db: Db }> = async (app, { db })
 
   app.patch('/messages/:id', async (req) => {
     const { id } = parse(idParams, req.params);
-    return messageSummaryView(await updateMessage(db, id, toMessagePatch(parse(messagePatchBody, req.body)), HUMAN));
+    return messageSummaryView(await updateMessage(db, id, toMessagePatch(parse(messagePatchBody, req.body)), { ...apiEditor(req), access: 'full' }));
   });
 
   app.delete('/messages/:id', async (req, reply) => {

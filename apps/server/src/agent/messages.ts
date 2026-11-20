@@ -24,7 +24,7 @@ export async function agentSendMessage(
   const m = await createMessage(
     ctx.db,
     { to: a.to, from: a.from, type: a.type, title: a.title, body: a.body, relatedTo: a.related_to },
-    { source: 'agent', label: ctx.agentLabel },
+    { source: 'agent', label: ctx.agentLabel, model: ctx.model ?? null },
   );
   return { id: m.id, ref: refOf(m.id), status: m.status, version: m.version };
 }
@@ -59,7 +59,7 @@ export async function agentUpdateMessage(
     ctx.db,
     cur.id,
     { expectedVersion: a.expected_version, reply: a.reply, status: a.status, waitingOn: a.waiting_on },
-    { source: 'agent', label: ctx.agentLabel, access: 'full' },
+    { source: 'agent', label: ctx.agentLabel, access: 'full', model: ctx.model ?? null },
   );
   // No title here: this reply has no data warning, so it carries nothing the sender wrote.
   return { id: m.id, ref: refOf(m.id), status: m.status, waiting_on: m.waitingOn, version: m.version };

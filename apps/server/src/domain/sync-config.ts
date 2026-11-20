@@ -98,6 +98,7 @@ export function caseTwin(existing: readonly string[], path: string): string | nu
  */
 export async function writeSyncedFile(
   db: Db, projectId: string, input: { path: string; content: string; baseSha256: string | null }, updatedBy: string,
+  updatedByModel: string | null = null,
 ): Promise<SyncedWrite> {
   const { path, config } = await requireWritablePath(db, projectId, input.path);
   const twin = caseTwin((await listFiles(db, projectId)).map((f) => f.path), path);
@@ -113,7 +114,7 @@ export async function writeSyncedFile(
     }
   }
   const state = matchesSyncPattern(path, config.state);
-  const r = await putFile(db, projectId, { path, content: input.content, baseSha256: input.baseSha256, isState: state }, updatedBy);
+  const r = await putFile(db, projectId, { path, content: input.content, baseSha256: input.baseSha256, isState: state }, updatedBy, updatedByModel);
   if (!r.ok) {
     const now = await getFile(db, projectId, path);
     throw conflict(

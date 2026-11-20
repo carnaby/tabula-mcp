@@ -19,11 +19,13 @@ import { MediaStore } from '../media/store.js';
 import { registerMediaRoute } from './reports-api.js';
 
 // The secret in the /mcp/<secret> path, a passkey registration link, the signature of /media links (valid for hours)
-// and an Inbox token put in a URL by mistake must never reach the logs.
+// and an Inbox token put in a URL by mistake must never reach the logs. The registration link is masked anywhere in
+// the URL and in any case, so a mistyped variant (/PASSKEY/register/…, //passkey/…, an absolute-form target) that
+// ends in the not-found log is masked too.
 const maskUrl = (url: string) =>
   url
     .replace(/^\/mcp\/[^/?#]+/, '/mcp/***')
-    .replace(/^\/passkey\/register\/[^/?#]+/, '/passkey/register/***')
+    .replace(/\/+passkey\/register\/[^/?#]+/gi, '/passkey/register/***')
     .replace(/([?&]sig=)[^&#]*/g, '$1***')
     .replace(/tabula_inbox_[A-Za-z0-9_-]+/g, 'tabula_inbox_***');
 

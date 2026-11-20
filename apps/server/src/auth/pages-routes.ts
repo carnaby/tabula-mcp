@@ -50,7 +50,7 @@ export async function registerAuthPages(app: FastifyInstance, ctx: AuthContext &
     return sendPage(reply, 200, registerPage({ token, defaultName: device(req.headers['user-agent']), next: '/#/security' }));
   });
 
-  // Step 1 only: the web app signed in with TABULA_TOKEN posts it here to add the first passkey (spec §4.2, §6).
+  // Step 1 only: the web app signed in with TABULA_TOKEN posts it here to add the first passkey, never another (spec §4.2, §6).
   await app.register(async (forms) => {
     useFormBody(forms);
     forms.post('/passkey/add', { bodyLimit: 8 * 1024 }, async (req, reply) => {
@@ -61,6 +61,11 @@ export async function registerAuthPages(app: FastifyInstance, ctx: AuthContext &
         return sendPage(reply, 403, messagePage('Refused', 'Sign in again and use Add passkey on the Security page.'));
       }
       await ctx.legacy.record('token');
+      // Spec §4.2: the old token adds only the first passkey. Otherwise a leaked token could plant a passkey that
+      // outlives it; once one exists, more come from a fresh passkey sign-in (GET above) or admin.js passkey-link.
+      if ((await countPasskeys(db)) > 0) {
+        return sendPage(reply, 403, messagePage('Refused', 'A passkey already exists: sign in with it and use Add passkey on the Security page.'));
+      }
       const reg = await createRegistration(db, 'add', new Date());
       return sendPage(reply, 200, registerPage({ token: reg, defaultName: device(req.headers['user-agent']), next: '/#/security' }));
     });

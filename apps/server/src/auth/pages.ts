@@ -33,6 +33,7 @@ export function sendPage(reply: FastifyReply, status: number, html: string): Fas
     .send(html);
 }
 
+/** A page with one message. `link.href` must be a local path the server chose, never a value from the request. */
 export function messagePage(title: string, text: string, link?: { href: string; label: string }): string {
   const more = link ? `<p><a href="${esc(link.href)}">${esc(link.label)}</a></p>` : '';
   return page(title, `<h1>${esc(title)}</h1><p>${esc(text)}</p>${more}`);

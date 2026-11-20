@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createRegistration } from '../../src/auth/passkeys/registrations.js';
 import { createSession } from '../../src/auth/sessions.js';
-import { passkeyRegistrations, settings, uiSessions } from '../../src/db/schema.js';
+import { passkeyRegistrations, passkeys, settings, uiSessions } from '../../src/db/schema.js';
 import { buildApp } from '../../src/http/app.js';
 import { TEST_PUBLIC_URL, TEST_TOKEN, testConfig, useTestDb } from '../helpers.js';
 
@@ -27,6 +27,15 @@ afterAll(async () => {
 
 const get = (url: string, headers: Record<string, string> = {}) => app.inject({ method: 'GET', url, headers });
 const dataOf = (html: string, name: string) => new RegExp(`data-${name}="([^"]*)"`).exec(html)?.[1];
+const PAGE_CSP =
+  "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'";
+/** The headers every server-rendered auth page carries. */
+const expectPageHeaders = (res: { headers: Record<string, unknown> }) => {
+  expect(res.headers['content-security-policy']).toBe(PAGE_CSP);
+  expect(res.headers['x-frame-options']).toBe('DENY');
+  expect(res.headers['referrer-policy']).toBe('no-referrer');
+  expect(res.headers['cache-control']).toBe('no-store');
+};
 const sessionCookie = async (verifiedAgoMs = 0) => {
   const { session, token } = await createSession(db, { userAgent: 'test', now: new Date() });
   if (verifiedAgoMs) await db.update(uiSessions).set({ verifiedAt: new Date(Date.now() - verifiedAgoMs) }).where(eq(uiSessions.id, session.id));
@@ -37,11 +46,7 @@ describe('auth pages', () => {
   it('carry a strict CSP, no framing and one same-origin script', async () => {
     const res = await get('/signin');
     expect(res.statusCode).toBe(200);
-    expect(res.headers['content-security-policy']).toBe(
-      "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'",
-    );
-    expect(res.headers['x-frame-options']).toBe('DENY');
-    expect(res.headers['cache-control']).toBe('no-store');
+    expectPageHeaders(res);
     expect(res.body).toContain('<script src="/auth/passkey.js" defer></script>');
     expect(res.body).not.toMatch(/<script>|style=|https?:\/\//);
     const script = await get('/auth/passkey.js');
@@ -74,8 +79,13 @@ describe('auth pages', () => {
     logs.length = 0;
     const res = await get(`/passkey/register/${token}`, { 'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 Version/18.0 Safari/605.1.15' });
     expect(res.statusCode).toBe(200);
+    expectPageHeaders(res);
     expect(dataOf(res.body, 'token')).toBe(token);
     expect(res.body).toContain('value="Safari on macOS"');
+    // Mistyped variants are not routes, but the not-found log must not carry the link either.
+    for (const url of [`/PASSKEY/Register/${token}`, `//passkey/register/${token}`, `/x/passkey/register/${token}?a=1`]) {
+      expect((await get(url)).statusCode).toBe(404);
+    }
     expect(logs.join()).toContain('/passkey/register/***');
     expect(logs.join()).not.toContain(token);
   });
@@ -109,10 +119,32 @@ describe('auth pages', () => {
       app.inject({ method: 'POST', url: '/passkey/add', headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers }, payload: new URLSearchParams({ legacy_token: token }).toString() });
     expect((await form(TEST_TOKEN, {})).statusCode).toBe(403);
     expect((await form('wrong')).statusCode).toBe(403);
+    expect((await form(TEST_TOKEN, { origin: 'https://evil.example' })).statusCode).toBe(403);
+    const raw = (payload: string, contentType: string) =>
+      app.inject({ method: 'POST', url: '/passkey/add', headers: { 'content-type': contentType, origin: TEST_PUBLIC_URL }, payload });
+    const repeated = await raw(`legacy_token=${TEST_TOKEN}&legacy_token=${TEST_TOKEN}`, 'application/x-www-form-urlencoded');
+    expect(repeated.statusCode).toBe(403);
+    expectPageHeaders(repeated);
+    expect((await raw(JSON.stringify({ legacy_token: TEST_TOKEN }), 'application/json')).statusCode).toBe(403);
+    expect(await db.select().from(passkeyRegistrations)).toHaveLength(0);
     const res = await form(TEST_TOKEN);
     expect(res.statusCode).toBe(200);
+    expectPageHeaders(res);
     expect(dataOf(res.body, 'token')).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect((await db.select().from(settings).where(eq(settings.key, 'legacy_token_last_used')))[0]?.value).toEqual({ at: expect.any(String) });
+  });
+
+  it('let the old token add only the first passkey, never another', async () => {
+    await db.insert(passkeys).values({ credentialId: 'existing', publicKey: 'key', name: 'Laptop' });
+    const res = await app.inject({
+      method: 'POST', url: '/passkey/add',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', origin: TEST_PUBLIC_URL },
+      payload: new URLSearchParams({ legacy_token: TEST_TOKEN }).toString(),
+    });
+    expect(res.statusCode).toBe(403);
+    expectPageHeaders(res);
+    expect(res.body).toContain('A passkey already exists');
+    expect(await db.select().from(passkeyRegistrations)).toHaveLength(0);
   });
 
   it('do not exist without TABULA_PUBLIC_URL', async () => {

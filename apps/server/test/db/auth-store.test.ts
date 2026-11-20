@@ -2,12 +2,13 @@ import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import { clearedSessionCookie, readCookie, sessionCookie } from '../../src/auth/cookie.js';
 import {
-  cleanPasskeyName, consumeChallenge, countPasskeys, deletePasskey, insertPasskey, renamePasskey, saveChallenge, webauthnUserId,
+  cleanPasskeyName, consumeChallenge, countPasskeys, deletePasskey, insertPasskey, recordPasskeyUse, renamePasskey, saveChallenge,
+  webauthnUserId,
 } from '../../src/auth/passkeys/store.js';
 import { createRegistration, findRegistration, useRegistration } from '../../src/auth/passkeys/registrations.js';
 import { authenticateSession, createSession, deleteSession, deviceLabel, isFresh, listSessions, markVerified } from '../../src/auth/sessions.js';
 import { authSettings } from '../../src/auth/settings.js';
-import { uiSessions } from '../../src/db/schema.js';
+import { passkeys, uiSessions } from '../../src/db/schema.js';
 import { useTestDb } from '../helpers.js';
 
 const db = useTestDb();
@@ -117,6 +118,15 @@ describe('passkeys', () => {
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
     expect(await countPasskeys(db)).toBe(1);
     await expect(deletePasskey(db, 'not-a-uuid')).rejects.toMatchObject({ code: 'not_found' });
+  });
+
+  it('never move their signature counter back', async () => {
+    const p = (await passkey('c'))!;
+    const t0 = new Date();
+    await recordPasskeyUse(db, p.id, 7, t0);
+    await recordPasskeyUse(db, p.id, 4, at(1000, t0));
+    const [row] = await db.select().from(passkeys).where(eq(passkeys.id, p.id));
+    expect(row).toMatchObject({ counter: 7, lastUsedAt: at(1000, t0) });
   });
 
   it('ignore a second registration of the same credential', async () => {

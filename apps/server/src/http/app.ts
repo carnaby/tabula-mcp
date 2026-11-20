@@ -4,6 +4,7 @@ import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
 import type { AuthContext } from '../auth/authenticate.js';
 import { LegacyUse, startLegacyTracking } from '../auth/legacy.js';
+import { RegistrationLinks, registerPasskeyRoutes } from '../auth/passkeys/routes.js';
 import { authSettings } from '../auth/settings.js';
 import type { Config } from '../config.js';
 import type { Db } from '../db/client.js';
@@ -78,6 +79,11 @@ export async function buildApp(deps: {
   registerCliRoutes(app);
   registerMcpRoutes(app, { ...deps, store, mediaKey, authCtx });
   registerMediaRoute(app, { db: deps.db, config: deps.config, store, mediaKey });
+  if (auth) {
+    // One budget of failed registration-link lookups per address, shared by every route that takes a link.
+    const links = new RegistrationLinks(deps.db);
+    registerPasskeyRoutes(app, { ...authCtx, auth, links });
+  }
   await app.register(apiRoutes, { prefix: '/api', db: deps.db, config: deps.config, store, mediaKey, authCtx });
   await app.register(inboxApiRoutes, { prefix: '/inbox-api/v1', db: deps.db });
 

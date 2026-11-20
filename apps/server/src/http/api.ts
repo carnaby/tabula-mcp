@@ -25,6 +25,7 @@ import { fileRoutes } from './files-api.js';
 import { reportRoutes } from './reports-api.js';
 import { homeRoutes } from './home-api.js';
 import { messageRoutes } from './messages-api.js';
+import { securityRoutes } from './security-api.js';
 import type { MediaStore } from '../media/store.js';
 import { parse } from './parse.js';
 
@@ -50,6 +51,7 @@ export const apiRoutes: FastifyPluginAsync<{ db: Db; config: Config; store: Medi
   await app.register(reportRoutes, { db, config, store, mediaKey });
   await app.register(homeRoutes, { db, config });
   await app.register(messageRoutes, { db });
+  await app.register(securityRoutes, { authCtx });
 
   // Projects
   app.get('/projects', () => listProjects(db));

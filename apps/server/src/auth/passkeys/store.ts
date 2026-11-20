@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { and, asc, count, eq, gt, isNull } from 'drizzle-orm';
+import { and, asc, count, eq, gt, isNull, sql } from 'drizzle-orm';
 import type { Db } from '../../db/client.js';
 import { passkeys, settings, webauthnChallenges } from '../../db/schema.js';
 import { badRequest, conflict, notFound } from '../../domain/errors.js';
@@ -43,8 +43,9 @@ export async function insertPasskey(
   return row;
 }
 
+/** A sign-in with this passkey. The signature counter never moves back, even when two sign-ins race. */
 export async function recordPasskeyUse(db: Db, id: string, counter: number, now: Date): Promise<void> {
-  await db.update(passkeys).set({ counter, lastUsedAt: now }).where(eq(passkeys.id, id));
+  await db.update(passkeys).set({ counter: sql`GREATEST(${passkeys.counter}, ${counter})`, lastUsedAt: now }).where(eq(passkeys.id, id));
 }
 
 export async function renamePasskey(db: Db, id: string, raw: string): Promise<Passkey> {

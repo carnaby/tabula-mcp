@@ -263,7 +263,7 @@ CI also publishes a ready-made image, `ghcr.io/carnaby/tabula:latest` (plus a `s
 
 For anything beyond localhost, put Tabula behind a reverse proxy that terminates TLS and bind the container to loopback: the bearer token travels in a header, and it unlocks everything Tabula holds.
 
-The proxy must pass `/.well-known/*`, `/oauth/*`, `/signin`, `/passkey/*` and `/auth/*` to Tabula like everything else, set `X-Forwarded-For` (the per-address limits of sign-in use its last entry), and must not block Anthropic's servers: claude.ai connects to `/.well-known/*`, `/oauth/register`, `/oauth/token` and `/mcp` from Anthropic's cloud, not from your browser.
+The proxy must pass `/.well-known/*`, `/oauth/*`, `/signin`, `/passkey/*` and `/auth/*` to Tabula like everything else, set `X-Forwarded-For` (the per-address limits of sign-in use its last entry), and must not block Anthropic's servers: claude.ai connects to `/.well-known/*`, `/oauth/register`, `/oauth/token` and `/mcp` (and possibly `/oauth/revoke` when a connector is removed) from Anthropic's cloud, not from your browser.
 
 The proxy must pass `X-Forwarded-Proto` (and the original `Host`, or `X-Forwarded-Host`): the attachment links that agents get from `get_report` are absolute and built from them, so without it they start with `http://`. Its request body limit must be at least `TABULA_MEDIA_MAX_MB`.
 
@@ -313,7 +313,7 @@ This release still accepts the shared `TABULA_TOKEN` (header `Authorization: Bea
 | `DATABASE_URL` | yes | — | Postgres connection string (set by Compose) |
 | `TABULA_TOKEN` | yes | — | Bearer token for MCP and the UI, at least 32 characters (legacy; removed in the next release) |
 | `TABULA_CONNECTOR_SECRET` | no | — | Enables `/mcp/<secret>` for clients that can't send headers, at least 32 characters (legacy; removed in the next release) |
-| `TABULA_PUBLIC_URL` | recommended | — | The public address, `https://<host>` without a path (`http://localhost:<port>` for local use): the passkey domain, the OAuth issuer and the base of `/mcp` and `/api`. Without it there are no passkeys and no OAuth |
+| `TABULA_PUBLIC_URL` | recommended | — | The public address, `https://<host>` without a path, a host name and not an IP address (`http://localhost:<port>` for local use): the passkey domain, the OAuth issuer and the base of `/mcp` and `/api`. Without it there are no passkeys and no OAuth |
 | `TABULA_FORNAX_URL` | no | — | Address of [Fornax](#transcription-with-fornax), which transcribes recordings. Set together with `TABULA_FORNAX_TOKEN` (one without the other: the server refuses to start). Without both, recordings are not transcribed |
 | `TABULA_FORNAX_TOKEN` | no | — | The token Fornax issued to Tabula; never logged or returned by the API |
 | `TABULA_FORNAX_PRIORITY` | no | `high` | `high`, `normal` or `low` (Fornax treats `low` as `normal`): the priority of Tabula's jobs in Fornax; anything else refuses to start |

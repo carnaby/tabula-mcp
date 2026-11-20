@@ -8,8 +8,9 @@ export const PAGE_CSP =
   "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'";
 
 /**
- * Never no-referrer: a browser then sends `Origin: null` with a form POST or a same-origin fetch() POST (Fetch,
- * "append a request Origin header"), and sameOrigin() refuses the consent decision and the passkey ceremonies.
+ * Never no-referrer: a browser then sends `Origin: null` with a native form POST (Fetch, "append a request Origin
+ * header"), so sameOrigin() would refuse the consent page's Allow and Deny and the legacy /passkey/add form. Same-origin
+ * fetch() POSTs (the passkey ceremonies) keep the real Origin either way, as the headless browser test shows.
  * strict-origin keeps the real Origin and sends at most the origin as Referer, never a path with a registration token.
  */
 export const REFERRER_POLICY = 'strict-origin';

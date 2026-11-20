@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import { z } from 'zod';
 
 const emptyToUndefined = (v: unknown) => (v === '' ? undefined : v);
@@ -64,12 +65,26 @@ function fornaxUrl(raw: string): string {
 }
 
 export const PUBLIC_URL_RULE = 'must be https://<host>[:<port>] without a path, query or fragment, or http://localhost[:<port>]';
+export const PUBLIC_URL_IP_RULE = 'must name a host, not an IP address: passkeys (WebAuthn) refuse an IP address as the relying party ID';
+
+/** An IPv4 or IPv6 literal; URL keeps the brackets around an IPv6 hostname. */
+const isIpHost = (hostname: string) => isIP(hostname.replace(/^\[|\]$/g, '')) !== 0;
+
+/** Whether an otherwise https address names an IP literal: it gets its own startup error. */
+const isHttpsIp = (raw: string) => {
+  try {
+    const url = new URL(raw);
+    return url.protocol === 'https:' && isIpHost(url.hostname);
+  } catch {
+    return false;
+  }
+};
 
 /**
  * The address in the one form clients compare it in, or null. A single trailing slash is dropped; anything else must
  * already be exactly the URL's origin (no path, query, fragment, user, upper case). An issuer is compared byte for
- * byte (RFC 8414 §3.3) and the passkey origin too, so nothing is rewritten silently. Plain http only on localhost:
- * WebAuthn refuses an IP address as the RP ID.
+ * byte (RFC 8414 §3.3) and the passkey origin too, so nothing is rewritten silently. Plain http only on localhost, and
+ * never an IP address, https included: WebAuthn refuses an IP address as the RP ID.
  */
 export function normalizePublicUrl(raw: string): string | null {
   const candidate = raw.endsWith('/') ? raw.slice(0, -1) : raw;
@@ -80,7 +95,7 @@ export function normalizePublicUrl(raw: string): string | null {
     return null;
   }
   if (url.origin !== candidate) return null;
-  if (url.protocol === 'https:') return url.origin;
+  if (url.protocol === 'https:') return isIpHost(url.hostname) ? null : url.origin;
   if (url.protocol === 'http:' && url.hostname === 'localhost') return url.origin;
   return null;
 }
@@ -101,7 +116,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   let publicUrl: string | undefined;
   if (e.TABULA_PUBLIC_URL !== undefined) {
     const normalized = normalizePublicUrl(e.TABULA_PUBLIC_URL);
-    if (normalized === null) throw new Error(`Invalid configuration: TABULA_PUBLIC_URL ${PUBLIC_URL_RULE}`);
+    if (normalized === null) {
+      const rule = isHttpsIp(e.TABULA_PUBLIC_URL) ? PUBLIC_URL_IP_RULE : PUBLIC_URL_RULE;
+      throw new Error(`Invalid configuration: TABULA_PUBLIC_URL ${rule}`);
+    }
     publicUrl = normalized;
   }
   return {

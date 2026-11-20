@@ -107,5 +107,11 @@ describe('loadConfig', () => {
         expect(() => loadConfig({ ...base, TABULA_PUBLIC_URL: bad }), bad).toThrow(/TABULA_PUBLIC_URL must be https/);
       }
     });
+
+    it('refuses an https address that is an IP literal, since WebAuthn refuses an IP as the RP ID', () => {
+      for (const bad of ['https://192.0.2.10', 'https://192.0.2.10:8443/', 'https://[2001:db8::1]', 'https://[2001:db8::1]:8443']) {
+        expect(() => loadConfig({ ...base, TABULA_PUBLIC_URL: bad }), bad).toThrow(/TABULA_PUBLIC_URL must name a host, not an IP address/);
+      }
+    });
   });
 });

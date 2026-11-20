@@ -8,8 +8,8 @@ export function chromePath(): string {
     env.CHROME_PATH,
     ...(process.platform === 'win32'
       ? [
-          join(env.PROGRAMFILES ?? 'C:\Program Files', 'Google', 'Chrome', 'Application', 'chrome.exe'),
-          join(env['PROGRAMFILES(X86)'] ?? 'C:\Program Files (x86)', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+          join(env.PROGRAMFILES ?? 'C:\\Program Files', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+          join(env['PROGRAMFILES(X86)'] ?? 'C:\\Program Files (x86)', 'Google', 'Chrome', 'Application', 'chrome.exe'),
           env.LOCALAPPDATA ? join(env.LOCALAPPDATA, 'Google', 'Chrome', 'Application', 'chrome.exe') : undefined,
         ]
       : process.platform === 'darwin'

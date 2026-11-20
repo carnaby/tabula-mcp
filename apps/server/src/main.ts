@@ -1,3 +1,6 @@
+import { announceFirstPasskey } from './auth/startup.js';
+import { authSettings } from './auth/settings.js';
+import { sweepAuth } from './auth/sweep.js';
 import { configWarnings, loadConfig } from './config.js';
 import { createDb } from './db/client.js';
 import { runMigrations } from './db/migrate.js';
@@ -14,6 +17,18 @@ const { db, close } = createDb(config.databaseUrl);
 const store = new MediaStore(config.media.dir, config.media.maxBytes);
 const app = await buildApp({ config, db, store });
 for (const line of configWarnings()) app.log.warn(line);
+const auth = authSettings(config);
+await announceFirstPasskey(db, auth, app.log);
+
+// Every minute: expired OAuth requests, codes and tokens, challenges, links and sessions are deleted.
+const authSweep = async () => {
+  try {
+    await sweepAuth(db, new Date());
+  } catch (e) {
+    app.log.error({ err: loggableError(e) }, 'could not clean up expired sign-in data; retrying in a minute');
+  }
+};
+const authTimer = auth ? setInterval(authSweep, 60_000) : null;
 
 // Without usable media storage Tabula still runs: only report uploads and new frames fail (503).
 const mediaProblem = await store.startup();
@@ -48,6 +63,7 @@ void purge();
 
 const shutdown = async () => {
   clearInterval(purgeTimer);
+  if (authTimer) clearInterval(authTimer);
   // The server closes and the process exits even when stopping the sync fails.
   try {
     await sync?.stop();

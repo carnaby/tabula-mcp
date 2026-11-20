@@ -2,6 +2,9 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
+import type { AuthContext } from '../auth/authenticate.js';
+import { LegacyUse, startLegacyTracking } from '../auth/legacy.js';
+import { authSettings } from '../auth/settings.js';
 import type { Config } from '../config.js';
 import type { Db } from '../db/client.js';
 import { DomainError, loggableError } from '../domain/errors.js';
@@ -30,6 +33,9 @@ export async function buildApp(deps: {
 }): Promise<FastifyInstance> {
   const store = deps.store ?? new MediaStore(deps.config.media.dir, deps.config.media.maxBytes);
   const mediaKey = await mediaSigningKey(deps.db);
+  const auth = authSettings(deps.config);
+  await startLegacyTracking(deps.db);
+  const authCtx: AuthContext = { db: deps.db, config: deps.config, auth, legacy: new LegacyUse(deps.db) };
   const secret = deps.config.connectorSecret;
   // Also masks the secret outside /mcp/<secret> (e.g. /MCP/<secret>) in case the URL ends up in the log by another route.
   const mask = (url: string) => {
@@ -45,6 +51,7 @@ export async function buildApp(deps: {
       },
     },
   });
+  app.decorateRequest('principal', null);
 
   // Fastify's default 404 handler logs "Route <METHOD>:<raw url> not found" (which would include the connector secret) and echoes the URL in the body.
   app.setNotFoundHandler((req, reply) => {
@@ -69,9 +76,9 @@ export async function buildApp(deps: {
 
   app.get('/healthz', async () => ({ ok: true }));
   registerCliRoutes(app);
-  registerMcpRoutes(app, { ...deps, store, mediaKey });
+  registerMcpRoutes(app, { ...deps, store, mediaKey, authCtx });
   registerMediaRoute(app, { db: deps.db, config: deps.config, store, mediaKey });
-  await app.register(apiRoutes, { prefix: '/api', db: deps.db, config: deps.config, store, mediaKey });
+  await app.register(apiRoutes, { prefix: '/api', db: deps.db, config: deps.config, store, mediaKey, authCtx });
   await app.register(inboxApiRoutes, { prefix: '/inbox-api/v1', db: deps.db });
 
   const webRoot = resolve(deps.config.webDist);

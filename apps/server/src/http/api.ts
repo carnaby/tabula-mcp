@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+import { apiAuth, type AuthContext } from '../auth/authenticate.js';
 import type { Config } from '../config.js';
 import type { Db } from '../db/client.js';
 import { notFound } from '../domain/errors.js';
@@ -20,7 +21,6 @@ import { claudeMdSection, TABULA_JSON } from '../mcp/snippet.js';
 import { recall } from '../domain/recall.js';
 import { DIGEST_BUDGET, estimateTokens, wordCount } from '../domain/tokens.js';
 import { MEMORY_KINDS } from '../domain/validation.js';
-import { requireBearer } from './auth.js';
 import { fileRoutes } from './files-api.js';
 import { reportRoutes } from './reports-api.js';
 import { homeRoutes } from './home-api.js';
@@ -41,9 +41,11 @@ const paging = <S extends readonly [string, ...string[]]>(sorts: S) => ({
 
 const withSize = (n: Note) => ({ ...n, wordCount: wordCount(n.body), tokenEstimate: estimateTokens(n.body) });
 
-export const apiRoutes: FastifyPluginAsync<{ db: Db; config: Config; store: MediaStore; mediaKey: string }> = async (app, { db, config, store, mediaKey }) => {
-  app.addHook('preHandler', requireBearer(config.token));
-  // Child plugin: inherits the bearer preHandler above.
+export const apiRoutes: FastifyPluginAsync<{ db: Db; config: Config; store: MediaStore; mediaKey: string; authCtx: AuthContext }> = async (
+  app, { db, config, store, mediaKey, authCtx },
+) => {
+  app.addHook('preHandler', apiAuth(authCtx));
+  // Child plugin: inherits the authentication preHandler above.
   await app.register(fileRoutes, { db });
   await app.register(reportRoutes, { db, config, store, mediaKey });
   await app.register(homeRoutes, { db, config });

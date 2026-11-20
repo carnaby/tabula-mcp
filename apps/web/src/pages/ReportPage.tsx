@@ -314,7 +314,7 @@ function Editor({
         dirty={textDirty}
         meta={
           base ? (
-            <AuthorMeta author={authorOf(base.editedBy)} iso={base.updatedAt} />
+            <AuthorMeta author={authorOf(base.editedBy, base.editedByModel)} iso={base.updatedAt} />
           ) : (
             <span className="t-truncate">New report</span>
           )

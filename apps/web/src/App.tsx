@@ -14,6 +14,7 @@ import { ProjectPage } from './pages/ProjectPage';
 import { ReportPage } from './pages/ReportPage';
 import { ReportsPage } from './pages/ReportsPage';
 import { SearchPage } from './pages/SearchPage';
+import { SecurityPage } from './pages/SecurityPage';
 import { ThoughtEditorPage } from './pages/ThoughtEditorPage';
 import { ThoughtsPage } from './pages/ThoughtsPage';
 import { href, navigate, type Route, useRoute } from './router';
@@ -33,6 +34,7 @@ function title(route: Route, projects: Project[] | undefined): string {
     case 'report': return route.id === 'new' ? 'New report' : 'Report';
     case 'inbox': return 'Inbox';
     case 'message': return 'Message';
+    case 'security': return 'Security';
     case 'project': return projects?.find((x) => x.id === route.project)?.name ?? route.project;
     default: return 'Tabula';
   }
@@ -104,6 +106,7 @@ function Page({ route, projects }: { route: Route; projects: Project[] | undefin
     case 'report': return <ReportPage id={route.id} project={route.project} from={route.from} attachment={route.attachment} projects={projects} />;
     case 'inbox': return <InboxPage projects={projects} />;
     case 'message': return <MessagePage id={route.id} from={route.from} projects={projects} />;
+    case 'security': return <SecurityPage />;
     case 'project': return <ProjectPage project={route.project} tab={route.tab} path={route.path} from={route.from} projects={projects} />;
     default:
       return (

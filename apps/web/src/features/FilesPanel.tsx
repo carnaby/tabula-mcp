@@ -29,7 +29,7 @@ const columns: Column<Row, never>[] = [
   },
   { id: 'size', header: 'Size', width: 100, align: 'right', cell: ({ file: f }) => <span className="t-subtle t-nowrap">{formatSize(f.size)}</span> },
   { id: 'version', header: 'Version', width: 90, align: 'right', hideOnMobile: true, cell: ({ file: f }) => <span className="t-subtle">v{f.version}</span> },
-  { id: 'by', header: 'By', width: 140, hideOnMobile: true, cell: ({ file: f }) => <Author {...authorOf(f.updatedBy)} /> },
+  { id: 'by', header: 'By', width: 140, hideOnMobile: true, cell: ({ file: f }) => <Author {...authorOf(f.updatedBy, f.updatedByModel)} /> },
   { id: 'updated', header: 'Updated', width: 130, align: 'right', cell: ({ file: f }) => <span className="t-subtle"><TimeAgo iso={f.updatedAt} /></span> },
   { id: 'ref', header: 'Reference', width: 48, align: 'right', cell: ({ file: f }) => <CopyRefButton id={f.id} size="sm" /> },
 ];

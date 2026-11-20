@@ -2,9 +2,10 @@ import type {
   FileRevision, FileRevisionContent, Memory, MemoryKind, MemorySort, Note, NoteSort, Page, Project, RecallPreview, RefTarget, SearchHit, Source, Thought,
   ProjectFile, ProjectFileContent, ThoughtRevision, ThoughtSort,
   ActivityPage, ActivityType, Attachment, Dashboard, TranscriptState, WorkerStatus, ReportDetail, Report, ReportSort, ReportStatus, ReportSummary,
-  MessageCounts, MessageDetail, MessagePatch, MessageStatusFilter, MessageSummary, MessageToken, MessageType,
+  MessageCounts, MessageDetail, MessagePatch, MessageStatusFilter, MessageSummary, MessageToken, MessageType, SecurityOverview,
 } from './types';
 
+/** The legacy token (TABULA_TOKEN), kept only until this browser signs in with a passkey; removed in the next release. */
 const TOKEN_KEY = 'tabula.token';
 const storage = {
   get: () => { try { return localStorage.getItem(TOKEN_KEY); } catch { return null; } },
@@ -23,11 +24,14 @@ export class ApiError extends Error {
 }
 
 async function request<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+  const token = getToken();
   const res = await fetch(`/api${path}`, {
     method,
     signal,
+    // The session cookie (HttpOnly) goes along by itself; the legacy token only while one is stored.
+    credentials: 'same-origin',
     headers: {
-      Authorization: `Bearer ${getToken() ?? ''}`,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(body !== undefined && { 'content-type': 'application/json' }),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -44,6 +48,32 @@ async function request<T>(method: string, path: string, body?: unknown, signal?:
   return (res.status === 204 ? undefined : await res.json()) as T;
 }
 
+export type Me = { via: 'session' | 'legacy'; fresh: boolean; passkeys: number; publicUrl: string | null };
+
+/** `passkeySignIn`: the server offers passkeys at all, which it does only with TABULA_PUBLIC_URL. */
+export type MeAnswer = { me: Me | null; passkeySignIn: boolean };
+
+async function askMe(token: string | null): Promise<MeAnswer> {
+  const res = await fetch('/api/auth/me', { credentials: 'same-origin', headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  if (res.status === 401 || res.status === 403) {
+    // With TABULA_PUBLIC_URL the refusal points to the OAuth metadata; without it the challenge is a bare "Bearer".
+    return { me: null, passkeySignIn: /resource_metadata=/.test(res.headers.get('www-authenticate') ?? '') };
+  }
+  if (!res.ok) throw new ApiError(res.status, res.statusText);
+  const me = (await res.json()) as Me;
+  return { me, passkeySignIn: me.publicUrl !== null };
+}
+
+/** Who this browser is signed in as, or null. `legacy`: ask with the stored legacy token instead of the cookie alone. */
+export async function fetchMe(legacy: boolean): Promise<Me | null> {
+  const token = legacy ? getToken() : null;
+  if (legacy && !token) return null;
+  return (await askMe(token)).me;
+}
+
+/** The cookie session alone (never the legacy token), and whether passkey sign-in exists on this server. */
+export const fetchSession = (): Promise<MeAnswer> => askMe(null);
+
 const qs = (params: Record<string, string | number | boolean | undefined | null>) => {
   const entries = Object.entries(params)
     .filter(([, v]) => v !== undefined && v !== null && v !== '')
@@ -58,6 +88,7 @@ type ThoughtInput = { title: string; body?: string; tags?: string[]; pinned?: bo
 type S = AbortSignal | undefined;
 
 export const api = {
+  logout: () => request<void>('POST', '/auth/logout'),
   files: (project: string, deleted: boolean, signal?: S) =>
     request<ProjectFile[]>('GET', `/projects/${encodeURIComponent(project)}/files${qs({ deleted: deleted ? 1 : undefined })}`, undefined, signal),
   file: (project: string, path: string, signal?: S) =>
@@ -150,6 +181,13 @@ export const api = {
   setTidyPrompt: (text: string) => request<{ text: string }>('PUT', '/settings/tidy-prompt', { text }),
   compactPrompt: (signal?: S) => request<{ text: string }>('GET', '/settings/compact-prompt', undefined, signal),
   setCompactPrompt: (text: string) => request<{ text: string }>('PUT', '/settings/compact-prompt', { text }),
+  me: (signal?: S) => request<Me>('GET', '/auth/me', undefined, signal),
+  security: (signal?: S) => request<SecurityOverview>('GET', '/security', undefined, signal),
+  renamePasskey: (id: string, name: string) => request<{ id: string; name: string }>('PATCH', `/passkeys/${id}`, { name }),
+  deletePasskey: (id: string) => request<void>('DELETE', `/passkeys/${id}`),
+  renameConnection: (id: string, name: string) => request<{ id: string; name: string }>('PATCH', `/connections/${id}`, { name }),
+  revokeConnection: (id: string) => request<void>('POST', `/connections/${id}/revoke`),
+  signOutSession: (id: string) => request<void>('DELETE', `/sessions/${id}`),
 };
 
 /**
@@ -165,7 +203,8 @@ export function uploadAttachment(
   const xhr = new XMLHttpRequest();
   const promise = new Promise<Attachment>((resolve, reject) => {
     xhr.open('POST', `/api/reports/${reportId}/attachments`);
-    xhr.setRequestHeader('Authorization', `Bearer ${getToken() ?? ''}`);
+    const token = getToken();
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
     xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
     xhr.setRequestHeader('X-File-Name', encodeURIComponent(name));
     xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);

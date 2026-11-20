@@ -75,6 +75,18 @@ export function sanitizeAgentLabel(raw: unknown): string {
   return LABEL.test(v) && v !== 'human' ? v : 'unknown';
 }
 
+const MODEL = /^[a-z0-9._-]{1,60}$/;
+
+/**
+ * The model an agent says it is (spec §5): lower case, every other character a dash, at most 60. Only a statement:
+ * which app wrote is known from the token, which model only from what the model says.
+ */
+export function normalizeModel(raw: unknown): string {
+  if (typeof raw !== 'string') return 'unknown';
+  const v = raw.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60).replace(/-+$/, '');
+  return MODEL.test(v) ? v : 'unknown';
+}
+
 const SLUG = /^[a-z0-9][a-z0-9-]{0,39}$/;
 
 /** The list filter and the open-report counts use this word for reports without a project. */

@@ -28,13 +28,17 @@ import { refOf } from '@tabula/shared/refs';
 
 export type AgentMedia = {
   store: MediaStore;
-  token: string;
+  /** The /media signing key (media/key.ts). */
+  key: string;
   paths: FfmpegPaths;
   /** Origin the agent reached Tabula at, for absolute attachment links. */
   baseUrl?: string;
 };
-/** `transcriptionEnabled`: Fornax is configured (TABULA_FORNAX_URL), so recordings get transcribed (absent = yes). */
-export type AgentContext = { db: Db; agentLabel: string; media?: AgentMedia; transcriptionEnabled?: boolean };
+/**
+ * `transcriptionEnabled`: Fornax is configured (TABULA_FORNAX_URL), so recordings get transcribed (absent = yes).
+ * `model`: the model the agent named in this call, normalized (normalizeModel); set only for write tools.
+ */
+export type AgentContext = { db: Db; agentLabel: string; model?: string; media?: AgentMedia; transcriptionEnabled?: boolean };
 
 /** Project memories were replaced by synced files; agents keep only the global rules, and only on request. */
 export const GLOBAL_ONLY =
@@ -55,6 +59,7 @@ const memoryView = (m: Memory) => ({
   status: m.status,
   source: m.source,
   agent_label: m.agentLabel,
+  model: m.agentModel,
   supersedes_id: m.supersedesId,
   deprecated_reason: m.deprecatedReason,
   created_at: m.createdAt.toISOString(),
@@ -86,6 +91,7 @@ const thoughtView = (t: Thought) => ({
   archived: t.archived,
   version: t.version,
   edited_by: t.editedBy,
+  model: t.editedByModel,
   created_at: t.createdAt.toISOString(),
   updated_at: t.updatedAt.toISOString(),
 });
@@ -95,6 +101,7 @@ export type NoteView = ReturnType<typeof noteView>;
 export type ThoughtView = ReturnType<typeof thoughtView>;
 export type AgentFile = {
   path: string; ref: string; size: number; version: number; sha256: string; state: boolean; updated_at: string; updated_by: string;
+  model: string | null;
 };
 /** read_file's reply: a header line with the version and hash, the text exactly as stored, and a pointer to the next part. */
 export type AgentFileRead = { header: string; text?: string; footer?: string };
@@ -262,6 +269,7 @@ export async function agentRemember(
     supersedesId,
     source: 'agent',
     agentLabel: ctx.agentLabel,
+    agentModel: ctx.model ?? null,
   });
   return { id: m.id, ref: refOf(m.id) };
 }
@@ -275,7 +283,7 @@ export async function agentDeprecate(ctx: AgentContext, input: { id: string; rea
 export async function agentListFiles(ctx: AgentContext, project: string): Promise<AgentFile[]> {
   return (await listFiles(ctx.db, project)).map((f) => ({
     path: f.path, ref: refOf(f.id), size: f.size, version: f.version, sha256: f.sha256, state: f.isState,
-    updated_at: f.updatedAt.toISOString(), updated_by: f.updatedBy,
+    updated_at: f.updatedAt.toISOString(), updated_by: f.updatedBy, model: f.updatedByModel,
   }));
 }
 
@@ -299,7 +307,9 @@ export async function agentReadFile(
 export async function agentWriteFile(
   ctx: AgentContext, input: { project: string; path: string; content: string; base_sha256?: string },
 ): Promise<SyncedWrite & { ref: string }> {
-  const w = await writeSyncedFile(ctx.db, input.project, { path: input.path, content: input.content, baseSha256: input.base_sha256 ?? null }, ctx.agentLabel);
+  const w = await writeSyncedFile(
+    ctx.db, input.project, { path: input.path, content: input.content, baseSha256: input.base_sha256 ?? null }, ctx.agentLabel, ctx.model ?? null,
+  );
   return { ...w, ref: refOf((await getFile(ctx.db, input.project, w.path)).id) };
 }
 
@@ -312,7 +322,7 @@ export const agentFindNotes = async (
   p: { query?: string; tag?: string; limit?: number },
 ): Promise<Array<NoteHit & { ref: string }>> => (await findNotes(ctx.db, p)).map((h) => ({ ref: refOf(h.id), ...h }));
 
-const agentEditor = (ctx: AgentContext) => ({ source: 'agent' as const, label: ctx.agentLabel });
+const agentEditor = (ctx: AgentContext) => ({ source: 'agent' as const, label: ctx.agentLabel, model: ctx.model ?? null });
 
 export async function agentSaveThought(
   ctx: AgentContext,
@@ -365,7 +375,7 @@ const seconds = (ms: number | null) => (ms === null ? null : Math.round(ms / 100
 
 function attachmentUrl(a: Attachment, m: AgentMedia | undefined): string {
   if (!m) throw new Error('media storage is not configured for this MCP context');
-  return `${m.baseUrl ?? ''}${signMediaPath(m.token, a.id, AGENT_LINK_TTL)}`;
+  return `${m.baseUrl ?? ''}${signMediaPath(m.key, a.id, AGENT_LINK_TTL)}`;
 }
 
 const attachmentForAgent = (a: Attachment, m: AgentMedia | undefined) => ({
@@ -378,6 +388,7 @@ const attachmentForAgent = (a: Attachment, m: AgentMedia | undefined) => ({
   duration_s: seconds(a.durationMs),
   ...(a.kind === 'frame' ? { from_video: a.sourceId, at_s: seconds(a.atMs), ...(a.note ? { note: a.note } : {}) } : {}),
   added_by: a.createdBy,
+  model: a.createdByModel,
   ...(a.purgedAt
     ? { deleted: 'deleted after the report was closed' }
     : { url: attachmentUrl(a, m) }),
@@ -444,12 +455,13 @@ const reportForAgent = (r: Report) => ({
   triage: r.triage,
   version: r.version,
   edited_by: r.editedBy,
+  model: r.editedByModel,
   created_at: r.createdAt.toISOString(),
   updated_at: r.updatedAt.toISOString(),
   closed_at: r.closedAt?.toISOString() ?? null,
 });
 
-const agentEditorOf = (ctx: AgentContext) => ({ source: 'agent' as const, label: ctx.agentLabel });
+const agentEditorOf = (ctx: AgentContext) => ({ source: 'agent' as const, label: ctx.agentLabel, model: ctx.model ?? null });
 
 export async function agentListReports(
   ctx: AgentContext,

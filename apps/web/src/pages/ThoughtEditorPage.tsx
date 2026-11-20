@@ -155,7 +155,7 @@ function Editor({ initial, from, back }: { initial: Thought | null; from?: strin
         meta={
           base ? (
             <AuthorMeta
-              author={authorOf(base.editedBy)}
+              author={authorOf(base.editedBy, base.editedByModel)}
               iso={base.updatedAt}
               details={<span className="t-subtle">Version {base.version}{base.archived ? ' · archived' : ''}</span>}
               onHistory={() => setHistory(true)}

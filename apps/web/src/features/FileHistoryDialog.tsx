@@ -61,7 +61,7 @@ export function FileHistoryDialog({
             <strong>v{file.version} · current</strong>
             <span className="t-subtle"><TimeAgo iso={file.updatedAt} /> · {formatSize(file.size)}</span>
           </div>
-          <Author {...authorOf(file.updatedBy)} />
+          <Author {...authorOf(file.updatedBy, file.updatedByModel)} />
         </div>
         {!revs.data && <Skeleton height={44} />}
         {revs.data?.length === 0 && <EmptyState icon="history" title="No earlier versions">The file hasn't changed since it was first pushed.</EmptyState>}
@@ -71,7 +71,7 @@ export function FileHistoryDialog({
               <strong>v{r.version}</strong>
               <span className="t-subtle" title={fullDate(r.createdAt)}><TimeAgo iso={r.createdAt} /> · {formatSize(r.size)}</span>
             </div>
-            <Author {...authorOf(r.updatedBy)} />
+            <Author {...authorOf(r.updatedBy, r.updatedByModel)} />
           </button>
         ))}
       </div>

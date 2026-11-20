@@ -66,11 +66,14 @@ export type FileMeta = {
   version: number;
   isState: boolean;
   updatedBy: string;
+  updatedByModel: string | null;
   updatedAt: Date;
   deletedAt: Date | null;
 };
 export type ProjectFile = FileMeta & { projectId: string; content: string; createdAt: Date };
-export type FileRevisionMeta = { version: number; sha256: string; size: number; updatedBy: string; createdAt: Date };
+export type FileRevisionMeta = {
+  version: number; sha256: string; size: number; updatedBy: string; updatedByModel: string | null; createdAt: Date;
+};
 export type FileRevision = FileRevisionMeta & { content: string };
 /** isState, when given, sets the file's state flag with the write (agents writing over MCP); otherwise it is kept. */
 export type PutFileInput = { path: string; content: string; baseSha256: string | null; force?: boolean; isState?: boolean };
@@ -86,6 +89,7 @@ const meta = {
   version: projectFiles.version,
   isState: projectFiles.isState,
   updatedBy: projectFiles.updatedBy,
+  updatedByModel: projectFiles.updatedByModel,
   updatedAt: projectFiles.updatedAt,
   deletedAt: projectFiles.deletedAt,
 };
@@ -95,6 +99,7 @@ const revisionMeta = {
   sha256: projectFileRevisions.sha256,
   size: projectFileRevisions.size,
   updatedBy: projectFileRevisions.updatedBy,
+  updatedByModel: projectFileRevisions.updatedByModel,
   createdAt: projectFileRevisions.createdAt,
 };
 /** Setting updated_at to itself stops Drizzle's $onUpdate: deleting, restoring and state marking are not edits. */
@@ -105,7 +110,9 @@ const at = (projectId: string, path: string) => and(eq(projectFiles.projectId, p
  * Optimistic locking: the write is accepted only if baseSha256 is the server's current hash, or the file does not
  * exist (a soft-deleted file counts as not existing), or force is set. Identical content is always a no-op.
  */
-export async function putFile(db: Db, projectId: string, input: PutFileInput, updatedBy: string): Promise<PutFileResult> {
+export async function putFile(
+  db: Db, projectId: string, input: PutFileInput, updatedBy: string, updatedByModel: string | null = null,
+): Promise<PutFileResult> {
   await requireProject(db, projectId);
   const path = validateFilePath(input.path);
   const { sha256, size } = validateFileContent(input.content);
@@ -115,7 +122,7 @@ export async function putFile(db: Db, projectId: string, input: PutFileInput, up
     if (!cur) {
       const [created] = await tx
         .insert(projectFiles)
-        .values({ projectId, path, content: input.content, sha256, size, updatedBy, isState: input.isState ?? false })
+        .values({ projectId, path, content: input.content, sha256, size, updatedBy, updatedByModel, isState: input.isState ?? false })
         .onConflictDoNothing({ target: [projectFiles.projectId, projectFiles.path] })
         .returning({ version: projectFiles.version });
       if (created) return { ok: true, sha256, version: created.version, changed: true };
@@ -136,14 +143,14 @@ export async function putFile(db: Db, projectId: string, input: PutFileInput, up
     const version = cur.version + 1;
     await tx.insert(projectFileRevisions).values({
       fileId: cur.id, version: cur.version, content: cur.content, sha256: cur.sha256, size: cur.size,
-      updatedBy: cur.updatedBy, createdAt: cur.updatedAt,
+      updatedBy: cur.updatedBy, updatedByModel: cur.updatedByModel, createdAt: cur.updatedAt,
     });
     await tx
       .delete(projectFileRevisions)
       .where(and(eq(projectFileRevisions.fileId, cur.id), lte(projectFileRevisions.version, version - 1 - KEEP_FILE_REVISIONS)));
     await tx
       .update(projectFiles)
-      .set({ content: input.content, sha256, size, version, updatedBy, deletedAt: null, ...stateFlag })
+      .set({ content: input.content, sha256, size, version, updatedBy, updatedByModel, deletedAt: null, ...stateFlag })
       .where(eq(projectFiles.id, cur.id));
     return { ok: true, sha256, version, changed: true };
   });

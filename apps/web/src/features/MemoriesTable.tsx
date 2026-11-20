@@ -43,7 +43,7 @@ export function MemoriesTable({ project, projects }: { project?: string; project
     },
     { id: 'kind', header: 'Kind', sort: 'kind', width: 100, cell: (m) => <KindBadge kind={m.kind} /> },
     ...(project ? [] : [{ id: 'project', header: 'Project', sort: 'projectId' as const, width: 140, cell: (m: Memory) => <span className="t-mono t-muted">{m.projectId}</span> }]),
-    { id: 'source', header: 'Author', sort: 'source', width: 150, cell: (m) => <Author source={m.source} label={m.agentLabel} /> },
+    { id: 'source', header: 'Author', sort: 'source', width: 150, cell: (m) => <Author source={m.source} label={m.agentLabel} model={m.agentModel} /> },
     ...(t.filters.status === 'active' ? [] : [{
       id: 'status', header: 'Status', sort: 'status' as const, width: 110,
       cell: (m: Memory) => <Badge tone={m.status === 'active' ? 'success' : 'neutral'}>{m.status}</Badge>,

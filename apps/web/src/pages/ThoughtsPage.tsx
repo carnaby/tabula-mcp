@@ -117,7 +117,7 @@ export function ThoughtsPage() {
                 </div>
               )}
               <div className="thought-card__meta">
-                <Author {...authorOf(th.editedBy)} />
+                <Author {...authorOf(th.editedBy, th.editedByModel)} />
                 <span>·</span>
                 <TimeAgo iso={th.updatedAt} />
                 {th.version > 1 && <span title="Number of versions">· v{th.version}</span>}

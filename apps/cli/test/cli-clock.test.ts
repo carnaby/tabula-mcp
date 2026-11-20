@@ -6,8 +6,8 @@ type CliClock = { VERSION: string; formatClock(ms: number): string };
 const cli = (await import(new URL('../tabula.mjs', import.meta.url).href)) as CliClock;
 
 describe('what the server imports from the CLI', () => {
-  it('is version 1.5.0', () => {
-    expect(cli.VERSION).toBe('1.5.0');
+  it('is version 1.6.0', () => {
+    expect(cli.VERSION).toBe('1.6.0');
   });
 
   it('formats clock times like the UI', () => {

@@ -1,11 +1,11 @@
-import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
+import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+import { apiWriterLabel } from '../auth/authenticate.js';
 import type { Db } from '../db/client.js';
 import {
   deleteFile, FILE_LIMITS, getFile, getFileRevision, listFileRevisions, listFiles, putFile, restoreFile, setStatePaths,
 } from '../domain/files.js';
 import { getSyncConfig, setSyncConfig } from '../domain/sync-config.js';
-import { sanitizeAgentLabel } from '../domain/validation.js';
 import { parse } from './parse.js';
 
 /**
@@ -16,12 +16,6 @@ const PUT_BODY_LIMIT = 8 * FILE_LIMITS.contentBytes;
 
 const idParams = z.object({ id: z.string() });
 const pathQuery = z.object({ path: z.string() });
-
-/** The CLI sends X-Tabula-Agent: cli; the UI sends no agent header and writes as the human. */
-function writer(req: FastifyRequest): string {
-  const header = req.headers['x-tabula-agent'];
-  return header ? sanitizeAgentLabel(header) : 'human';
-}
 
 export const fileRoutes: FastifyPluginAsync<{ db: Db }> = async (app, { db }) => {
   app.get('/projects/:id/files', (req) => {
@@ -40,7 +34,7 @@ export const fileRoutes: FastifyPluginAsync<{ db: Db }> = async (app, { db }) =>
       z.object({ path: z.string(), content: z.string(), base_sha256: z.string().nullable(), force: z.boolean().optional() }),
       req.body,
     );
-    const r = await putFile(db, id, { path: b.path, content: b.content, baseSha256: b.base_sha256, force: b.force }, writer(req));
+    const r = await putFile(db, id, { path: b.path, content: b.content, baseSha256: b.base_sha256, force: b.force }, apiWriterLabel(req));
     if (!r.ok) {
       return reply.code(409).send({ error: 'conflict', message: 'the file changed on the server since your base version', sha256: r.sha256 });
     }

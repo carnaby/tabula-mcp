@@ -127,6 +127,13 @@
       "when": 1794994969832,
       "tag": "0017_inbox",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1795167218242,
+      "tag": "0018_oauth_passkeys",
+      "breakpoints": true
     }
   ]
 }

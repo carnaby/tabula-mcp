@@ -17,6 +17,7 @@ const cols = {
   archived: thoughts.archived,
   source: thoughts.source,
   editedBy: thoughts.editedBy,
+  editedByModel: thoughts.editedByModel,
   version: thoughts.version,
   createdAt: thoughts.createdAt,
   updatedAt: thoughts.updatedAt,
@@ -31,6 +32,7 @@ export type Thought = {
   archived: boolean;
   source: 'agent' | 'human';
   editedBy: string;
+  editedByModel: string | null;
   version: number;
   createdAt: Date;
   updatedAt: Date;
@@ -44,11 +46,12 @@ export type ThoughtRevision = {
   body: string;
   tags: string[];
   editedBy: string;
+  editedByModel: string | null;
   createdAt: Date;
 };
 
 /** Who is writing: the human in the UI, or an agent with its label. */
-export type Editor = { source: 'agent' | 'human'; label: string };
+export type Editor = { source: 'agent' | 'human'; label: string; model?: string | null };
 export const HUMAN: Editor = { source: 'human', label: 'human' };
 
 export async function getThought(db: Db, id: string): Promise<Thought | undefined> {
@@ -70,6 +73,7 @@ export async function createThought(
       pinned: input.pinned ?? false,
       source: editor.source,
       editedBy: editor.label,
+      editedByModel: editor.model ?? null,
     })
     .returning(cols);
   return row!;
@@ -110,7 +114,7 @@ export async function updateThought(db: Db, id: string, patch: ThoughtPatch, edi
     if (contentChanged) {
       await tx.insert(thoughtRevisions).values({
         thoughtId: cur.id, version: cur.version, title: cur.title, body: cur.body, tags: cur.tags,
-        editedBy: cur.editedBy, createdAt: cur.updatedAt,
+        editedBy: cur.editedBy, editedByModel: cur.editedByModel, createdAt: cur.updatedAt,
       });
       await tx
         .delete(thoughtRevisions)
@@ -126,7 +130,7 @@ export async function updateThought(db: Db, id: string, patch: ThoughtPatch, edi
     const [row] = await tx
       .update(thoughts)
       .set({
-        ...(contentChanged && { ...text, tags, editedBy: editor.label, version: cur.version + 1 }),
+        ...(contentChanged && { ...text, tags, editedBy: editor.label, editedByModel: editor.model ?? null, version: cur.version + 1 }),
         ...(patch.pinned !== undefined && { pinned: patch.pinned }),
         ...(patch.archived !== undefined && { archived: patch.archived }),
         ...(!contentChanged && { updatedAt: cur.updatedAt }),
@@ -196,7 +200,7 @@ export async function thoughtTags(db: Db): Promise<{ tag: string; count: number 
 }
 
 export type ThoughtHit = {
-  id: string; title: string; tags: string[]; snippet: string; version: number; edited_by: string; updated_at: string;
+  id: string; title: string; tags: string[]; snippet: string; version: number; edited_by: string; model: string | null; updated_at: string;
 };
 
 /** For agents: newest first without a query, best match first with one; `offset` skips that many for the next page. */
@@ -211,7 +215,7 @@ export async function findThoughts(db: Db, p: { query?: string; tag?: string; li
   const rows = await db
     .select({
       id: thoughts.id, title: thoughts.title, tags: thoughts.tags, snippet, version: thoughts.version,
-      editedBy: thoughts.editedBy, updatedAt: thoughts.updatedAt,
+      editedBy: thoughts.editedBy, editedByModel: thoughts.editedByModel, updatedAt: thoughts.updatedAt,
     })
     .from(thoughts)
     .where(where)
@@ -223,6 +227,6 @@ export async function findThoughts(db: Db, p: { query?: string; tag?: string; li
     .limit(limit)
     .offset(offset);
   return rows.map((r) => ({
-    id: r.id, title: r.title, tags: r.tags, snippet: r.snippet, version: r.version, edited_by: r.editedBy, updated_at: r.updatedAt.toISOString(),
+    id: r.id, title: r.title, tags: r.tags, snippet: r.snippet, version: r.version, edited_by: r.editedBy, model: r.editedByModel, updated_at: r.updatedAt.toISOString(),
   }));
 }

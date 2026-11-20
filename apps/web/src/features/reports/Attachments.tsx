@@ -216,7 +216,7 @@ function AudioCard({
         <div className="att__gone"><Icon name="mic" /> Voice note deleted after the report was closed</div>
       )}
       <figcaption className="att__cap">
-        {a.createdBy !== 'human' && <Author {...authorOf(a.createdBy)} compact />}
+        {a.createdBy !== 'human' && <Author {...authorOf(a.createdBy, a.createdByModel)} compact />}
         <span className="t-truncate">{a.fileName}</span>
         <span className="t-subtle t-nowrap">{a.durationMs !== null ? `${clock(a.durationMs)} · ` : ''}{formatSize(a.size)}</span>
         <span className="t-spacer" />
@@ -313,7 +313,7 @@ export function Attachments({
               )}
               <figcaption className="att__cap">
                 {a.kind === 'frame' && <Badge tone="accent" icon="aperture">{clock(a.atMs ?? 0)}</Badge>}
-                {a.createdBy !== 'human' && <Author {...authorOf(a.createdBy)} compact />}
+                {a.createdBy !== 'human' && <Author {...authorOf(a.createdBy, a.createdByModel)} compact />}
                 <span className="t-truncate t-subtle">{a.fileName}</span>
                 {a.kind === 'frame' && a.note && <span className="att__note-text">{a.note}</span>}
                 <span className="t-spacer" />

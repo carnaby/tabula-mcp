@@ -49,6 +49,52 @@ export function runCli(
   });
 }
 
+/** The CLI running in the background, for commands that wait for something (tabula login waits for the browser). */
+export function spawnCli(args: string[], opts: { cwd: string; env?: Record<string, string | undefined> }) {
+  const env: Record<string, string | undefined> = { ...process.env, ...opts.env };
+  for (const [k, v] of Object.entries(env)) if (v === undefined) delete env[k];
+  const started = Date.now();
+  const child = spawn(process.execPath, [CLI, ...args], { cwd: opts.cwd, env, windowsHide: true });
+  let stdout = '';
+  let stderr = '';
+  let closed = false;
+  const waiters: Array<{ re: RegExp; resolve: (m: RegExpExecArray) => void; reject: (e: Error) => void }> = [];
+  const check = () => {
+    for (const w of [...waiters]) {
+      const m = w.re.exec(stderr);
+      if (m) {
+        waiters.splice(waiters.indexOf(w), 1);
+        w.resolve(m);
+      } else if (closed) {
+        waiters.splice(waiters.indexOf(w), 1);
+        w.reject(new Error(`the CLI exited without printing ${w.re}; stderr: ${stderr}`));
+      }
+    }
+  };
+  child.stdout.setEncoding('utf8').on('data', (d: string) => { stdout += d; });
+  child.stderr.setEncoding('utf8').on('data', (d: string) => {
+    stderr += d;
+    check();
+  });
+  const done = new Promise<RunResult>((resolve, reject) => {
+    child.on('error', reject);
+    child.on('close', (code) => {
+      closed = true;
+      check();
+      resolve({ code: code ?? -1, stdout, stderr, ms: Date.now() - started });
+    });
+  });
+  child.stdin.end();
+  return {
+    done,
+    waitFor: (re: RegExp) => new Promise<RegExpExecArray>((resolve, reject) => {
+      waiters.push({ re, resolve, reject });
+      check();
+    }),
+    kill: () => void child.kill(),
+  };
+}
+
 export const tempDir = (prefix: string): string => realpathSync(mkdtempSync(join(tmpdir(), prefix)));
 
 export function git(cwd: string, ...args: string[]): string {

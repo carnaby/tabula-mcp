@@ -289,7 +289,7 @@
         </figure>
 
         <ul class="how-list">
-          <li><strong>Claude Code, claude.ai and other MCP clients</strong> connect to one Tabula server over MCP (Streamable HTTP). Claude Code sends a bearer token; claude.ai uses a connector URL with a secret.</li>
+          <li><strong>Claude Code, claude.ai and other MCP clients</strong> connect to one Tabula server over MCP (Streamable HTTP). Each client signs in through your browser (OAuth), and you approve it with your passkey.</li>
           <li><strong>The Tabula server</strong> is one Node.js process (Fastify) with Postgres 17. It serves the MCP endpoint, a REST API, the web UI and the <code>tabula</code> command itself.</li>
           <li><strong>The <code>tabula</code> command</strong> on each of your computers syncs a repository's untracked files: one dependency-free file for Node 22 or newer on Windows, macOS and Linux.</li>
           <li><strong>Fornax</strong> runs on a PC with an NVIDIA GPU and transcribes recordings for Tabula: the server uploads each recording over HTTPS and fetches the transcript.</li>
@@ -312,23 +312,23 @@
 cat &gt; .env &lt;&lt;EOF
 POSTGRES_PASSWORD=$(openssl rand -hex 32)
 TABULA_TOKEN=$(openssl rand -hex 32)
+TABULA_PUBLIC_URL=http://localhost:3000
 TABULA_CONNECTOR_SECRET=$(openssl rand -hex 32)
 EOF
 docker compose up -d --build</code></pre>
-            <p>Open <code>http://localhost:3000</code> and paste <code>TABULA_TOKEN</code> from <code>.env</code>. For anything beyond localhost, put Tabula behind a reverse proxy that terminates TLS: the token unlocks everything it holds.</p>
+            <p>Open <code>http://localhost:3000</code> and add your first passkey with the one-time link from the server log (<code>docker compose logs app</code>). For anything beyond localhost, put Tabula behind a reverse proxy that terminates TLS and set <code>TABULA_PUBLIC_URL</code> to its address.</p>
             <p class="ref"><a href="https://github.com/carnaby/tabula-mcp#run-it-with-docker-compose">README: Run it with Docker Compose</a></p>
           </li>
           <li>
             <h3>Connect Claude Code</h3>
-            <pre><code>claude mcp add tabula --scope user --transport http https://tabula.example.com/mcp \
-  --header "Authorization: Bearer &lt;TABULA_TOKEN&gt;" \
-  --header "X-Tabula-Agent: claude-code"</code></pre>
+            <pre><code>claude mcp add --transport http --scope user tabula https://tabula.example.com/mcp</code></pre>
+            <p>Then run <code>/mcp</code> in a session and choose Authenticate: approve the connection in your browser.</p>
             <p class="ref"><a href="https://github.com/carnaby/tabula-mcp#connect-claude-code">README: Connect Claude Code</a></p>
           </li>
           <li>
             <h3>Connect claude.ai</h3>
-            <p>In <em>Settings → Connectors → Add custom connector</em>, use this URL with no authentication. Treat it as a password.</p>
-            <pre><code>https://tabula.example.com/mcp/&lt;TABULA_CONNECTOR_SECRET&gt;</code></pre>
+            <p>In <em>Settings → Connectors → Add custom connector</em>, use this URL, then Connect and approve it with your passkey.</p>
+            <pre><code>https://tabula.example.com/mcp</code></pre>
             <p class="ref"><a href="https://github.com/carnaby/tabula-mcp#connect-claudeai">README: Connect claude.ai</a></p>
           </li>
           <li>
@@ -337,6 +337,7 @@ docker compose up -d --build</code></pre>
             <pre><code>mkdir -p ~/.tabula &amp;&amp; curl -fsSL https://tabula.example.com/cli/tabula.mjs -o ~/.tabula/tabula.mjs
 node ~/.tabula/tabula.mjs install
 node ~/.tabula/tabula.mjs login https://tabula.example.com</code></pre>
+            <p><code>login</code> opens your browser to approve the connection.</p>
             <p><code>install</code> prints the folder to add to <code>PATH</code> and the SessionStart hook snippet for Claude Code; add both.</p>
             <p>Then tell Claude <em>“use Tabula in this project”</em>: it adds a “Memory (Tabula)” section to <code>CLAUDE.md</code> and a <code>.tabula.json</code> to the repository. Run <code>tabula status</code> before the first <code>tabula push</code>.</p>
             <p class="ref"><a href="https://github.com/carnaby/tabula-mcp#the-tabula-command">README: The tabula command</a></p>

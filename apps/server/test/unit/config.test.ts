@@ -10,6 +10,7 @@ describe('loadConfig', () => {
       databaseUrl: 'postgres://u:p@localhost:5432/db',
       token: TOKEN,
       connectorSecret: undefined,
+      publicUrl: undefined,
       fornax: undefined,
       port: 3000,
       host: '0.0.0.0',
@@ -81,6 +82,36 @@ describe('loadConfig', () => {
         'TABULA_WORKER_TOKEN is no longer used; transcription runs on Fornax (TABULA_FORNAX_URL)',
       ]);
       expect(configWarnings(base)).toEqual([]);
+    });
+  });
+
+  describe('TABULA_PUBLIC_URL', () => {
+    const base = { DATABASE_URL: 'postgres://x', TABULA_TOKEN: TOKEN };
+
+    it('is optional (empty counts as unset)', () => {
+      expect(loadConfig(base).publicUrl).toBeUndefined();
+      expect(loadConfig({ ...base, TABULA_PUBLIC_URL: '' }).publicUrl).toBeUndefined();
+    });
+
+    it('accepts https with a host and drops one trailing slash, and http only on localhost', () => {
+      expect(loadConfig({ ...base, TABULA_PUBLIC_URL: 'https://tabula.example.com/' }).publicUrl).toBe('https://tabula.example.com');
+      expect(loadConfig({ ...base, TABULA_PUBLIC_URL: 'https://tabula.example.com:8443' }).publicUrl).toBe('https://tabula.example.com:8443');
+      expect(loadConfig({ ...base, TABULA_PUBLIC_URL: 'http://localhost:3100' }).publicUrl).toBe('http://localhost:3100');
+    });
+
+    it('refuses a path, a query, upper case, plain http elsewhere and an IP loopback', () => {
+      for (const bad of [
+        'https://tabula.example.com/mcp', 'https://tabula.example.com/?x=1', 'https://Tabula.example.com', 'http://tabula.example.com',
+        'http://127.0.0.1:3000', 'tabula.example.com', 'https://tabula.example.com//', 'https://user@tabula.example.com',
+      ]) {
+        expect(() => loadConfig({ ...base, TABULA_PUBLIC_URL: bad }), bad).toThrow(/TABULA_PUBLIC_URL must be https/);
+      }
+    });
+
+    it('refuses an https address that is an IP literal, since WebAuthn refuses an IP as the RP ID', () => {
+      for (const bad of ['https://192.0.2.10', 'https://192.0.2.10:8443/', 'https://[2001:db8::1]', 'https://[2001:db8::1]:8443']) {
+        expect(() => loadConfig({ ...base, TABULA_PUBLIC_URL: bad }), bad).toThrow(/TABULA_PUBLIC_URL must name a host, not an IP address/);
+      }
     });
   });
 });

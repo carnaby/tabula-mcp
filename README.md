@@ -36,7 +36,7 @@ Project files and global rules feed the `recall` digest. Notes and Thoughts neve
 # macOS / Linux
 mkdir -p ~/.tabula && curl -fsSL https://tabula.example.com/cli/tabula.mjs -o ~/.tabula/tabula.mjs
 node ~/.tabula/tabula.mjs install                  # shims in ~/.tabula/bin; add that folder to PATH as printed
-node ~/.tabula/tabula.mjs login https://tabula.example.com   # asks for the token, saves ~/.tabula/config.json
+node ~/.tabula/tabula.mjs login https://tabula.example.com   # opens the browser to approve the connection; saves ~/.tabula/config.json
 ```
 
 ```powershell
@@ -70,7 +70,7 @@ A repository opts in with a `.tabula.json` in its root, committed:
 | `tabula pull [--force]` | writes missing files and updates unchanged copies, state files first; a file that cannot be written is reported and skipped; never deletes local files |
 | `tabula rm <path>` | deletes a file on the server (restorable in the UI) |
 | `tabula pull --hook` | for the SessionStart hook: silent without `.tabula.json` or a login, at most 5 seconds (when time runs out it keeps what it restored and says how many files are missing), always exit 0 |
-| `tabula login <url>` · `install` · `update` | credentials (or `TABULA_URL` / `TABULA_TOKEN`), PATH shims and the hook snippet, self-update |
+| `tabula login <url>` · `install` · `update` | sign in through the browser (an app connection for `/api`, kept in `~/.tabula/config.json` and renewed by itself; `--no-browser` only prints the address to open on the same computer; `--token-stdin` saves a legacy token instead; `TABULA_URL` / `TABULA_TOKEN` in the environment override the saved login), PATH shims and the hook snippet, self-update |
 
 Each clone keeps the hash it last synced for every file in `<git-dir>/tabula-sync.json` (per worktree, never committed). The server accepts a change only if it is based on the server's current version, so two machines editing the same file produce a **conflict** instead of a silent overwrite: merge by hand, or take one side with `--force`. Exit codes: 0 OK, 1 error, 2 finished with conflicts.
 
@@ -173,6 +173,8 @@ Send the token as `Authorization: Bearer <token>`.
 
 The tool descriptions are part of the design: they are what an agent reads before deciding whether to call a tool, and they say when *not* to.
 
+Every tool that writes (and `get_frame`) takes `model`: the agent passes the identifier of the model it runs on (e.g. `claude-opus-5-5`, or `unknown`), and Tabula keeps it with the write as the model's own statement, not verified. Which app wrote is verified: it is the name of the connection whose token made the call. The UI shows both, e.g. `claude-code · claude-opus-5-5`.
+
 Every tool that returns records gives each one a `ref` (`tabula:xxxxxxxx`), so the agent can tell you which record it saved or found; `get`, `get_report`, `update_report`, `update_thought` and the attachment tools take references back.
 
 ### When agents use it
@@ -209,13 +211,14 @@ A responsive React app with its own small UI kit (`apps/web/src/ui`), light and 
 - **Global** — the rules table (kind, author, status, prefix search; edit, retire, supersede) and the recall preview.
 - **Project** — **State** (the state files rendered as Markdown), **Files** (list, preview, the last 20 versions with restore, delete and restore), **Recall preview** (the exact digest with a budget meter) and **Setup** (the CLAUDE.md section, a `.tabula.json`, the install commands and the hook).
 - **Reports** — bugs captured on the phone while testing, and recordings of meetings, answers and conversations. No field is required: *Title*, *Description* and *Project* ("No project" is the first choice) can be filled in now or later; an empty title becomes the description's first line, or `Report <date and time>` (the browser's local time; a report Claude creates without a title gets the server's time zone, `TZ`). Add photos, screen recordings (from the gallery, or *Record screen* on a desktop) and voice notes; uploads start at once and show their progress. While a video is paused, *Save frame* keeps that moment as a picture; select a saved frame to play from there, add a note ("what the video doesn't say") or delete it. The transcript follows playback. An agent writes the **triage** (for a bug the cause and tasks, for a recording a summary, decisions and tasks) into the report; it shows up when you come back to the window. The list filters by *All projects / No project / <project>*, and each project has a *Reports* tab. *Keep media* keeps a report's video and audio after it is closed (off by default; turning it off once the grace period is over deletes them within 15 minutes). Videos and voice notes get a transcript with clickable times once Fornax has transcribed them (see [Transcription with Fornax](#transcription-with-fornax)). Hover a line (on a phone, tap its text) and click the pencil to correct it: Enter saves, Esc cancels, and with several speakers you can also change who speaks. A corrected line shows a small pencil (*Edited by you* / *Edited by Claude*; Claude's also has a dashed underline), and *Restore original* brings back the transcribed text; Claude never changes a line you edited. With speaker recognition each change of speaker shows a coloured label (`S1`, or the name); click it to name the speaker, with the names used before in the report and the project as suggestions. A name Claude gave has a dashed outline and *suggested by Claude* until you confirm it. *⋯ → Transcribe again* sends an open report's recording to Fornax once more (the names and the corrected lines are replaced, since a new run may number the speakers differently).
+- **Security** lists your passkeys, the connected apps (rename, revoke) and the signed-in browsers; in this release it also shows when the legacy `TABULA_TOKEN` and the connector secret were last used.
 - **Inbox** — requests and reports between projects, with the number of open messages in the sidebar. The list filters by status, recipient, sender and type, and names the sender as declared. A message shows its exact text, with an optional formatted view, its history, and a form for a reply and a status change. Inbox tokens are created and revoked on the same page (see [Inbox](#inbox)).
 - **Search** (Ctrl/⌘ K) — global rules, project files, notes, thoughts and reports at once; words match as prefixes and diacritics are ignored. A pasted reference (`tabula:d86d86e7`) opens its record directly — a rule in its dialog, an attachment inside its report (a frame selected, the video at its moment); a shorter one (`tabula:d86d`) lists what it matches to pick from.
 - **References** — the Tabula icon in an editor's bar, a rule's dialog, a file and every attachment or frame copies the record's reference. Paste it into a chat with Claude and Claude opens exactly that record. A reference (`tabula:d86d86e7`) in Markdown text is a link that opens the record.
 
 **Install it as an app.** Tabula is a PWA: in Chrome or Edge use *Install app* in the sidebar (or the install icon in the address bar); on iPhone use Share → *Add to Home Screen*. A service worker caches only the app shell and the hashed build assets — `/api` and `/mcp` always go to the network, so data is never stale and the token never ends up in a cache. Installation needs HTTPS (or `localhost`).
 
-Lists refresh when the window regains focus, so what an agent or another machine wrote meanwhile shows up. The UI asks once for the bearer token and keeps it in `localStorage`.
+Lists refresh when the window regains focus, so what an agent or another machine wrote meanwhile shows up. You sign in with a passkey, and the session lives in an `HttpOnly` cookie that scripts cannot read. In this release *Sign in with legacy token* still works; that token is kept in `localStorage` until the browser signs in with a passkey.
 
 ## Architecture
 
@@ -228,7 +231,7 @@ flowchart LR
   T --> PG[(Postgres 17 + full-text search)]
 ```
 
-One Node.js process serves everything: the MCP endpoint (`/mcp`), the REST API for the UI and the CLI (`/api`), the CLI download (`/cli/tabula.mjs`, `/cli/version`), the static UI build and `/healthz`.
+One Node.js process serves everything: the MCP endpoint (`/mcp`), the REST API for the UI and the CLI (`/api`), the CLI download (`/cli/tabula.mjs`, `/cli/version`), the static UI build and `/healthz`, and with `TABULA_PUBLIC_URL` the OAuth authorization server and the passkey pages (`/.well-known/*`, `/oauth/*`, `/signin`, `/passkey/*`, `/auth/*`).
 
 - **Node 22, TypeScript, Fastify 5.** Domain logic (including project files with optimistic locking) lives in `apps/server/src/domain` and is shared by the MCP tools and the REST API; `apps/server/src/agent` adds the rules that apply only to agents (source tagging, read-only human records).
 - **MCP TypeScript SDK v2**, Streamable HTTP in **stateless** mode: every request gets a fresh server instance, so the process holds no session state and restarts are invisible to clients.
@@ -245,17 +248,22 @@ git clone https://github.com/carnaby/tabula-mcp.git && cd tabula-mcp
 cat > .env <<EOF
 POSTGRES_PASSWORD=$(openssl rand -hex 32)
 TABULA_TOKEN=$(openssl rand -hex 32)
+TABULA_PUBLIC_URL=http://localhost:3000
 TABULA_CONNECTOR_SECRET=$(openssl rand -hex 32)
 EOF
 docker compose up -d --build
 curl -fsS http://localhost:3000/healthz   # {"ok":true}
 ```
 
-Open `http://localhost:3000`, paste `TABULA_TOKEN`, and create your first project — or let an agent create it with `setup_project`.
+Open `http://localhost:3000` and add your first passkey: the server log has a one-time link for it (`docker compose logs app | grep passkey/register`), valid for 15 minutes. `docker compose exec app node dist/admin.js passkey-link` prints a new one at any time; it is also how you get back in after losing every passkey. In this release the web app also still accepts `TABULA_TOKEN` (*Sign in with legacy token*), and from there *Security → Add passkey* adds the first passkey too. Then create your first project, or let an agent create it with `setup_project`.
+
+`TABULA_PUBLIC_URL` is the address your browser and your apps use, e.g. `https://tabula.example.com`: passkeys are bound to its host and every OAuth token to it. Without it Tabula runs as before, with `TABULA_TOKEN` only.
 
 CI also publishes a ready-made image, `ghcr.io/carnaby/tabula:latest` (plus a `sha-<commit>` tag per build). [`deploy/`](deploy/) holds an example production stack that pulls it and a daily `pg_dump` backup script.
 
 For anything beyond localhost, put Tabula behind a reverse proxy that terminates TLS and bind the container to loopback: the bearer token travels in a header, and it unlocks everything Tabula holds.
+
+The proxy must pass `/.well-known/*`, `/oauth/*`, `/signin`, `/passkey/*` and `/auth/*` to Tabula like everything else, set `X-Forwarded-For` (the per-address limits of sign-in use its last entry), and must not block Anthropic's servers: claude.ai connects to `/.well-known/*`, `/oauth/register`, `/oauth/token` and `/mcp` (and possibly `/oauth/revoke` when a connector is removed) from Anthropic's cloud, not from your browser.
 
 The proxy must pass `X-Forwarded-Proto` (and the original `Host`, or `X-Forwarded-Host`): the attachment links that agents get from `get_report` are absolute and built from them, so without it they start with `http://`. Its request body limit must be at least `TABULA_MEDIA_MAX_MB`.
 
@@ -279,36 +287,33 @@ Restore before the app starts: on an empty database the app would create the sch
 ### Connect Claude Code
 
 ```bash
-claude mcp add tabula --scope user --transport http https://tabula.example.com/mcp \
-  --header "Authorization: Bearer <TABULA_TOKEN>" \
-  --header "X-Tabula-Agent: claude-code"
+claude mcp add --transport http --scope user tabula https://tabula.example.com/mcp
 ```
 
-`X-Tabula-Agent` labels what this client writes, so the UI shows which agent wrote what. Check with `claude mcp get tabula`.
+In a Claude Code session run `/mcp`, choose `tabula` and *Authenticate*. Your browser opens Tabula: sign in with your passkey and approve the connection. Its name (`claude-code` is suggested) labels everything this client writes; the model adds its own name to every write (`claude-code · claude-opus-5-5` in the UI). Check with `claude mcp get tabula`.
 
 ### Connect claude.ai
 
-In **Settings → Connectors → Add custom connector**, use
-
-```text
-https://tabula.example.com/mcp/<TABULA_CONNECTOR_SECRET>
-```
-
-with no authentication. Custom connectors in claude.ai can't always send a static `Authorization` header, so when `TABULA_CONNECTOR_SECRET` is set, Tabula also accepts the secret as a path segment. Treat that URL as a password. Records written this way are labelled `claude-ai`.
+In **Settings → Connectors → Add custom connector**, use `https://tabula.example.com/mcp` with no further settings, then *Connect*: sign in with your passkey and approve. Revoke it any time under *Security* in Tabula; claude.ai loses access at once.
 
 Then paste [`apps/server/templates/claude-ai-project-instructions.md`](apps/server/templates/claude-ai-project-instructions.md) into the instructions of a claude.ai project, with your project slug.
 
 ### Other MCP clients
 
-Any client that speaks Streamable HTTP with the classic `initialize` handshake (protocol `2025-11-25`) works: point it at `/mcp` with the bearer header.
+Any client that speaks Streamable HTTP (protocol `2025-11-25`) and MCP authorization (OAuth 2.1 with dynamic client registration and PKCE), such as Gemini CLI: point it at `https://tabula.example.com/mcp` and approve it in the browser.
+
+### Legacy token (until the next release)
+
+This release still accepts the shared `TABULA_TOKEN` (header `Authorization: Bearer …`, with `X-Tabula-Agent` naming the writer) and the claude.ai connector address `/mcp/<TABULA_CONNECTOR_SECRET>`. The next release removes both. *Security* shows when each was last used: move every client to the steps above and wait until they stay unused.
 
 ## Configuration
 
 | Variable | Required | Default | Meaning |
 |---|---|---|---|
 | `DATABASE_URL` | yes | — | Postgres connection string (set by Compose) |
-| `TABULA_TOKEN` | yes | — | Bearer token for MCP and the UI, at least 32 characters |
-| `TABULA_CONNECTOR_SECRET` | no | — | Enables `/mcp/<secret>` for clients that can't send headers, at least 32 characters |
+| `TABULA_TOKEN` | yes | — | Bearer token for MCP and the UI, at least 32 characters (legacy; removed in the next release) |
+| `TABULA_CONNECTOR_SECRET` | no | — | Enables `/mcp/<secret>` for clients that can't send headers, at least 32 characters (legacy; removed in the next release) |
+| `TABULA_PUBLIC_URL` | recommended | — | The public address, `https://<host>` without a path, a host name and not an IP address (`http://localhost:<port>` for local use): the passkey domain, the OAuth issuer and the base of `/mcp` and `/api`. Without it there are no passkeys and no OAuth |
 | `TABULA_FORNAX_URL` | no | — | Address of [Fornax](#transcription-with-fornax), which transcribes recordings. Set together with `TABULA_FORNAX_TOKEN` (one without the other: the server refuses to start). Without both, recordings are not transcribed |
 | `TABULA_FORNAX_TOKEN` | no | — | The token Fornax issued to Tabula; never logged or returned by the API |
 | `TABULA_FORNAX_PRIORITY` | no | `high` | `high`, `normal` or `low` (Fornax treats `low` as `normal`): the priority of Tabula's jobs in Fornax; anything else refuses to start |
@@ -331,13 +336,15 @@ The repository is a pnpm workspace with [Nx](https://nx.dev): `apps/server`, `ap
 ```bash
 pnpm install                # the whole workspace, one lockfile
 pnpm db:dev                 # Postgres 17 in Docker (container tabula-dev-db, port 5432)
-cp .env.example .env        # then set TABULA_TOKEN (an older .env: add WEB_DIST and TABULA_MEDIA_DIR from .env.example)
+cp .env.example .env        # then set TABULA_TOKEN, and TABULA_PUBLIC_URL for passkeys (see below; an older .env: add WEB_DIST and TABULA_MEDIA_DIR from .env.example)
 pnpm dev                    # server with reload on PORT (default 3000) and the UI on http://localhost:5173
 pnpm dev:server             # only the server
-pnpm dev:web                # only the UI; proxies /api to TABULA_API (default http://localhost:3000)
+pnpm dev:web                # only the UI; proxies /api, /mcp and the sign-in paths to TABULA_API (default http://localhost:3000)
 ```
 
 Nx passes the root `.env` to every task (dev, build, test) and expands `$` in its values; the tests do not depend on it.
+
+Passkeys need `TABULA_PUBLIC_URL` to be the address in the browser's address bar: `http://localhost:<PORT>` when the server serves the built UI, or the Vite address (e.g. `http://localhost:5173`) with `pnpm dev`, whose proxy passes the sign-in pages through. The same holds for every change the signed-in UI makes: the server accepts it only from that origin, so with the wrong address sign-in fails and saving is refused. Chrome DevTools → *WebAuthn* gives a virtual authenticator. `pnpm --filter @tabula/server test:browser` runs the headless-browser test (Chrome and `pnpm build` needed; not part of `pnpm test`).
 
 A `502 Bad Gateway` on `/api` in the browser means the server isn't running — usually because the database isn't. After changing `packages/shared`, restart `pnpm dev` (the server and the UI use its build).
 
@@ -363,7 +370,8 @@ apps/
       domain/       records, validation, search, digest builder, token estimate
       agent/        what agents may do (source tagging, read-only human records)
       mcp/          MCP server, tool descriptions, server instructions, CLAUDE.md section
-      http/         Fastify app, REST API, bearer auth, static UI, the CLI download
+      http/         Fastify app, REST API, static UI, the CLI download
+      auth/         passkeys, sessions, the OAuth authorization server, the legacy token
       db/           Drizzle schema, client, migrations runner
       maintenance/  one-off data migrations run inside the container
     drizzle/      SQL migrations (generated search column, GIN indexes, the global project)
@@ -380,12 +388,16 @@ deploy/           example production stack and backup script
 
 - **Never store secrets in Tabula** — not in a rule, a note, a thought or a synced file. The tool descriptions say so, and it is the reason a single shared token is acceptable for a personal deployment.
 - **Synced files are the most likely way a secret reaches Tabula.** A `sync` pattern uploads every untracked file it matches, and untracked files are exactly where local credentials live. `.env` and `.env.*` (in any folder and any letter case) are always refused, but nothing else is guessed: keep the patterns explicit (`docs/**`, not `**`), run `tabula status` before the first `tabula push`, and treat a secret that was uploaded by mistake as leaked: `tabula rm` only hides the file (it and its previous versions stay in the database, restorable in the UI), so rotate the secret.
-- One bearer token (and the optional connector secret) unlocks all projects, rules, notes and thoughts. Tokens are compared in constant time, and the connector secret is kept out of request logs.
-- **Inbox tokens** are separate from that token: each is bound to one project, stored only as a SHA-256 hash and accepted only by `/inbox-api/v1`, where it reads that project's messages, replies and sets `in_progress` or `waiting`.
+- **You sign in with passkeys** (WebAuthn, user verification required); there is no password. The first passkey and recovery go through a one-time link (15 minutes) that only the server prints. The last passkey cannot be deleted.
+- **The web UI holds no token a script can read.** A session lives in an `HttpOnly`, `SameSite=Strict` cookie (`Secure` on https) for 30 days of use; every change it makes must come from Tabula's own origin. Approving an app and adding or deleting a passkey need a passkey check from the last 5 minutes, so a stolen cookie cannot hand out tokens or add a passkey.
+- **Every app has its own revocable connection** (OAuth 2.1: dynamic registration, PKCE S256, consent in the browser). Access tokens last an hour and open only the resource they were issued for (`/mcp` or `/api`); refresh tokens last 30 days and rotate on every use, and a reused one ends the whole connection (within 10 seconds of its rotation it is only refused, since that is a retry after a lost response). Tokens, codes, cookies and links are stored only as SHA-256 hashes and never logged (except the first-passkey link at startup). Registration, token requests and failed passkey checks are limited per address.
+- **Who wrote what:** the connection name is verified by its token; the model name is what the model says it is and is shown as such.
+- In this release `TABULA_TOKEN` and the connector secret still unlock everything, as before; *Security* shows their last use. They are compared in constant time and the connector secret is kept out of request logs.
+- **Inbox tokens** are separate from `TABULA_TOKEN` and the app connections: each is bound to one project, stored only as a SHA-256 hash and accepted only by `/inbox-api/v1`, where it reads that project's messages, replies and sets `in_progress` or `waiting`.
 - Unexpected errors are logged on the server and returned to clients as a generic message, without internals.
 - **Agents write project files only over `write_file` and `delete_file`**, only at paths matching the `sync` patterns the CLI last sent for that project, and never blind: an existing file needs the hash of the version the agent read. Every version keeps its writer's label and the last 20 versions can be restored in the UI.
 - The `tabula` command never uploads `.env` or `.env.*` files and the server refuses them too; paths are validated on both sides (relative, no `..`, no `.git`), and paths that differ only in letter case are never synced, so one cannot overwrite the other on Windows or macOS.
-- **Report attachments** are accepted only as photos, video or audio, recognised from the file's bytes (never from the name or the client's content type), so an HTML or SVG file can't be uploaded and run on Tabula's origin. They are served from `/media/<id>` with a signed, expiring link instead of the token (`<video>` and `<img>` can't send one), with `nosniff`, a sandboxing CSP and range support. The signing key is derived from `TABULA_TOKEN`: rotating the token invalidates every link. Signatures are masked in request logs.
+- **Report attachments** are accepted only as photos, video or audio, recognised from the file's bytes (never from the name or the client's content type), so an HTML or SVG file can't be uploaded and run on Tabula's origin. They are served from `/media/<id>` with a signed, expiring link instead of the token (`<video>` and `<img>` can't send one), with `nosniff`, a sandboxing CSP and range support. The signing key is random and kept in the database (`settings`, `media_signing_key`); deleting that row and restarting Tabula invalidates every link. Signatures are masked in request logs.
 - **ffmpeg reads untrusted files**, so it runs with only `PATH` in its environment (never the token or the database URL), reads local files only, with the demuxer fixed by the detected type, refuses pictures over 64 megapixels, and at most two ffmpeg/ffprobe processes run at once. Its error output stays in the server log.
 - **There is no total storage quota and no limit on concurrent uploads**, only `TABULA_MEDIA_MAX_MB` per file: with a single token, whoever can upload can already do everything else. Watch the free space of the media volume; video and audio of closed reports are deleted after `TABULA_MEDIA_PURGE_HOURS` unless *Keep media* is on.
 - **The Fornax token stays on the server.** `TABULA_FORNAX_TOKEN` is sent only to `TABULA_FORNAX_URL` as a bearer token and never appears in a log line, an error message or an API response. Tabula uploads a recording to Fornax and fetches the transcript; Fornax never calls Tabula and nothing connects to your GPU computer from outside. Transcript text is never logged.
@@ -397,8 +409,7 @@ deploy/           example production stack and backup script
 Tabula is in daily personal use with Claude Code and claude.ai: it keeps the files git doesn't and a handful of global rules. The next steps depend on what real use shows, not on a feature list:
 
 - Markdown import/export for git-friendly backups;
-- a per-session log of `recall`/`remember` calls, to see whether agents follow the protocol;
-- OAuth instead of a static token, once there is more than one user.
+- a per-session log of `recall`/`remember` calls, to see whether agents follow the protocol.
 
 Deliberately out of scope: embeddings and RAG, automatic expiry, automatic contradiction detection, and inheritance between projects.
 

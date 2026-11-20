@@ -446,11 +446,15 @@ describe('connector secret unset', () => {
 
 describe('unexpected (non-domain) errors', () => {
   it('logs the real error and returns a generic message without leaking SQL', async () => {
-    const throwingDb = {
-      execute: () => {
-        throw new Error('Failed query: SELECT p.id, p.name FROM projects p\nparams:');
-      },
-    } as unknown as Db;
+    // The real database for the start (the media signing key), a failing one for the tool's query.
+    const throwingDb = new Proxy(db, {
+      get: (target, prop, receiver) =>
+        prop === 'execute'
+          ? () => {
+              throw new Error('Failed query: SELECT p.id, p.name FROM projects p\nparams:');
+            }
+          : Reflect.get(target, prop, receiver),
+    }) as Db;
     const lines: string[] = [];
     const app2 = await buildApp({
       config: testConfig(), db: throwingDb, logStream: { write: (msg) => void lines.push(msg) },

@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+import { apiEditor } from '../auth/authenticate.js';
 import type { Config } from '../config.js';
 import type { Db } from '../db/client.js';
 import {
@@ -17,7 +18,6 @@ import { signMediaPath, verifyMediaSignature } from '../media/sign.js';
 import type { MediaStore } from '../media/store.js';
 import { parse } from './parse.js';
 
-const HUMAN = { source: 'human' as const, label: 'human' };
 /** Links handed to the UI stay valid for half a day. */
 const UI_LINK_TTL = 12 * 3600;
 
@@ -37,6 +37,7 @@ export const attachmentView = (a: Attachment, token: string, ttl = UI_LINK_TTL) 
   atMs: a.atMs,
   note: a.note,
   createdBy: a.createdBy,
+  createdByModel: a.createdByModel,
   createdAt: a.createdAt,
   purgedAt: a.purgedAt,
   url: a.purgedAt ? null : signMediaPath(token, a.id, ttl),
@@ -51,10 +52,10 @@ async function withTranscripts(db: Db, list: Attachment[], token: string) {
   }));
 }
 
-export type MediaDeps = { db: Db; config: Config; store: MediaStore };
+export type MediaDeps = { db: Db; config: Config; store: MediaStore; mediaKey: string };
 
-export const reportRoutes: FastifyPluginAsync<MediaDeps> = async (app, { db, config, store }) => {
-  const token = config.token;
+export const reportRoutes: FastifyPluginAsync<MediaDeps> = async (app, { db, config, store, mediaKey }) => {
+  const token = mediaKey;
   const paths = config.media;
 
   app.get('/reports', (req) => {
@@ -79,7 +80,7 @@ export const reportRoutes: FastifyPluginAsync<MediaDeps> = async (app, { db, con
   app.post('/reports', async (req, reply) => {
     // Every field is optional: an empty body creates a report titled with the date and time.
     const b = parse(z.object({ projectId: z.string().nullish(), title: z.string().optional(), body: z.string().optional() }), req.body ?? {});
-    return reply.code(201).send(await createReport(db, b, HUMAN));
+    return reply.code(201).send(await createReport(db, b, apiEditor(req)));
   });
 
   app.get('/reports/:id', async (req) => {
@@ -103,7 +104,7 @@ export const reportRoutes: FastifyPluginAsync<MediaDeps> = async (app, { db, con
       }),
       req.body,
     );
-    return updateReport(db, id, b, HUMAN);
+    return updateReport(db, id, b, apiEditor(req));
   });
 
   app.delete('/reports/:id', async (req, reply) => {
@@ -127,7 +128,7 @@ export const reportRoutes: FastifyPluginAsync<MediaDeps> = async (app, { db, con
   app.post('/attachments/:id/frame', async (req) => {
     const { id } = parse(idParams, req.params);
     const { at } = parse(z.object({ at: z.union([z.number(), z.string()]) }), req.body);
-    const { frame } = await frameAt(db, store, paths, id, parseTimestamp(at), HUMAN);
+    const { frame } = await frameAt(db, store, paths, id, parseTimestamp(at), apiEditor(req));
     return attachmentView(frame, token);
   });
 
@@ -227,7 +228,7 @@ export const reportRoutes: FastifyPluginAsync<MediaDeps> = async (app, { db, con
         reply.header('connection', 'close');
         throw e;
       }
-      const a = await addAttachment(db, store, paths, id, file, fileName, HUMAN);
+      const a = await addAttachment(db, store, paths, id, file, fileName, apiEditor(req));
       const [view] = await withTranscripts(db, [a], token);
       return reply.code(201).send(view);
     });
@@ -235,11 +236,11 @@ export const reportRoutes: FastifyPluginAsync<MediaDeps> = async (app, { db, con
 };
 
 /** GET /media/<id>?exp=&sig= — outside /api: the signature replaces the bearer token. */
-export function registerMediaRoute(app: FastifyInstance, { db, config, store }: MediaDeps): void {
+export function registerMediaRoute(app: FastifyInstance, { db, store, mediaKey }: MediaDeps): void {
   app.get('/media/:id', async (req, reply) => {
     const { id } = parse(idParams, req.params);
     const q = parse(z.object({ exp: z.coerce.number().int(), sig: z.string().max(100) }), req.query);
-    if (!verifyMediaSignature(config.token, id, q.exp, q.sig)) {
+    if (!verifyMediaSignature(mediaKey, id, q.exp, q.sig)) {
       return reply.code(403).send({ error: 'forbidden', message: 'the link is invalid or expired; reload the report' });
     }
     const a = await requireAttachment(db, id);

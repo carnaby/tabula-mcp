@@ -148,7 +148,10 @@ export function MessagePage({ id, from, projects }: { id: string; from?: string;
           {m.events.map((e) => (
             <li key={e.version} className="t-card message-history__item">
               <div className="message-history__meta">
-                <strong>{e.source === 'human' ? 'You' : e.actor}</strong>
+                <strong>
+                  {e.source === 'human' ? 'You' : e.actor}
+                  {e.model && <span className="t-subtle" title="As stated by the model"> · {e.model}</span>}
+                </strong>
                 <span>{eventText(e)}</span>
                 <span className="t-spacer" />
                 <span className="t-subtle"><TimeAgo iso={e.at} /></span>

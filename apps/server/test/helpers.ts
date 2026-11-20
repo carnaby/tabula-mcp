@@ -1,14 +1,18 @@
 import { asc, inArray, sql } from 'drizzle-orm';
 import { afterAll, beforeEach, inject } from 'vitest';
+import { createClient, createConnection } from '../src/auth/oauth/store.js';
+import { hashSecret, newSecret } from '../src/auth/secrets.js';
 import type { Config } from '../src/config.js';
 import { createDb, type Db } from '../src/db/client.js';
-import { projects, reportJobs } from '../src/db/schema.js';
+import { oauthAccessTokens, projects, reportJobs } from '../src/db/schema.js';
 import { storeTranscript, type TranscriptInput } from '../src/domain/jobs.js';
 
 export function useTestDb(): Db {
   const { db, close } = createDb(inject('databaseUrl'));
   beforeEach(async () => {
-    await db.execute(sql`TRUNCATE memories, notes, thoughts, project_files, project_file_revisions, reports, report_attachments, report_jobs, report_transcripts, settings, messages, message_events, message_tokens CASCADE`);
+    await db.execute(sql`TRUNCATE memories, notes, thoughts, project_files, project_file_revisions, reports, report_attachments, report_jobs, report_transcripts, messages, message_events, message_tokens, oauth_clients, oauth_pending, oauth_connections, oauth_codes, oauth_refresh_tokens, oauth_access_tokens, passkeys, passkey_registrations, webauthn_challenges, ui_sessions CASCADE`);
+    // The media signing key outlives a test like it outlives a restart: an app built in beforeAll keeps signing with it.
+    await db.execute(sql`DELETE FROM settings WHERE key <> 'media_signing_key'`);
     await db.execute(sql`DELETE FROM projects WHERE id <> 'global'`);
   });
   afterAll(close);
@@ -23,12 +27,15 @@ export const TEST_TOKEN = 't'.repeat(32);
 export const TEST_SECRET = 's'.repeat(32);
 /** A token that opens nothing: the retired worker token, sent to check that it is refused. */
 export const TEST_WORKER_TOKEN = 'w'.repeat(32);
+/** The public URL of servers under test that have OAuth and passkeys on (requests via inject; the port is not used). */
+export const TEST_PUBLIC_URL = 'http://localhost:3999';
 
 export function testConfig(overrides: Partial<Config> = {}): Config {
   return {
     databaseUrl: 'unused-in-tests',
     token: TEST_TOKEN,
     connectorSecret: TEST_SECRET,
+    publicUrl: undefined,
     fornax: { url: 'https://fornax.example.com', token: 'f'.repeat(32), priority: 'high' },
     port: 0,
     host: '127.0.0.1',
@@ -48,4 +55,20 @@ export async function finishNextJob(db: Db, input: TranscriptInput): Promise<voi
     .limit(1);
   if (!job) throw new Error('no transcription job waits');
   await db.transaction((tx) => storeTranscript(tx, job.id, input));
+}
+
+/** A live connection with an access token of a known value, made directly in the database (no consent page). */
+export async function issueTestAccessToken(
+  db: Db, opts: { resource: 'mcp' | 'api'; name?: string; value?: string },
+): Promise<{ value: string; connectionId: string }> {
+  const redirectUri = 'https://client.example.com/callback';
+  const client = await createClient(db, { clientName: 'Test client', redirectUris: [redirectUri] });
+  const connection = await createConnection(db, {
+    clientId: client.id, name: opts.name ?? `test-${opts.resource}`, resource: opts.resource, scope: opts.resource, redirectUri,
+  });
+  const value = opts.value ?? newSecret();
+  await db.insert(oauthAccessTokens).values({
+    hash: hashSecret(value), connectionId: connection.id, resource: opts.resource, expiresAt: new Date(Date.now() + 3600_000),
+  });
+  return { value, connectionId: connection.id };
 }

@@ -11,7 +11,7 @@ type AuthorKind = 'you' | 'code' | 'ai' | 'agent';
 const AUTHOR_CLASS: Record<AuthorKind, string | false> = { you: false, code: 't-avatar--code', ai: 't-avatar--ai', agent: 't-avatar--agent' };
 
 /** Who wrote it, from the source and the client label agents send ("claude-code", "claude-ai", …). */
-export function authorInfo(source: Source, label?: string | null): { kind: AuthorKind; name: string; title: string } {
+function authorBase(source: Source, label?: string | null): { kind: AuthorKind; name: string; title: string } {
   const agent = source === 'agent' || (label !== undefined && label !== null && label !== 'human');
   if (!agent) return { kind: 'you', name: 'You', title: 'Written by you' };
   const key = (label ?? '').trim().toLowerCase().replace(/[\s_.]+/g, '-');
@@ -20,8 +20,19 @@ export function authorInfo(source: Source, label?: string | null): { kind: Autho
   return label ? { kind: 'agent', name: label, title: `Written by agent ${label}` } : { kind: 'agent', name: 'Agent', title: 'Written by an agent' };
 }
 
+/**
+ * Who wrote it. `label` is the app connection (verified by its token); `model` is what the agent said it is, shown next
+ * to the name and marked as stated by the model (spec §5).
+ */
+export function authorInfo(source: Source, label?: string | null, model?: string | null): { kind: AuthorKind; name: string; title: string } {
+  const base = authorBase(source, label);
+  return model ? { ...base, title: `${base.title}; model ${model} (as stated by the model)` } : base;
+}
+
 /** Records that keep only who edited them last ("human" or the agent's label) as an author. */
-export const authorOf = (by: string): { source: Source; label: string } => ({ source: by === 'human' ? 'human' : 'agent', label: by });
+export const authorOf = (by: string, model?: string | null): { source: Source; label: string; model?: string | null } => ({
+  source: by === 'human' ? 'human' : 'agent', label: by, model,
+});
 
 /** The author's icon: a person for you, the spark for Claude Code and claude.ai, a bot for any other agent. */
 export const authorIcon = (kind: AuthorKind): IconName => (kind === 'you' ? 'user' : kind === 'agent' ? 'bot' : 'claude');
@@ -30,15 +41,20 @@ export const authorIcon = (kind: AuthorKind): IconName => (kind === 'you' ? 'use
  * Who wrote it as a coloured icon: you (grey person), Claude Code (red spark), claude.ai (orange spark), any other
  * agent (bot). `compact` shows the icon only; the name is then in the tooltip and the accessible name.
  */
-export function Author({ source, label, compact }: { source: Source; label?: string | null; compact?: boolean }) {
-  const a = authorInfo(source, label);
+export function Author({ source, label, model, compact }: { source: Source; label?: string | null; model?: string | null; compact?: boolean }) {
+  const a = authorInfo(source, label, model);
   const icon = authorIcon(a.kind);
   return (
     <span className="t-author" title={a.title}>
       <span className={cx('t-avatar', AUTHOR_CLASS[a.kind])} {...(compact ? { role: 'img', 'aria-label': a.title } : {})}>
         <Icon name={icon} />
       </span>
-      {!compact && <span className="t-truncate">{a.name}</span>}
+      {!compact && (
+        <span className="t-truncate">
+          {a.name}
+          {model && <span className="t-subtle" title="As stated by the model"> · {model}</span>}
+        </span>
+      )}
     </span>
   );
 }
@@ -51,20 +67,20 @@ export function AuthorMeta({
   author, iso, heading = 'Last edited', details, onHistory,
 }: {
   /** Omit for records that don't store who wrote them. */
-  author?: { source: Source; label?: string | null };
+  author?: { source: Source; label?: string | null; model?: string | null };
   iso: string;
   heading?: string;
   details?: ReactNode;
   onHistory?: () => void;
 }) {
-  const a = author && authorInfo(author.source, author.label);
+  const a = author && authorInfo(author.source, author.label, author.model);
   return (
     <Popover
       className="author-meta"
       triggerLabel={`${a ? `${a.title}, ` : `${heading} `}${timeAgo(iso)}. Details`}
       trigger={
         <>
-          {author && <Author source={author.source} label={author.label} compact />}
+          {author && <Author source={author.source} label={author.label} model={author.model} compact />}
           <span className="t-truncate">{timeAgo(iso)}</span>
         </>
       }
@@ -73,7 +89,8 @@ export function AuthorMeta({
         <>
           <div className="author-meta__info">
             <span className="t-subtle" id={labelId}>{heading}{a ? ' by' : ''}</span>
-            {author && <Author source={author.source} label={author.label} />}
+            {author && <Author source={author.source} label={author.label} model={author.model} />}
+            {author?.model && <span className="t-subtle">Model as stated by the model; not verified.</span>}
             <time dateTime={iso}>{fullDate(iso)}</time>
             {details}
           </div>

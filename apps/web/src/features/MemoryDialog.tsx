@@ -82,7 +82,7 @@ function MemoryDialogInner({ state, onClose, projects }: { state: MemoryDialogSt
           memory && (
             <>
               <AuthorMeta
-                author={{ source: memory.source, label: memory.agentLabel }}
+                author={{ source: memory.source, label: memory.agentLabel, model: memory.agentModel }}
                 iso={memory.createdAt}
                 heading="Written"
                 details={
@@ -215,7 +215,7 @@ function MemoryDialogInner({ state, onClose, projects }: { state: MemoryDialogSt
                       <li key={c.id} data-current={c.id === memory.id}>
                         <span className="t-truncate" style={{ flex: 1 }}>{c.title}</span>
                         <Badge tone={c.status === 'active' ? 'success' : 'neutral'}>{c.status}</Badge>
-                        <Author source={c.source} label={c.agentLabel} compact />
+                        <Author source={c.source} label={c.agentLabel} model={c.agentModel} compact />
                         <span className="t-subtle t-nowrap">{new Date(c.createdAt).toLocaleDateString()}</span>
                       </li>
                     ))}

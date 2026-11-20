@@ -3,8 +3,8 @@
 # checkout is needed on the host.
 #
 # Required env: POSTGRES_PASSWORD, TABULA_TOKEN. Optional: TAG, TABULA_PORT, TABULA_DATA_DIR,
-# PUID, PGID, TABULA_CONNECTOR_SECRET, TABULA_FORNAX_URL, TABULA_FORNAX_TOKEN (both or neither),
-# TABULA_FORNAX_PRIORITY.
+# PUID, PGID, TABULA_CONNECTOR_SECRET, TABULA_PUBLIC_URL, TABULA_FORNAX_URL, TABULA_FORNAX_TOKEN
+# (both or neither), TABULA_FORNAX_PRIORITY.
 #
 # `name:` is pinned so the project name doesn't depend on the directory this runs from.
 name: tabula
@@ -24,6 +24,7 @@ services:
       - DATABASE_URL=postgres://tabula:${POSTGRES_PASSWORD}@db:5432/tabula
       - TABULA_TOKEN=${TABULA_TOKEN}
       - TABULA_CONNECTOR_SECRET=${TABULA_CONNECTOR_SECRET:-}
+      - TABULA_PUBLIC_URL=${TABULA_PUBLIC_URL:-}
       - TABULA_FORNAX_URL=${TABULA_FORNAX_URL:-}
       - TABULA_FORNAX_TOKEN=${TABULA_FORNAX_TOKEN:-}
       - TABULA_FORNAX_PRIORITY=${TABULA_FORNAX_PRIORITY:-}

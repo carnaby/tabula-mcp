@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { invalidate, useQuery } from '../hooks/data';
 import { copyText } from '../format';
+import { href } from '../router';
 import type { Project } from '../types';
 import { Button, Field, Input, Skeleton, useToast } from '../ui';
 
@@ -40,6 +41,10 @@ const HOOK = `{
 export function SetupPanel({ project }: { project: Project | undefined }) {
   const slug = project?.id ?? '';
   const snippet = useQuery((s) => api.snippet(slug, s), [slug], { enabled: !!slug, refetchOnFocus: false });
+  // OAuth exists only with TABULA_PUBLIC_URL; without it the shared token is the only way in. If the answer fails,
+  // the token instructions are the safe choice: they work on either server during this release.
+  const me = useQuery((s) => api.me(s), [], { refetchOnFocus: false });
+  const oauth = me.data ? me.data.publicUrl !== null : me.error ? false : undefined;
   const [draft, setDraft] = useState({ name: '', description: '' });
   const [busy, setBusy] = useState(false);
   const notify = useToast();
@@ -106,6 +111,8 @@ export function SetupPanel({ project }: { project: Project | undefined }) {
         <p className="t-muted">Windows (PowerShell):</p>
         <CodeBlock label="Commands" text={installWindows(origin)} />
         <p className="t-muted">
+          {oauth === true && <><code className="t-mono">login</code> opens your browser to approve the connection. </>}
+          {oauth === false && <><code className="t-mono">login</code> asks for the server's <code className="t-mono">TABULA_TOKEN</code>. </>}
           <code className="t-mono">install</code> puts <code className="t-mono">tabula</code> and <code className="t-mono">tabula.cmd</code> into <code className="t-mono">~/.tabula/bin</code> and tells you how to add it to PATH. Then run <code className="t-mono">tabula status</code> in the repository before the first <code className="t-mono">tabula push</code>: it lists every file the push would upload, so a too broad <code className="t-mono">sync</code> pattern shows up before anything leaves the machine.
         </p>
       </section>
@@ -120,14 +127,31 @@ export function SetupPanel({ project }: { project: Project | undefined }) {
 
       <section className="t-card t-card--pad t-stack">
         <h3>Connect a client</h3>
-        <p className="t-muted">Once per machine for Claude Code (replace the token):</p>
-        <CodeBlock
-          label="Command"
-          text={`claude mcp add tabula --scope user --transport http ${origin}/mcp \\\n  --header "Authorization: Bearer <TABULA_TOKEN>" \\\n  --header "X-Tabula-Agent: claude-code"`}
-        />
-        <p className="t-muted">
-          In claude.ai: Settings → Connectors → Add custom connector, URL <code className="t-mono">{origin}/mcp/&lt;TABULA_CONNECTOR_SECRET&gt;</code>. Then you can say <em>“save this to Tabula”</em> in any chat and it lands in Thoughts.
-        </p>
+        {oauth === undefined && <Skeleton height={140} />}
+        {oauth === true && (
+          <>
+            <p className="t-muted">
+              Claude Code, once per machine. Then run <code className="t-mono">/mcp</code> in a session, choose <code className="t-mono">tabula</code> and Authenticate: your browser asks you to approve the connection.
+            </p>
+            <CodeBlock label="Command" text={`claude mcp add --transport http --scope user tabula ${origin}/mcp`} />
+            <p className="t-muted">
+              In claude.ai: Settings → Connectors → Add custom connector, URL <code className="t-mono">{origin}/mcp</code>, then Connect and approve. Then you can say <em>“save this to Tabula”</em> in any chat and it lands in Thoughts.
+            </p>
+            <p className="t-muted">Approved apps are listed under <a href={href.security()}>Security</a>, where you can rename or revoke them.</p>
+          </>
+        )}
+        {oauth === false && (
+          <>
+            <p className="t-muted">Once per machine for Claude Code (replace the token):</p>
+            <CodeBlock
+              label="Command"
+              text={`claude mcp add tabula --scope user --transport http ${origin}/mcp \\\n  --header "Authorization: Bearer <TABULA_TOKEN>" \\\n  --header "X-Tabula-Agent: claude-code"`}
+            />
+            <p className="t-muted">
+              In claude.ai: Settings → Connectors → Add custom connector, URL <code className="t-mono">{origin}/mcp/&lt;TABULA_CONNECTOR_SECRET&gt;</code>. Then you can say <em>“save this to Tabula”</em> in any chat and it lands in Thoughts.
+            </p>
+          </>
+        )}
       </section>
     </div>
   );

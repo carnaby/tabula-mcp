@@ -254,7 +254,9 @@ describe('reports over MCP', () => {
     expect(seen.content[0]).toMatchObject({ type: 'image', mimeType: 'image/jpeg' });
     expect(Buffer.from(seen.content[0]!.data!, 'base64').subarray(0, 2).equals(Buffer.from([0xff, 0xd8]))).toBe(true);
 
-    const frame = await tool('get_frame', { video_id: video.id.slice(0, 8), at: '0:02' });
+    const frame = await tool('get_frame', { video_id: video.id.slice(0, 8), at: '0:02', model: 'claude-opus-5-5' });
+    const [savedFrame] = await db.select().from(reportAttachments).where(eq(reportAttachments.kind, 'frame'));
+    expect(savedFrame!.createdByModel).toBe('claude-opus-5-5');
     expect(frame.content[0]).toMatchObject({ type: 'image', mimeType: 'image/jpeg' });
     expect(JSON.parse(text(frame.content))).toMatchObject({ kind: 'frame', at_s: 2, from_video: video.id, saved: 'new frame saved to the report' });
     expect(JSON.parse(text((await tool('get_frame', { video_id: video.id, at: 2 })).content)).saved).toBe('this frame was already saved');

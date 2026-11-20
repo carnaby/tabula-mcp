@@ -11,7 +11,7 @@ import { REPORT_STATUSES } from '../domain/reports.js';
 import { badRequest, DomainError, loggableError } from '../domain/errors.js';
 import { MESSAGE_STATUSES, MESSAGE_TYPES, UPDATE_STATUSES, WAITING_ON } from '../domain/messages.js';
 import { createProject } from '../domain/projects.js';
-import { MEMORY_KINDS, validateProjectSlug } from '../domain/validation.js';
+import { MEMORY_KINDS, normalizeModel, validateProjectSlug } from '../domain/validation.js';
 import { SERVER_INSTRUCTIONS, TOOL_DESCRIPTIONS as D } from './descriptions.js';
 import { claudeMdSection, TABULA_JSON } from './snippet.js';
 
@@ -22,6 +22,11 @@ const SETUP_NEXT_STEP =
 const idParam = z.string().describe('A reference "tabula:xxxxxxxx", a full uuid, or the short #xxxx id shown in recall. Pass a tabula: reference as given, with its prefix.');
 const projectParam = z.string().describe('Project slug from the "Memory (Tabula)" section, e.g. "acme".');
 const kindParam = z.enum(MEMORY_KINDS);
+
+const modelParam = z
+  .string()
+  .optional()
+  .describe('The exact identifier of the model generating this call, e.g. "claude-opus-5-5"; "unknown" if you do not know it. Stored with what you write, as stated by you.');
 
 /** Logger is optional only for places where the server is built without a request (e.g. tests). */
 export type McpLogger = { error(obj: unknown): void };
@@ -96,6 +101,8 @@ export function buildMcpServer(ctx: McpContext): McpServer {
     { instructions: SERVER_INSTRUCTIONS, maxToolInputElements: MAX_TOOL_INPUT_ELEMENTS },
   );
   const run = (fn: () => Promise<unknown>) => runTool(ctx.log, fn);
+  /** One write: the model the agent named, normalized; a missing one is stored as "unknown" (spec §5). */
+  const writing = (model: string | undefined): McpContext => ({ ...ctx, model: normalizeModel(model) });
 
   server.registerTool('list_projects', { description: D.list_projects, inputSchema: z.object({}) }, () =>
     run(() => agentListProjects(ctx)),
@@ -146,18 +153,19 @@ export function buildMcpServer(ctx: McpContext): McpServer {
         body: z.string().describe('The why and the context in 1–5 sentences, max 2000 characters.'),
         tags: z.array(z.string()).optional().describe('Free lowercase tags.'),
         supersedes_id: idParam.optional().describe('Id of the rule this one replaces; it will be deprecated.'),
+        model: modelParam,
       }),
     },
-    (a) => run(() => agentRemember(ctx, a)),
+    (a) => run(() => agentRemember(writing(a.model), a)),
   );
 
   server.registerTool(
     'deprecate',
     {
       description: D.deprecate,
-      inputSchema: z.object({ id: idParam, reason: z.string().describe('Why the rule is no longer valid.') }),
+      inputSchema: z.object({ id: idParam, reason: z.string().describe('Why the rule is no longer valid.'), model: modelParam }),
     },
-    (a) => run(() => agentDeprecate(ctx, a)),
+    (a) => run(() => agentDeprecate(writing(a.model), a)),
   );
 
   server.registerTool(
@@ -168,6 +176,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
         id: z.string().describe('Project slug = project folder name in lowercase (letters, digits, dashes, max 40).'),
         name: z.string().optional().describe('Display name; defaults to the slug.'),
         description: z.string().optional().describe('One sentence about the project.'),
+        model: modelParam,
       }),
     },
     (a) =>
@@ -212,9 +221,10 @@ export function buildMcpServer(ctx: McpContext): McpServer {
         path: z.string().describe('Path relative to the repository root, e.g. "docs/superpowers/specs/2026-11-02-topic.md"; must match the project\'s sync patterns.'),
         content: z.string().describe('The whole new text of the file (UTF-8, at most 1 MiB).'),
         base_sha256: sha256Param.optional().describe('The sha256 from the read_file header of the version you changed. Required when the file exists; omit for a new file.'),
+        model: modelParam,
       }),
     },
-    (a) => run(() => agentWriteFile(ctx, a)),
+    (a) => run(() => agentWriteFile(writing(a.model), a)),
   );
 
   server.registerTool(
@@ -225,9 +235,10 @@ export function buildMcpServer(ctx: McpContext): McpServer {
         project: projectParam,
         path: z.string().describe('Path exactly as list_files shows it.'),
         base_sha256: sha256Param.describe('The sha256 of the current version, from list_files or the read_file header.'),
+        model: modelParam,
       }),
     },
-    (a) => run(() => agentDeleteFile(ctx, a)),
+    (a) => run(() => agentDeleteFile(writing(a.model), a)),
   );
 
   server.registerTool(
@@ -253,9 +264,10 @@ export function buildMcpServer(ctx: McpContext): McpServer {
         title: z.string().describe('Specific one-line title, max 200 characters.'),
         body: z.string().describe('Markdown, max 50 000 characters.'),
         tags: tagsParam,
+        model: modelParam,
       }),
     },
-    (a) => run(() => agentSaveThought(ctx, a)),
+    (a) => run(() => agentSaveThought(writing(a.model), a)),
   );
 
   server.registerTool(
@@ -270,9 +282,10 @@ export function buildMcpServer(ctx: McpContext): McpServer {
         tags: z.array(z.string()).optional().describe('Replaces all tags.'),
         archived: z.boolean().optional().describe('true moves the thought to the archive, false brings it back. Needs no expected_version and keeps the version.'),
         expected_version: z.number().int().positive().optional().describe('The version you read (from get or find_thoughts). Required with body or title; optional with append only.'),
+        model: modelParam,
       }),
     },
-    (a) => run(() => agentUpdateThought(ctx, a)),
+    (a) => run(() => agentUpdateThought(writing(a.model), a)),
   );
 
   server.registerTool(
@@ -318,9 +331,10 @@ export function buildMcpServer(ctx: McpContext): McpServer {
         project: z.string().optional().describe('Project slug as list_projects shows it; leave it out when the user names no project.'),
         title: z.string().optional().describe('One line, max 200 characters; for a bug, what is broken. Without it: the first line of the description, or the date and time.'),
         description: z.string().optional().describe('Markdown: what happened, steps to reproduce, expected result; or what the recording is about.'),
+        model: modelParam,
       }),
     },
-    (a) => run(() => agentCreateReport(ctx, a)),
+    (a) => run(() => agentCreateReport(writing(a.model), a)),
   );
 
   server.registerTool(
@@ -334,9 +348,10 @@ export function buildMcpServer(ctx: McpContext): McpServer {
         status: z.enum(REPORT_STATUSES).optional(),
         title: z.string().optional(),
         expected_version: z.number().int().positive().optional().describe('The version from get_report. Required with triage, title or status "done".'),
+        model: modelParam,
       }),
     },
-    (a) => run(() => agentUpdateReport(ctx, a)),
+    (a) => run(() => agentUpdateReport(writing(a.model), a)),
   );
 
   server.registerTool('view_attachment', { description: D.view_attachment, inputSchema: z.object({ id: attachmentId }) }, ({ id }) =>
@@ -350,9 +365,10 @@ export function buildMcpServer(ctx: McpContext): McpServer {
       inputSchema: z.object({
         video_id: attachmentId,
         at: z.union([z.string(), z.number()]).describe('"2:41", "1:02:03" or seconds (161.5).'),
+        model: modelParam,
       }),
     },
-    (a) => runImageTool(ctx.log, () => agentGetFrame(ctx, a)),
+    (a) => runImageTool(ctx.log, () => agentGetFrame(writing(a.model), a)),
   );
 
   server.registerTool(
@@ -374,9 +390,10 @@ export function buildMcpServer(ctx: McpContext): McpServer {
       inputSchema: z.object({
         attachment_id: attachmentId,
         names: z.record(z.string(), z.string()).describe('Speaker → name, e.g. {"S2": "Tomáš"}; only the speakers whose names you know.'),
+        model: modelParam,
       }),
     },
-    (a) => run(() => agentNameSpeakers(ctx, a)),
+    (a) => run(() => agentNameSpeakers(writing(a.model), a)),
   );
 
   server.registerTool(
@@ -396,9 +413,10 @@ export function buildMcpServer(ctx: McpContext): McpServer {
             }),
           )
           .describe('1 to 50 corrections.'),
+        model: modelParam,
       }),
     },
-    (a) => run(() => agentEditTranscript(ctx, a)),
+    (a) => run(() => agentEditTranscript(writing(a.model), a)),
   );
 
   const messageId = z.string().describe('Message: its reference (tabula:xxxxxxxx) or full uuid.');
@@ -414,9 +432,10 @@ export function buildMcpServer(ctx: McpContext): McpServer {
         title: z.string().describe('One sentence, max 200 characters.'),
         body: z.string().describe('Markdown, max 50 000 characters.'),
         related_to: messageId.optional().describe('The message this one follows up: its reference or uuid.'),
+        model: modelParam,
       }),
     },
-    (a) => run(() => agentSendMessage(ctx, a)),
+    (a) => run(() => agentSendMessage(writing(a.model), a)),
   );
 
   server.registerTool(
@@ -448,9 +467,10 @@ export function buildMcpServer(ctx: McpContext): McpServer {
         reply: z.string().optional().describe('Markdown, max 20 000 characters. Required for status rejected.'),
         status: z.enum(UPDATE_STATUSES).optional(),
         waiting_on: z.enum(WAITING_ON).optional().describe('Required with status waiting: who the message waits for. "author" is the human who owns this Tabula, "sender" is the project that sent the message.'),
+        model: modelParam,
       }),
     },
-    (a) => run(() => agentUpdateMessage(ctx, a)),
+    (a) => run(() => agentUpdateMessage(writing(a.model), a)),
   );
 
   return server;

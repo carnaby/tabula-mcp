@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DomainError } from '../../src/domain/errors.js';
 import {
-  normalizeTags, sanitizeAgentLabel, validateMemoryText, validateNoteText, validateProjectSlug,
+  normalizeModel, normalizeTags, sanitizeAgentLabel, validateMemoryText, validateNoteText, validateProjectSlug,
 } from '../../src/domain/validation.js';
 
 const fails = (fn: () => unknown, re: RegExp) => {
@@ -62,4 +62,17 @@ describe('validateProjectSlug', () => {
   it('accepts lowercase slugs', () => expect(validateProjectSlug('acme')).toBe('acme'));
   it('rejects uppercase and spaces', () => fails(() => validateProjectSlug('My Project'), /slug/));
   it('reserves "none" for reports without a project', () => fails(() => validateProjectSlug('none'), /"none" is reserved/));
+});
+
+describe('normalizeModel', () => {
+  it('lower-cases, turns any other character into a dash and keeps at most 60', () => {
+    expect(normalizeModel('claude-opus-5-5')).toBe('claude-opus-5-5');
+    expect(normalizeModel('Claude Opus 5.5')).toBe('claude-opus-5.5');
+    expect(normalizeModel('  gemini/2.5 pro (preview) ')).toBe('gemini-2.5-pro-preview');
+    expect(normalizeModel('x'.repeat(80))).toHaveLength(60);
+  });
+
+  it('is "unknown" when nothing usable is left', () => {
+    for (const nothing of ['', '   ', '!!!', undefined, null, 42]) expect(normalizeModel(nothing)).toBe('unknown');
+  });
 });

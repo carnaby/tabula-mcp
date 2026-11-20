@@ -1,0 +1,124 @@
+import type { FastifyReply, FastifyRequest } from 'fastify';
+import type { Config } from '../config.js';
+import type { Db } from '../db/client.js';
+import { sanitizeAgentLabel } from '../domain/validation.js';
+import { safeEqual } from '../http/auth.js';
+import { readCookie, sessionCookie } from './cookie.js';
+import type { LegacyUse, LegacyVia } from './legacy.js';
+import { authenticateAccessToken } from './oauth/store.js';
+import { authenticateSession, SESSION_TTL_MS, type UiSession } from './sessions.js';
+import type { AuthSettings, ResourceKind } from './settings.js';
+
+/** Who a request authenticated as. */
+export type Principal =
+  | { kind: 'session'; session: UiSession }
+  | { kind: 'oauth'; connectionId: string; name: string }
+  | { kind: 'legacy'; via: LegacyVia };
+
+declare module 'fastify' {
+  interface FastifyRequest {
+    /** Set by apiAuth / mcpAuth; null on routes that do not authenticate. */
+    principal: Principal | null;
+  }
+}
+
+export type AuthContext = { db: Db; config: Config; auth: AuthSettings | null; legacy: LegacyUse };
+
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+const bearerOf = (req: FastifyRequest): string | undefined => /^Bearer\s+(.+)$/i.exec(req.headers.authorization ?? '')?.[1]?.trim();
+
+/**
+ * The 401 challenge (RFC 6750, RFC 9728): where the authorization server is described and which scope this resource
+ * needs; `invalid_token` when a token was sent and refused. Without TABULA_PUBLIC_URL a bare `Bearer`, as before.
+ */
+export function challenge(auth: AuthSettings | null, kind: ResourceKind, invalidToken: boolean): string {
+  if (!auth) return 'Bearer';
+  const params = [`resource_metadata="${auth.issuer}/.well-known/oauth-protected-resource/${kind}"`, `scope="${kind}"`];
+  if (invalidToken) params.push('error="invalid_token"');
+  return `Bearer ${params.join(', ')}`;
+}
+
+/** A browser request that changes something with the session cookie must come from Tabula's own pages (spec §4.3). */
+export const sameOrigin = (req: FastifyRequest, auth: AuthSettings): boolean => req.headers.origin === auth.issuer;
+
+/** The live session of the request's cookie, if any. */
+export async function sessionFromCookie(ctx: Pick<AuthContext, 'db' | 'auth'>, req: FastifyRequest, now: Date) {
+  if (!ctx.auth) return undefined;
+  const value = readCookie(req.headers.cookie, ctx.auth.cookie.name);
+  return value ? authenticateSession(ctx.db, value, now) : undefined;
+}
+
+async function fromBearer(ctx: AuthContext, token: string, kind: ResourceKind): Promise<Principal | null> {
+  if (safeEqual(token, ctx.config.token)) {
+    await ctx.legacy.record('token');
+    return { kind: 'legacy', via: 'token' };
+  }
+  if (!ctx.auth) return null;
+  const r = await authenticateAccessToken(ctx.db, token, kind, new Date());
+  return r.ok ? { kind: 'oauth', connectionId: r.connectionId, name: r.name } : null;
+}
+
+const unauthorized = (reply: FastifyReply, ctx: AuthContext, kind: ResourceKind, invalidToken: boolean) =>
+  reply.code(401).header('WWW-Authenticate', challenge(ctx.auth, kind, invalidToken)).send({ error: 'unauthorized' });
+
+/** /api: an OAuth token for /api (the CLI), the session cookie (the web UI) or, in this release, TABULA_TOKEN. */
+export function apiAuth(ctx: AuthContext) {
+  return async (req: FastifyRequest, reply: FastifyReply) => {
+    const bearer = bearerOf(req);
+    if (bearer !== undefined) {
+      const p = await fromBearer(ctx, bearer, 'api');
+      if (!p) return unauthorized(reply, ctx, 'api', true);
+      req.principal = p;
+      return;
+    }
+    const found = await sessionFromCookie(ctx, req, new Date());
+    if (ctx.auth && found) {
+      if (!SAFE_METHODS.has(req.method) && !sameOrigin(req, ctx.auth)) {
+        return reply.code(403).send({ error: 'forbidden', message: 'cross-origin request refused' });
+      }
+      if (found.renewed) reply.header('Set-Cookie', sessionCookie(ctx.auth, readCookie(req.headers.cookie, ctx.auth.cookie.name)!, SESSION_TTL_MS));
+      req.principal = { kind: 'session', session: found.session };
+      return;
+    }
+    return unauthorized(reply, ctx, 'api', false);
+  };
+}
+
+/** /mcp: an OAuth token for /mcp or, in this release, TABULA_TOKEN. Never the session cookie. */
+export function mcpAuth(ctx: AuthContext) {
+  return async (req: FastifyRequest, reply: FastifyReply) => {
+    const bearer = bearerOf(req);
+    const p = bearer === undefined ? null : await fromBearer(ctx, bearer, 'mcp');
+    if (!p) return unauthorized(reply, ctx, 'mcp', bearer !== undefined);
+    req.principal = p;
+  };
+}
+
+/** Security settings and sign-out belong to the person (a session, or the old token in this release), never to an app. */
+export async function requirePerson(req: FastifyRequest, reply: FastifyReply) {
+  const kind = req.principal?.kind;
+  if (kind !== 'session' && kind !== 'legacy') {
+    return reply.code(403).send({ error: 'forbidden', message: 'only the web UI can do this; an app connection cannot' });
+  }
+}
+
+/** Who writes over /api: an app by its connection name, the web UI as "human", the old token by its X-Tabula-Agent header. */
+export function apiWriterLabel(req: FastifyRequest): string {
+  const p = req.principal;
+  if (p?.kind === 'oauth') return p.name;
+  if (p?.kind === 'legacy') {
+    const header = req.headers['x-tabula-agent'];
+    return header ? sanitizeAgentLabel(header) : 'human';
+  }
+  return 'human';
+}
+
+/**
+ * The editor of a write over /api, labelled by apiWriterLabel: only "human" (the web UI) writes as the human; an app
+ * connection, or the old token with an X-Tabula-Agent header, writes as an agent. /api never carries a model.
+ */
+export function apiEditor(req: FastifyRequest): { source: 'agent' | 'human'; label: string } {
+  const label = apiWriterLabel(req);
+  return { source: label === 'human' ? 'human' : 'agent', label };
+}

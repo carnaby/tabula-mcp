@@ -1,10 +1,11 @@
 import { NodeStreamableHTTPServerTransport } from '@modelcontextprotocol/node';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { type AuthContext, mcpAuth } from '../auth/authenticate.js';
 import type { Config } from '../config.js';
 import type { Db } from '../db/client.js';
 import { FILE_LIMITS } from '../domain/files.js';
 import { sanitizeAgentLabel } from '../domain/validation.js';
-import { requireBearer, safeEqual } from '../http/auth.js';
+import { safeEqual } from '../http/auth.js';
 import type { MediaStore } from '../media/store.js';
 import { buildMcpServer } from './server.js';
 
@@ -24,13 +25,15 @@ const MCP_BODY_LIMIT = 8 * FILE_LIMITS.contentBytes;
 
 const METHOD_NOT_ALLOWED = { jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed.' }, id: null };
 
-export function registerMcpRoutes(app: FastifyInstance, deps: { db: Db; config: Config; store: MediaStore }): void {
+export function registerMcpRoutes(
+  app: FastifyInstance, deps: { db: Db; config: Config; store: MediaStore; mediaKey: string; authCtx: AuthContext },
+): void {
   // Stateless: a new server + transport per request; agentLabel is captured in the closure.
   const handle = async (req: FastifyRequest, reply: FastifyReply, agentLabel: string) => {
     const server = buildMcpServer({
       db: deps.db, agentLabel, log: req.log,
       transcriptionEnabled: deps.config.fornax !== undefined,
-      media: { store: deps.store, token: deps.config.token, paths: deps.config.media, baseUrl: originOf(req) },
+      media: { store: deps.store, key: deps.mediaKey, paths: deps.config.media, baseUrl: originOf(req) },
     });
     const transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     reply.raw.on('close', () => {
@@ -43,8 +46,9 @@ export function registerMcpRoutes(app: FastifyInstance, deps: { db: Db; config: 
   };
 
   // Authentication runs before the body is read: only an authorized client gets the larger body limit.
-  app.post('/mcp', { bodyLimit: MCP_BODY_LIMIT, onRequest: requireBearer(deps.config.token) }, (req, reply) =>
-    handle(req, reply, sanitizeAgentLabel(req.headers['x-tabula-agent'])),
+  // An OAuth connection writes under its own name; the old token keeps the X-Tabula-Agent header (spec §5).
+  app.post('/mcp', { bodyLimit: MCP_BODY_LIMIT, onRequest: mcpAuth(deps.authCtx) }, (req, reply) =>
+    handle(req, reply, req.principal?.kind === 'oauth' ? req.principal.name : sanitizeAgentLabel(req.headers['x-tabula-agent'])),
   );
 
   const secret = deps.config.connectorSecret;
@@ -55,6 +59,7 @@ export function registerMcpRoutes(app: FastifyInstance, deps: { db: Db; config: 
         bodyLimit: MCP_BODY_LIMIT,
         onRequest: async (req, reply) => {
           if (!safeEqual(req.params.secret, secret)) return reply.code(404).send({ error: 'not found' });
+          await deps.authCtx.legacy.record('connector');
         },
       },
       async (req, reply) => {

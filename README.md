@@ -36,7 +36,7 @@ Project files and global rules feed the `recall` digest. Notes and Thoughts neve
 # macOS / Linux
 mkdir -p ~/.tabula && curl -fsSL https://tabula.example.com/cli/tabula.mjs -o ~/.tabula/tabula.mjs
 node ~/.tabula/tabula.mjs install                  # shims in ~/.tabula/bin; add that folder to PATH as printed
-node ~/.tabula/tabula.mjs login https://tabula.example.com   # asks for the token, saves ~/.tabula/config.json
+node ~/.tabula/tabula.mjs login https://tabula.example.com   # opens the browser to approve the connection; saves ~/.tabula/config.json
 ```
 
 ```powershell
@@ -70,7 +70,7 @@ A repository opts in with a `.tabula.json` in its root, committed:
 | `tabula pull [--force]` | writes missing files and updates unchanged copies, state files first; a file that cannot be written is reported and skipped; never deletes local files |
 | `tabula rm <path>` | deletes a file on the server (restorable in the UI) |
 | `tabula pull --hook` | for the SessionStart hook: silent without `.tabula.json` or a login, at most 5 seconds (when time runs out it keeps what it restored and says how many files are missing), always exit 0 |
-| `tabula login <url>` · `install` · `update` | sign in through the browser (an app connection for `/api`, kept in `~/.tabula/config.json` and renewed by itself; `--token-stdin` saves a legacy token instead), PATH shims and the hook snippet, self-update |
+| `tabula login <url>` · `install` · `update` | sign in through the browser (an app connection for `/api`, kept in `~/.tabula/config.json` and renewed by itself; `--no-browser` only prints the address to open on the same computer; `--token-stdin` saves a legacy token instead; `TABULA_URL` / `TABULA_TOKEN` in the environment override the saved login), PATH shims and the hook snippet, self-update |
 
 Each clone keeps the hash it last synced for every file in `<git-dir>/tabula-sync.json` (per worktree, never committed). The server accepts a change only if it is based on the server's current version, so two machines editing the same file produce a **conflict** instead of a silent overwrite: merge by hand, or take one side with `--force`. Exit codes: 0 OK, 1 error, 2 finished with conflicts.
 
@@ -263,7 +263,7 @@ CI also publishes a ready-made image, `ghcr.io/carnaby/tabula:latest` (plus a `s
 
 For anything beyond localhost, put Tabula behind a reverse proxy that terminates TLS and bind the container to loopback: the bearer token travels in a header, and it unlocks everything Tabula holds.
 
-The proxy must pass `/.well-known/*`, `/oauth/*`, `/signin`, `/passkey/*` and `/auth/*` to Tabula like everything else, set `X-Forwarded-For` (the per-address limits of sign-in use its last entry), and must not block Anthropic's servers: claude.ai connects to `/mcp` and `/oauth/token` from Anthropic's cloud, not from your browser.
+The proxy must pass `/.well-known/*`, `/oauth/*`, `/signin`, `/passkey/*` and `/auth/*` to Tabula like everything else, set `X-Forwarded-For` (the per-address limits of sign-in use its last entry), and must not block Anthropic's servers: claude.ai connects to `/.well-known/*`, `/oauth/register`, `/oauth/token` and `/mcp` from Anthropic's cloud, not from your browser.
 
 The proxy must pass `X-Forwarded-Proto` (and the original `Host`, or `X-Forwarded-Host`): the attachment links that agents get from `get_report` are absolute and built from them, so without it they start with `http://`. Its request body limit must be at least `TABULA_MEDIA_MAX_MB`.
 
@@ -336,7 +336,7 @@ The repository is a pnpm workspace with [Nx](https://nx.dev): `apps/server`, `ap
 ```bash
 pnpm install                # the whole workspace, one lockfile
 pnpm db:dev                 # Postgres 17 in Docker (container tabula-dev-db, port 5432)
-cp .env.example .env        # then set TABULA_TOKEN (an older .env: add WEB_DIST and TABULA_MEDIA_DIR from .env.example)
+cp .env.example .env        # then set TABULA_TOKEN, and TABULA_PUBLIC_URL for passkeys (see below; an older .env: add WEB_DIST and TABULA_MEDIA_DIR from .env.example)
 pnpm dev                    # server with reload on PORT (default 3000) and the UI on http://localhost:5173
 pnpm dev:server             # only the server
 pnpm dev:web                # only the UI; proxies /api, /mcp and the sign-in paths to TABULA_API (default http://localhost:3000)
@@ -390,14 +390,14 @@ deploy/           example production stack and backup script
 - **Synced files are the most likely way a secret reaches Tabula.** A `sync` pattern uploads every untracked file it matches, and untracked files are exactly where local credentials live. `.env` and `.env.*` (in any folder and any letter case) are always refused, but nothing else is guessed: keep the patterns explicit (`docs/**`, not `**`), run `tabula status` before the first `tabula push`, and treat a secret that was uploaded by mistake as leaked: `tabula rm` only hides the file (it and its previous versions stay in the database, restorable in the UI), so rotate the secret.
 - **You sign in with passkeys** (WebAuthn, user verification required); there is no password. The first passkey and recovery go through a one-time link (15 minutes) that only the server prints. The last passkey cannot be deleted.
 - **The web UI holds no token a script can read.** A session lives in an `HttpOnly`, `SameSite=Strict` cookie (`Secure` on https) for 30 days of use; every change it makes must come from Tabula's own origin. Approving an app and adding or deleting a passkey need a passkey check from the last 5 minutes, so a stolen cookie cannot hand out tokens or add a passkey.
-- **Every app has its own revocable connection** (OAuth 2.1: dynamic registration, PKCE S256, consent in the browser). Access tokens last an hour and open only the resource they were issued for (`/mcp` or `/api`); refresh tokens last 30 days and rotate on every use, and a reused one ends the whole connection (within 10 seconds of its rotation it is only refused, since that is a retry after a lost response). Tokens, codes, cookies and links are stored only as SHA-256 hashes and never logged. Registration, token requests and failed passkey checks are limited per address.
+- **Every app has its own revocable connection** (OAuth 2.1: dynamic registration, PKCE S256, consent in the browser). Access tokens last an hour and open only the resource they were issued for (`/mcp` or `/api`); refresh tokens last 30 days and rotate on every use, and a reused one ends the whole connection (within 10 seconds of its rotation it is only refused, since that is a retry after a lost response). Tokens, codes, cookies and links are stored only as SHA-256 hashes and never logged (except the first-passkey link at startup). Registration, token requests and failed passkey checks are limited per address.
 - **Who wrote what:** the connection name is verified by its token; the model name is what the model says it is and is shown as such.
 - In this release `TABULA_TOKEN` and the connector secret still unlock everything, as before; *Security* shows their last use. They are compared in constant time and the connector secret is kept out of request logs.
 - **Inbox tokens** are separate from `TABULA_TOKEN` and the app connections: each is bound to one project, stored only as a SHA-256 hash and accepted only by `/inbox-api/v1`, where it reads that project's messages, replies and sets `in_progress` or `waiting`.
 - Unexpected errors are logged on the server and returned to clients as a generic message, without internals.
 - **Agents write project files only over `write_file` and `delete_file`**, only at paths matching the `sync` patterns the CLI last sent for that project, and never blind: an existing file needs the hash of the version the agent read. Every version keeps its writer's label and the last 20 versions can be restored in the UI.
 - The `tabula` command never uploads `.env` or `.env.*` files and the server refuses them too; paths are validated on both sides (relative, no `..`, no `.git`), and paths that differ only in letter case are never synced, so one cannot overwrite the other on Windows or macOS.
-- **Report attachments** are accepted only as photos, video or audio, recognised from the file's bytes (never from the name or the client's content type), so an HTML or SVG file can't be uploaded and run on Tabula's origin. They are served from `/media/<id>` with a signed, expiring link instead of the token (`<video>` and `<img>` can't send one), with `nosniff`, a sandboxing CSP and range support. The signing key is random and kept in the database (`settings`, `media_signing_key`); deleting that row invalidates every link. Signatures are masked in request logs.
+- **Report attachments** are accepted only as photos, video or audio, recognised from the file's bytes (never from the name or the client's content type), so an HTML or SVG file can't be uploaded and run on Tabula's origin. They are served from `/media/<id>` with a signed, expiring link instead of the token (`<video>` and `<img>` can't send one), with `nosniff`, a sandboxing CSP and range support. The signing key is random and kept in the database (`settings`, `media_signing_key`); deleting that row and restarting Tabula invalidates every link. Signatures are masked in request logs.
 - **ffmpeg reads untrusted files**, so it runs with only `PATH` in its environment (never the token or the database URL), reads local files only, with the demuxer fixed by the detected type, refuses pictures over 64 megapixels, and at most two ffmpeg/ffprobe processes run at once. Its error output stays in the server log.
 - **There is no total storage quota and no limit on concurrent uploads**, only `TABULA_MEDIA_MAX_MB` per file: with a single token, whoever can upload can already do everything else. Watch the free space of the media volume; video and audio of closed reports are deleted after `TABULA_MEDIA_PURGE_HOURS` unless *Keep media* is on.
 - **The Fornax token stays on the server.** `TABULA_FORNAX_TOKEN` is sent only to `TABULA_FORNAX_URL` as a bearer token and never appears in a log line, an error message or an API response. Tabula uploads a recording to Fornax and fetches the transcript; Fornax never calls Tabula and nothing connects to your GPU computer from outside. Transcript text is never logged.

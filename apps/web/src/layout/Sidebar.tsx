@@ -1,11 +1,11 @@
 import { useState } from 'react';
-import { api, clearToken } from '../api';
+import { api, ApiError, clearToken, getToken } from '../api';
 import { WorkerIndicator } from '../features/reports/WorkerIndicator';
 import { useQuery } from '../hooks/data';
 import { promptInstall, useCanInstall } from '../pwa';
 import { href, type Route, sectionOf } from '../router';
 import type { Project, WorkerStatus } from '../types';
-import { Button, Icon, type IconName, IconButton, Input, Kbd, Logo, Segmented, useConfirm, useTheme } from '../ui';
+import { Button, Icon, type IconName, IconButton, Input, Kbd, Logo, Segmented, useConfirm, useTheme, useToast } from '../ui';
 
 function NavItem({ to, icon, label, count, active }: { to: string; icon: IconName; label: string; count?: number; active: boolean }) {
   return (
@@ -29,6 +29,7 @@ export function Sidebar({
   const messageCounts = useQuery((s) => api.messageCounts(s), [], { topics: ['messages'] });
   const [filter, setFilter] = useState('');
   const { confirm } = useConfirm();
+  const notify = useToast();
   // A report opened from a project's Reports tab highlights that project, not the global list.
   const section = sectionOf(route);
   const activeProject = section.name === 'project' ? section.project : null;
@@ -98,12 +99,25 @@ export function Sidebar({
           icon="logOut"
           label="Sign out"
           onClick={async () => {
-            if (await confirm({ title: 'Sign out?', message: 'This browser signs out of Tabula. You sign in again with your passkey.', confirmLabel: 'Sign out' })) {
-              // Ends the session on the server too; a stored legacy token is forgotten.
-              await api.logout().catch(() => undefined);
+            // A stored legacy token means no passkey session: the sign-in gate drops the token once a session works.
+            const legacy = getToken() !== null;
+            const message = legacy
+              ? 'The legacy token is removed from this browser. You sign in again with the token or a passkey.'
+              : 'This browser signs out of Tabula. You sign in again with your passkey.';
+            if (!(await confirm({ title: 'Sign out?', message, confirmLabel: 'Sign out' }))) return;
+            try {
+              // Ends the session on the server too.
+              await api.logout();
+            } catch (e) {
               clearToken();
-              window.location.reload();
+              // 401: nothing left to end; the request has already reloaded into the sign-in screen.
+              if (e instanceof ApiError && e.status === 401) return;
+              // Otherwise the session may still be alive on the server: stay here and let the user retry.
+              notify('Sign out failed — try again.', { tone: 'danger' });
+              return;
             }
+            clearToken();
+            window.location.reload();
           }}
         />
       </div>

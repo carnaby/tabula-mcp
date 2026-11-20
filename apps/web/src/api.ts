@@ -50,15 +50,29 @@ async function request<T>(method: string, path: string, body?: unknown, signal?:
 
 export type Me = { via: 'session' | 'legacy'; fresh: boolean; passkeys: number; publicUrl: string | null };
 
+/** `passkeySignIn`: the server offers passkeys at all, which it does only with TABULA_PUBLIC_URL. */
+export type MeAnswer = { me: Me | null; passkeySignIn: boolean };
+
+async function askMe(token: string | null): Promise<MeAnswer> {
+  const res = await fetch('/api/auth/me', { credentials: 'same-origin', headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  if (res.status === 401 || res.status === 403) {
+    // With TABULA_PUBLIC_URL the refusal points to the OAuth metadata; without it the challenge is a bare "Bearer".
+    return { me: null, passkeySignIn: /resource_metadata=/.test(res.headers.get('www-authenticate') ?? '') };
+  }
+  if (!res.ok) throw new ApiError(res.status, res.statusText);
+  const me = (await res.json()) as Me;
+  return { me, passkeySignIn: me.publicUrl !== null };
+}
+
 /** Who this browser is signed in as, or null. `legacy`: ask with the stored legacy token instead of the cookie alone. */
 export async function fetchMe(legacy: boolean): Promise<Me | null> {
   const token = legacy ? getToken() : null;
   if (legacy && !token) return null;
-  const res = await fetch('/api/auth/me', { credentials: 'same-origin', headers: token ? { Authorization: `Bearer ${token}` } : {} });
-  if (res.status === 401 || res.status === 403) return null;
-  if (!res.ok) throw new ApiError(res.status, res.statusText);
-  return (await res.json()) as Me;
+  return (await askMe(token)).me;
 }
+
+/** The cookie session alone (never the legacy token), and whether passkey sign-in exists on this server. */
+export const fetchSession = (): Promise<MeAnswer> => askMe(null);
 
 const qs = (params: Record<string, string | number | boolean | undefined | null>) => {
   const entries = Object.entries(params)

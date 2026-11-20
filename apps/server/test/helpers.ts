@@ -1,8 +1,10 @@
 import { asc, inArray, sql } from 'drizzle-orm';
 import { afterAll, beforeEach, inject } from 'vitest';
+import { createClient, createConnection } from '../src/auth/oauth/store.js';
+import { hashSecret, newSecret } from '../src/auth/secrets.js';
 import type { Config } from '../src/config.js';
 import { createDb, type Db } from '../src/db/client.js';
-import { projects, reportJobs } from '../src/db/schema.js';
+import { oauthAccessTokens, projects, reportJobs } from '../src/db/schema.js';
 import { storeTranscript, type TranscriptInput } from '../src/domain/jobs.js';
 
 export function useTestDb(): Db {
@@ -53,4 +55,20 @@ export async function finishNextJob(db: Db, input: TranscriptInput): Promise<voi
     .limit(1);
   if (!job) throw new Error('no transcription job waits');
   await db.transaction((tx) => storeTranscript(tx, job.id, input));
+}
+
+/** A live connection with an access token of a known value, made directly in the database (no consent page). */
+export async function issueTestAccessToken(
+  db: Db, opts: { resource: 'mcp' | 'api'; name?: string; value?: string },
+): Promise<{ value: string; connectionId: string }> {
+  const redirectUri = 'https://client.example.com/callback';
+  const client = await createClient(db, { clientName: 'Test client', redirectUris: [redirectUri] });
+  const connection = await createConnection(db, {
+    clientId: client.id, name: opts.name ?? `test-${opts.resource}`, resource: opts.resource, scope: opts.resource, redirectUri,
+  });
+  const value = opts.value ?? newSecret();
+  await db.insert(oauthAccessTokens).values({
+    hash: hashSecret(value), connectionId: connection.id, resource: opts.resource, expiresAt: new Date(Date.now() + 3600_000),
+  });
+  return { value, connectionId: connection.id };
 }

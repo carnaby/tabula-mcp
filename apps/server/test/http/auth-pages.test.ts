@@ -33,7 +33,7 @@ const PAGE_CSP =
 const expectPageHeaders = (res: { headers: Record<string, unknown> }) => {
   expect(res.headers['content-security-policy']).toBe(PAGE_CSP);
   expect(res.headers['x-frame-options']).toBe('DENY');
-  expect(res.headers['referrer-policy']).toBe('no-referrer');
+  expect(res.headers['referrer-policy']).toBe('strict-origin');
   expect(res.headers['cache-control']).toBe('no-store');
 };
 const sessionCookie = async (verifiedAgoMs = 0) => {

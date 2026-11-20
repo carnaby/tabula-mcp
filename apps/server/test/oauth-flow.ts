@@ -60,7 +60,8 @@ export async function obtainCode(
   const cookie = await signedInCookie(db);
   const page = await app.inject({ method: 'GET', url: `/oauth/authorize?${authorizeQuery(clientId, pkce, opts.query)}`, headers: { cookie } });
   expect(page.statusCode).toBe(200);
-  const res = await decide(app, cookie, pendingOf(page.body), { name: opts.name ?? `app-${randomBytes(4).toString('hex')}`, replace: 'on' });
+  const name = opts.name ?? `app-${randomBytes(4).toString('hex')}`;
+  const res = await decide(app, cookie, pendingOf(page.body), { name, replace: name });
   expect(res.statusCode).toBe(302);
   const location = new URL(res.headers.location as string);
   return { code: location.searchParams.get('code')!, pkce, clientId, redirectUri: opts.query?.redirect_uri ?? CALLBACK, location };

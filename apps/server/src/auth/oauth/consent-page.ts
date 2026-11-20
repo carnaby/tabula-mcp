@@ -15,6 +15,8 @@ export type ConsentView = {
   name: string;
   /** A live connection already has this name: offer to replace it. */
   nameTaken: boolean;
+  /** Whether that offer is ticked: on the first view, or as the owner left it when a decision was refused. */
+  replace: boolean;
   error: string | null;
 };
 
@@ -26,7 +28,8 @@ export function renderConsent(v: ConsentView): string {
     : '';
   const access = v.resource === 'mcp' ? 'MCP (all Tabula tools)' : 'REST API (tabula CLI)';
   const replace = v.nameTaken
-    ? `<label class="check"><input type="checkbox" name="replace" checked> Replace the connection “${esc(v.name)}” (it stops working at once)</label>`
+    // The box carries the name it offers to replace: a ticked box replaces only the connection it named.
+    ? `<label class="check"><input type="checkbox" name="replace" value="${esc(v.name)}"${v.replace ? ' checked' : ''}> Replace the connection “${esc(v.name)}” (it stops working at once)</label>`
     : '';
   const error = v.error ? `<p class="error" role="alert">${esc(v.error)}</p>` : '';
   return page(

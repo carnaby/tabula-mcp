@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { eq, isNull } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { authenticateAccessToken, issueTokenPair } from '../../src/auth/oauth/store.js';
@@ -77,6 +77,9 @@ describe('GET /oauth/authorize', () => {
     const res = await authorize(authorizeQuery(id, newPkce()), await signedInCookie(db));
     expect(res.statusCode).toBe(200);
     expect(res.headers['content-security-policy']).toContain("frame-ancestors 'none'");
+    // no-referrer would make browsers send `Origin: null` with the decision, and sameOrigin() would refuse it.
+    expect(res.headers['referrer-policy']).toBe('strict-origin');
+    expect(res.body).toContain('<meta name="referrer" content="strict-origin">');
     expect(res.body).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
     expect(res.body).not.toContain('<script>alert');
     expect(res.body).toContain('it is not verified');
@@ -124,6 +127,8 @@ describe('POST /oauth/authorize', () => {
     const form = (headers: Record<string, string>, body: Record<string, string>) =>
       app.inject({ method: 'POST', url: '/oauth/authorize', headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers }, payload: new URLSearchParams(body).toString() });
     expect((await form({ cookie }, { pending, decision: 'allow', name: 'x' })).statusCode).toBe(403);
+    expect((await form({ cookie, origin: 'https://evil.example' }, { pending, decision: 'allow', name: 'x' })).statusCode).toBe(403);
+    expect((await form({ cookie, origin: 'null' }, { pending, decision: 'allow', name: 'x' })).statusCode).toBe(403);
     expect((await form({ origin: TEST_PUBLIC_URL }, { pending, decision: 'allow', name: 'x' })).statusCode).toBe(401);
     expect((await decide(app, cookie, pending, { decision: 'maybe' })).statusCode).toBe(400);
     expect((await decide(app, cookie, 'not-a-uuid', { name: 'x' })).statusCode).toBe(400);
@@ -157,21 +162,49 @@ describe('POST /oauth/authorize', () => {
     const [old] = await db.select().from(oauthConnections).where(eq(oauthConnections.name, 'claude-code'));
     const oldToken = await issueTokenPair(db, old!, new Date());
 
+    // Claude Code registers anew (a new client) while the connection it made before is live.
     const cookie = await signedInCookie(db);
-    const pending = await openPage(cookie, { redirect_uri: CALLBACK });
     const again = await registerClient(app, { client_name: 'Claude Code', redirect_uris: ['http://127.0.0.1/callback'] });
     const page = await authorize(authorizeQuery(again, newPkce(), { redirect_uri: 'http://127.0.0.1:50000/callback' }), cookie);
-    expect(page.body).toContain('value="claude-code"');
-    expect(page.body).toContain('name="replace" checked');
+    expect(page.body).toContain('value="claude-code" required');
+    expect(page.body).toContain('name="replace" value="claude-code" checked');
+    const pending = pendingOf(page.body);
+
     const refused = await decide(app, cookie, pending, { name: 'claude-code' });
     expect(refused.statusCode).toBe(400);
     expect(refused.body).toContain('exists already');
+    expect(refused.body).toContain('Tick Replace');
+    // The owner's unticked box stays unticked.
+    expect(refused.body).toContain('name="replace" value="claude-code">');
+    expect(refused.body).not.toContain(' checked');
     expect((await authenticateAccessToken(db, oldToken.accessToken, 'mcp', new Date())).ok).toBe(true);
 
-    const replaced = await decide(app, cookie, pending, { name: 'claude-code', replace: 'on' });
+    const replaced = await decide(app, cookie, pending, { name: 'claude-code', replace: 'claude-code' });
     expect(replaced.statusCode).toBe(302);
     expect((await authenticateAccessToken(db, oldToken.accessToken, 'mcp', new Date())).ok).toBe(false);
-    const live = await db.select().from(oauthConnections).where(eq(oauthConnections.name, 'claude-code'));
-    expect(live.filter((c) => c.revokedAt === null)).toHaveLength(1);
+    const live = (await db.select().from(oauthConnections).where(eq(oauthConnections.name, 'claude-code'))).filter((c) => c.revokedAt === null);
+    expect(live).toHaveLength(1);
+    expect(live[0]).toMatchObject({ clientId: again, redirectUri: 'http://127.0.0.1:50000/callback' });
+    const newToken = await issueTokenPair(db, live[0]!, new Date());
+    expect(await authenticateAccessToken(db, newToken.accessToken, 'mcp', new Date())).toMatchObject({ ok: true, connectionId: live[0]!.id, name: 'claude-code' });
+    expect((await authenticateAccessToken(db, oldToken.accessToken, 'mcp', new Date())).ok).toBe(false);
+  });
+
+  it('replaces only the connection the ticked box named', async () => {
+    await obtainCode(app, db, { name: 'claude-code' });
+    await obtainCode(app, db, { name: 'claude-ai' });
+    const cookie = await signedInCookie(db);
+    const again = await registerClient(app, { client_name: 'Claude Code', redirect_uris: ['http://127.0.0.1/callback'] });
+    const page = await authorize(authorizeQuery(again, newPkce(), { redirect_uri: 'http://127.0.0.1:50000/callback' }), cookie);
+    expect(page.body).toContain('name="replace" value="claude-code" checked');
+
+    // The owner types another taken name; the ticked box still names claude-code.
+    const res = await decide(app, cookie, pendingOf(page.body), { name: 'claude-ai', replace: 'claude-code' });
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toContain('A connection named &quot;claude-ai&quot; exists already');
+    expect(res.body).toContain('name="replace" value="claude-ai">');
+    expect(res.body).not.toContain(' checked');
+    const live = await db.select().from(oauthConnections).where(isNull(oauthConnections.revokedAt));
+    expect(live.map((c) => c.name).sort()).toEqual(['claude-ai', 'claude-code']);
   });
 });

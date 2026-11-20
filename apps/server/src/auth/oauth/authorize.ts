@@ -100,13 +100,22 @@ function authorizeUrl(auth: AuthSettings, p: Pending): string {
 
 class NameTaken extends Error {}
 
+/** Why Allow did not go through, worded for the state the box is shown in. */
+const nameTakenText = (name: string, replace: boolean): string =>
+  replace
+    ? `A connection named "${name}" was created meanwhile. Allow again to replace it, or choose another name.`
+    : `A connection named "${name}" exists already. Tick Replace to end it, or choose another name.`;
+
 export async function registerAuthorize(app: FastifyInstance, ctx: AuthContext & { auth: AuthSettings }): Promise<void> {
   const { db, auth } = ctx;
-  const consent = async (p: Pending, client: OAuthClient | undefined, name: string, error: string | null) =>
-    renderConsent({
-      pendingId: p.id, clientName: client?.clientName ?? null, redirectUri: p.redirectUri, resource: p.resource, name,
-      nameTaken: (await findLiveConnectionByName(db, name)) !== undefined, error,
+  /** The consent page for a request; `replace` undefined means the first view, where a taken name is offered ticked. */
+  const consent = async (p: Pending, client: OAuthClient | undefined, name: string, replace: boolean | undefined, error: string | null) => {
+    const nameTaken = (await findLiveConnectionByName(db, name)) !== undefined;
+    return renderConsent({
+      pendingId: p.id, clientName: client?.clientName ?? null, redirectUri: p.redirectUri, resource: p.resource, name, nameTaken,
+      replace: replace ?? nameTaken, error,
     });
+  };
   const redirect = (reply: FastifyReply, location: string) => reply.header('cache-control', 'no-store').redirect(location, 302);
   const expired = (reply: FastifyReply) => sendPage(reply, 400, messagePage('Request expired', EXPIRED_TEXT));
 
@@ -123,7 +132,7 @@ export async function registerAuthorize(app: FastifyInstance, ctx: AuthContext &
       clientId: r.client.id, redirectUri: r.redirectUri, codeChallenge: r.codeChallenge, resource: r.resource, scope: r.scope, state: r.state,
       expiresAt: new Date(now.getTime() + PENDING_TTL_MS),
     });
-    return sendPage(reply, 200, await consent(pending, r.client, suggestConnectionName(r.client.clientName, r.redirectUri), null));
+    return sendPage(reply, 200, await consent(pending, r.client, suggestConnectionName(r.client.clientName, r.redirectUri), undefined, null));
   });
 
   await app.register(async (forms) => {
@@ -150,10 +159,11 @@ export async function registerAuthorize(app: FastifyInstance, ctx: AuthContext &
         return redirect(reply, withParams(taken.redirectUri, { error: 'access_denied', state: taken.state, iss: auth.issuer }));
       }
       const name = (form.get('name') ?? '').trim();
-      const replace = form.get('replace') === 'on';
+      // The box names the connection it replaces; a box ticked for another name than the one sent replaces nothing.
+      const replace = form.get('replace') === name;
       const client = await findClient(db, pending.clientId);
       const problem = connectionNameProblem(name);
-      if (problem) return sendPage(reply, 400, await consent(pending, client, name, problem));
+      if (problem) return sendPage(reply, 400, await consent(pending, client, name, replace, problem));
       let location: string | undefined;
       try {
         location = await db.transaction(async (tx) => {
@@ -171,7 +181,7 @@ export async function registerAuthorize(app: FastifyInstance, ctx: AuthContext &
       } catch (e) {
         // The transaction rolled back: the request is open again and the page asks for a decision on the name.
         if (e instanceof NameTaken || isUniqueViolation(e)) {
-          return sendPage(reply, 400, await consent(pending, client, name, `A connection named "${name}" exists already. Tick Replace to end it, or choose another name.`));
+          return sendPage(reply, 400, await consent(pending, client, name, replace, nameTakenText(name, replace)));
         }
         throw e;
       }

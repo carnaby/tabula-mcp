@@ -7,6 +7,13 @@ import type { FastifyReply } from 'fastify';
 export const PAGE_CSP =
   "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'";
 
+/**
+ * Never no-referrer: a browser then sends `Origin: null` with a form POST or a same-origin fetch() POST (Fetch,
+ * "append a request Origin header"), and sameOrigin() refuses the consent decision and the passkey ceremonies.
+ * strict-origin keeps the real Origin and sends at most the origin as Referer, never a path with a registration token.
+ */
+export const REFERRER_POLICY = 'strict-origin';
+
 const ENTITIES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 /** Text into HTML (element content or a quoted attribute). Every value from a client or a request goes through this. */
 export const esc = (s: string): string => s.replace(/[&<>"']/g, (c) => ENTITIES[c]!);
@@ -15,7 +22,7 @@ export function page(title: string, body: string, data: Record<string, string> =
   const attrs = Object.entries(data).map(([k, v]) => ` data-${k}="${esc(v)}"`).join('');
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="referrer" content="no-referrer"><title>${esc(title)} · Tabula</title>
+<meta name="referrer" content="${REFERRER_POLICY}"><title>${esc(title)} · Tabula</title>
 <link rel="stylesheet" href="/auth/pages.css"><script src="/auth/passkey.js" defer></script></head>
 <body${attrs}><main class="card">
 ${body}
@@ -29,7 +36,7 @@ export function sendPage(reply: FastifyReply, status: number, html: string): Fas
     .header('cache-control', 'no-store')
     .header('content-security-policy', PAGE_CSP)
     .header('x-frame-options', 'DENY')
-    .header('referrer-policy', 'no-referrer')
+    .header('referrer-policy', REFERRER_POLICY)
     .send(html);
 }
 

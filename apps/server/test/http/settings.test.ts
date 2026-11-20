@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { ne } from 'drizzle-orm';
+import { notInArray } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { settings } from '../../src/db/schema.js';
 import { buildApp } from '../../src/http/app.js';
@@ -13,6 +13,8 @@ beforeAll(async () => {
 afterAll(() => app.close());
 
 const URL = '/api/settings/copy-prompt';
+/** Rows the text settings do not own: the media signing key and the legacy last-use records written by any request. */
+const NOT_COUNTED = ['media_signing_key', 'legacy_tracking_since', 'legacy_token_last_used', 'connector_secret_last_used'];
 const as = (token: string) => ({ authorization: `Bearer ${token}` });
 const get = () => app.inject({ method: 'GET', url: URL, headers: as(TEST_TOKEN) });
 const put = (payload: object) => app.inject({ method: 'PUT', url: URL, headers: as(TEST_TOKEN), payload });
@@ -29,11 +31,11 @@ describe('Copy for Claude text', () => {
     expect(saved.statusCode).toBe(200);
     expect(saved.json()).toEqual({ text: 'Process {ref}\nand reply in Slovak.' });
     expect((await get()).json()).toEqual({ text: 'Process {ref}\nand reply in Slovak.' });
-    expect(await db.select().from(settings).where(ne(settings.key, 'media_signing_key'))).toHaveLength(1);
+    expect(await db.select().from(settings).where(notInArray(settings.key, NOT_COUNTED))).toHaveLength(1);
 
     const reset = await put({ text: '   ' });
     expect(reset.json()).toEqual({ text: 'Process report {ref}.' });
-    expect(await db.select().from(settings).where(ne(settings.key, 'media_signing_key'))).toHaveLength(0);
+    expect(await db.select().from(settings).where(notInArray(settings.key, NOT_COUNTED))).toHaveLength(0);
     expect((await get()).json()).toEqual({ text: 'Process report {ref}.' });
   });
 

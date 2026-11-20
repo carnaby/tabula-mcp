@@ -4,6 +4,7 @@ import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
 import type { AuthContext } from '../auth/authenticate.js';
 import { LegacyUse, startLegacyTracking } from '../auth/legacy.js';
+import { registerAuthPages } from '../auth/pages-routes.js';
 import { RegistrationLinks, registerPasskeyRoutes } from '../auth/passkeys/routes.js';
 import { authSettings } from '../auth/settings.js';
 import type { Config } from '../config.js';
@@ -17,10 +18,12 @@ import { mediaSigningKey } from '../media/key.js';
 import { MediaStore } from '../media/store.js';
 import { registerMediaRoute } from './reports-api.js';
 
-// The secret in the /mcp/<secret> path, the signature of /media links (valid for hours) and an Inbox token put in a URL by mistake must never reach the logs.
+// The secret in the /mcp/<secret> path, a passkey registration link, the signature of /media links (valid for hours)
+// and an Inbox token put in a URL by mistake must never reach the logs.
 const maskUrl = (url: string) =>
   url
     .replace(/^\/mcp\/[^/?#]+/, '/mcp/***')
+    .replace(/^\/passkey\/register\/[^/?#]+/, '/passkey/register/***')
     .replace(/([?&]sig=)[^&#]*/g, '$1***')
     .replace(/tabula_inbox_[A-Za-z0-9_-]+/g, 'tabula_inbox_***');
 
@@ -83,6 +86,7 @@ export async function buildApp(deps: {
     // One budget of failed registration-link lookups per address, shared by every route that takes a link.
     const links = new RegistrationLinks(deps.db);
     registerPasskeyRoutes(app, { ...authCtx, auth, links });
+    await registerAuthPages(app, { ...authCtx, auth, links });
   }
   await app.register(apiRoutes, { prefix: '/api', db: deps.db, config: deps.config, store, mediaKey, authCtx });
   await app.register(inboxApiRoutes, { prefix: '/inbox-api/v1', db: deps.db });

@@ -57,6 +57,8 @@ export const memories = pgTable(
     deprecatedReason: text('deprecated_reason'),
     source: memorySource('source').notNull(),
     agentLabel: text('agent_label'),
+    /** The model the agent named itself (normalized); null for the UI and older records. */
+    agentModel: text('agent_model'),
     ...timestamps,
     search: tsvector('search').generatedAlwaysAs(
       sql`setweight(to_tsvector('tabula'::regconfig, coalesce(title, '')), 'A') || setweight(to_tsvector('tabula'::regconfig, tabula_tags_text(tags)), 'B') || setweight(to_tsvector('tabula'::regconfig, coalesce(body, '')), 'C')`,
@@ -108,6 +110,7 @@ export const thoughts = pgTable(
     source: memorySource('source').notNull(),
     /** Who wrote the current version: 'human' or the agent label. */
     editedBy: text('edited_by').notNull(),
+    editedByModel: text('edited_by_model'),
     version: integer('version').notNull().default(1),
     ...timestamps,
     search: tsvector('search').generatedAlwaysAs(
@@ -135,6 +138,7 @@ export const thoughtRevisions = pgTable(
     body: text('body').notNull(),
     tags: text('tags').array().notNull().default(sql`'{}'::text[]`),
     editedBy: text('edited_by').notNull(),
+    editedByModel: text('edited_by_model'),
     /** When this version was written (= updated_at of the thought at that time). */
     createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
   },
@@ -162,6 +166,7 @@ export const projectFiles = pgTable(
     version: integer('version').notNull().default(1),
     /** Who wrote the current version: 'human' (the UI) or an agent label such as 'cli'. */
     updatedBy: text('updated_by').notNull(),
+    updatedByModel: text('updated_by_model'),
     /** Set by the CLI after each push: the path matches a "state" pattern of the repository's .tabula.json. */
     isState: boolean('is_state').notNull().default(false),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
@@ -193,6 +198,7 @@ export const projectFileRevisions = pgTable(
     sha256: text('sha256').notNull(),
     size: integer('size').notNull(),
     updatedBy: text('updated_by').notNull(),
+    updatedByModel: text('updated_by_model'),
     /** When this version was written (= updated_at of the file at that time). */
     createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
   },
@@ -231,6 +237,7 @@ export const reports = pgTable(
     source: memorySource('source').notNull(),
     /** Who wrote the current version: 'human' or the agent label. */
     editedBy: text('edited_by').notNull(),
+    editedByModel: text('edited_by_model'),
     version: integer('version').notNull().default(1),
     closedAt: timestamp('closed_at', { withTimezone: true }),
     /** The user keeps the video and audio after closing: the purge skips the report while this is on. */
@@ -271,6 +278,7 @@ export const reportAttachments = pgTable(
     /** Frames: what the user wants to say about the moment, which the video does not (max 2 000 characters). */
     note: text('note'),
     createdBy: text('created_by').notNull(),
+    createdByModel: text('created_by_model'),
     /** Set when the bytes were deleted (video and audio after the report is closed); the row stays as a record. */
     purgedAt: timestamp('purged_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -392,6 +400,7 @@ export const messages = pgTable(
     version: integer('version').notNull().default(1),
     source: memorySource('source').notNull(),
     createdBy: text('created_by').notNull(),
+    createdByModel: text('created_by_model'),
     closedAt: timestamp('closed_at', { withTimezone: true }),
     ...timestamps,
   },
@@ -414,6 +423,7 @@ export const messageEvents = pgTable(
     at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
     source: memorySource('source').notNull(),
     actor: text('actor').notNull(),
+    actorModel: text('actor_model'),
     version: integer('version').notNull(),
     fromStatus: messageStatus('from_status'),
     toStatus: messageStatus('to_status'),
@@ -439,4 +449,155 @@ export const messageTokens = pgTable(
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
   },
   (t) => [uniqueIndex('message_tokens_sha256_idx').on(t.tokenSha256)],
+);
+
+export const oauthResource = pgEnum('oauth_resource', ['mcp', 'api']);
+
+/** Clients that registered themselves (RFC 7591). Public clients: no secret. Unapproved ones are swept after 24 h. */
+export const oauthClients = pgTable('oauth_clients', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  /** As the client sent it: unverified, possibly hostile; shown only as text. */
+  clientName: text('client_name'),
+  redirectUris: text('redirect_uris').array().notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** An authorization request between the consent page and the decision; single use, 10 minutes. */
+export const oauthPending = pgTable('oauth_pending', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  clientId: uuid('client_id').notNull().references(() => oauthClients.id, { onDelete: 'cascade' }),
+  redirectUri: text('redirect_uri').notNull(),
+  codeChallenge: text('code_challenge').notNull(),
+  resource: oauthResource('resource').notNull(),
+  scope: text('scope').notNull(),
+  state: text('state'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+});
+
+/** One approval of one app: its name labels everything the app writes. Revoking it ends every token issued under it. */
+export const oauthConnections = pgTable(
+  'oauth_connections',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    clientId: uuid('client_id').notNull().references(() => oauthClients.id, { onDelete: 'restrict' }),
+    name: text('name').notNull(),
+    resource: oauthResource('resource').notNull(),
+    scope: text('scope').notNull(),
+    /** The redirect URI the approval answered to: where the access went. */
+    redirectUri: text('redirect_uri').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('oauth_connections_live_name_idx').on(t.name).where(sql`${t.revokedAt} IS NULL`),
+    index('oauth_connections_client_idx').on(t.clientId),
+  ],
+);
+
+export const oauthCodes = pgTable('oauth_codes', {
+  /** SHA-256 (hex) of the code; the code itself is never stored. */
+  hash: text('hash').primaryKey(),
+  connectionId: uuid('connection_id').notNull().references(() => oauthConnections.id, { onDelete: 'cascade' }),
+  redirectUri: text('redirect_uri').notNull(),
+  codeChallenge: text('code_challenge').notNull(),
+  resource: oauthResource('resource').notNull(),
+  scope: text('scope').notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  usedAt: timestamp('used_at', { withTimezone: true }),
+});
+
+export const oauthRefreshTokens = pgTable(
+  'oauth_refresh_tokens',
+  {
+    hash: text('hash').primaryKey(),
+    connectionId: uuid('connection_id').notNull().references(() => oauthConnections.id, { onDelete: 'cascade' }),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    /** Set when the token was rotated; presenting it again later revokes the whole connection. */
+    replacedAt: timestamp('replaced_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('oauth_refresh_tokens_connection_idx').on(t.connectionId)],
+);
+
+export const oauthAccessTokens = pgTable(
+  'oauth_access_tokens',
+  {
+    hash: text('hash').primaryKey(),
+    connectionId: uuid('connection_id').notNull().references(() => oauthConnections.id, { onDelete: 'cascade' }),
+    /** The audience: a token for /mcp opens only /mcp, a token for /api only /api. */
+    resource: oauthResource('resource').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('oauth_access_tokens_connection_idx').on(t.connectionId)],
+);
+
+/** The owner's passkeys (one user, any number of devices). The last one cannot be deleted. */
+export const passkeys = pgTable(
+  'passkeys',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** base64url credential id, as WebAuthn reports it. */
+    credentialId: text('credential_id').notNull(),
+    /** base64url COSE public key. */
+    publicKey: text('public_key').notNull(),
+    counter: bigint('counter', { mode: 'number' }).notNull().default(0),
+    transports: text('transports').array().notNull().default(sql`'{}'::text[]`),
+    name: text('name').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('passkeys_credential_idx').on(t.credentialId),
+    check('passkeys_name_len', sql`char_length(${t.name}) between 1 and 60`),
+  ],
+);
+
+export const passkeyRegistrationKind = pgEnum('passkey_registration_kind', ['link', 'add']);
+
+/**
+ * Permission to register one passkey: a link printed by the server ("link": the first passkey and recovery; a new
+ * link ends the older ones) or a token the server puts into the Add passkey page ("add"). Single use, 15 minutes.
+ */
+export const passkeyRegistrations = pgTable(
+  'passkey_registrations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    kind: passkeyRegistrationKind('kind').notNull(),
+    tokenSha256: text('token_sha256').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    usedAt: timestamp('used_at', { withTimezone: true }),
+  },
+  (t) => [uniqueIndex('passkey_registrations_sha256_idx').on(t.tokenSha256)],
+);
+
+export const webauthnPurpose = pgEnum('webauthn_purpose', ['login', 'register']);
+
+/** A WebAuthn challenge the server issued: single use, 5 minutes; stored only as a hash. */
+export const webauthnChallenges = pgTable('webauthn_challenges', {
+  challengeSha256: text('challenge_sha256').primaryKey(),
+  purpose: webauthnPurpose('purpose').notNull(),
+  /** A registration challenge belongs to one registration permission. */
+  registrationId: uuid('registration_id').references(() => passkeyRegistrations.id, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+});
+
+/** Web UI sessions (the HttpOnly cookie). `verified_at`: the last passkey check, for actions that need a fresh one. */
+export const uiSessions = pgTable(
+  'ui_sessions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tokenSha256: text('token_sha256').notNull(),
+    userAgent: text('user_agent').notNull().default(''),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    verifiedAt: timestamp('verified_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [uniqueIndex('ui_sessions_sha256_idx').on(t.tokenSha256)],
 );

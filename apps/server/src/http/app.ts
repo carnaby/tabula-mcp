@@ -4,6 +4,7 @@ import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
 import type { AuthContext } from '../auth/authenticate.js';
 import { LegacyUse, startLegacyTracking } from '../auth/legacy.js';
+import { registerOAuth } from '../auth/oauth/routes.js';
 import { registerAuthPages } from '../auth/pages-routes.js';
 import { RegistrationLinks, registerPasskeyRoutes } from '../auth/passkeys/routes.js';
 import { authSettings } from '../auth/settings.js';
@@ -89,6 +90,7 @@ export async function buildApp(deps: {
     const links = new RegistrationLinks(deps.db);
     registerPasskeyRoutes(app, { ...authCtx, auth, links });
     await registerAuthPages(app, { ...authCtx, auth, links });
+    await registerOAuth(app, { ...authCtx, auth });
   }
   await app.register(apiRoutes, { prefix: '/api', db: deps.db, config: deps.config, store, mediaKey, authCtx });
   await app.register(inboxApiRoutes, { prefix: '/inbox-api/v1', db: deps.db });

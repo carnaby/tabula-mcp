@@ -9,7 +9,6 @@ import { createHash, randomBytes } from 'node:crypto';
 import {
   chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync,
 } from 'node:fs';
-import { createServer } from 'node:http';
 import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -182,6 +181,7 @@ function readConfigOrEmpty() {
   }
 }
 
+const RENAME_PAUSE_MS = 50;
 /** Blocks this thread for `ms` (a sync pause between attempts, without busy waiting). */
 const pauseSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
@@ -192,7 +192,7 @@ const pauseSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),
  * ignores the mode (the user profile folder is private already) and can refuse a rename for a moment while another
  * process reads the file: the rename is tried again, because a rotated refresh token that is not saved is lost.
  */
-function writeConfigFile(data) {
+function writeConfigFile(data, { until } = {}) {
   mkdirSync(tabulaHome(), { recursive: true, mode: 0o700 });
   const file = configFile();
   const tmp = `${file}.${process.pid}.tmp`;
@@ -203,11 +203,13 @@ function writeConfigFile(data) {
       renameSync(tmp, file);
       return file;
     } catch (e) {
-      if (attempt >= 20 || !['EPERM', 'EACCES', 'EBUSY'].includes(e.code)) {
+      // `until`: the hook's hard exit. pauseSync blocks the timer that enforces it, so the retries never go past it.
+      const retry = attempt < 20 && ['EPERM', 'EACCES', 'EBUSY'].includes(e.code) && (until === undefined || Date.now() + RENAME_PAUSE_MS < until);
+      if (!retry) {
         rmSync(tmp, { force: true });
         throw e;
       }
-      pauseSync(50);
+      pauseSync(RENAME_PAUSE_MS);
     }
   }
 }
@@ -400,7 +402,7 @@ export function makeApi(conn, deadline) {
   const timeLeft = () => (deadline ? Math.max(1, deadline - Date.now()) : 60000);
   return async (method, path, body) => {
     try {
-      const bearer = await bearerFor(conn, timeLeft());
+      const bearer = await bearerFor(conn, timeLeft(), deadline);
       const res = await fetch(conn.url + path, {
         method,
         headers: {
@@ -432,15 +434,20 @@ const REFRESH_MARGIN_MS = 60000;
 /** How long a refresh the server refused waits for the pair another tabula process is saving. */
 const TAKEOVER_WAIT_MS = 3000;
 const TAKEOVER_POLL_MS = 100;
+/**
+ * A rotation is never started with less time than this: one cut off after the server committed it loses the new pair,
+ * and the spent refresh token presented again more than 10 s later ends the connection.
+ */
+const RENEW_FLOOR_MS = 2000;
 
 const isCurrent = (o) => typeof o.access_token === 'string' && o.access_token !== '' && Number(o.expires_at) - REFRESH_MARGIN_MS > Date.now();
 
 /** The bearer for /api: the shared token as is, or this login's OAuth access token, renewed when it is about to expire. */
-async function bearerFor(conn, ms) {
+async function bearerFor(conn, ms, deadline) {
   if (conn.token) return conn.token;
   if (isCurrent(conn.oauth)) return conn.oauth.access_token;
   // One renewal at a time in this process; requests that need it meanwhile get its token.
-  conn.renewing ??= renewLogin(conn, ms).finally(() => {
+  conn.renewing ??= renewLogin(conn, ms, deadline).finally(() => {
     conn.renewing = undefined;
   });
   return conn.renewing;
@@ -451,7 +458,7 @@ async function bearerFor(conn, ms) {
  * push) can present the same refresh token at once: the server rotates it for the first and refuses the second without
  * ending the connection (a reuse within 10 s). The second then takes over the pair the first one saves to config.json.
  */
-async function renewLogin(conn, ms) {
+async function renewLogin(conn, ms, deadline) {
   const until = Date.now() + ms;
   // A pair another process saved since this one read config.json: presenting the spent token again later than 10 s
   // after its rotation would end the connection.
@@ -461,7 +468,7 @@ async function renewLogin(conn, ms) {
     if (isCurrent(newer)) return newer.access_token;
   }
   const presented = conn.oauth.refresh_token;
-  if (await rotateRefreshToken(conn, ms)) return conn.oauth.access_token;
+  if (await rotateRefreshToken(conn, ms, deadline)) return conn.oauth.access_token;
   const giveUp = Math.min(until, Date.now() + TAKEOVER_WAIT_MS);
   while (Date.now() < giveUp) {
     await new Promise((r) => setTimeout(r, TAKEOVER_POLL_MS));
@@ -469,7 +476,7 @@ async function renewLogin(conn, ms) {
     if (!saved) continue;
     conn.oauth = saved;
     if (isCurrent(saved)) return saved.access_token;
-    if (await rotateRefreshToken(conn, Math.max(1, until - Date.now()))) return conn.oauth.access_token;
+    if (await rotateRefreshToken(conn, Math.max(1, until - Date.now()), deadline)) return conn.oauth.access_token;
     break;
   }
   throw loginEnded();
@@ -484,9 +491,16 @@ function savedPairOtherThan(conn, refreshToken) {
 
 /**
  * One refresh_token grant. true: the new pair is in conn.oauth and saved before anything else happens (the old refresh
- * token is spent). false: the server refused the refresh token. Any other failure throws.
+ * token is spent). false: the server refused the refresh token. Any other failure throws. With less than
+ * RENEW_FLOOR_MS left (the SessionStart hook near its deadline) nothing is sent: the hook stops as if timed out and
+ * the next command renews with its full time.
  */
-async function rotateRefreshToken(conn, ms) {
+async function rotateRefreshToken(conn, ms, deadline) {
+  if (ms < RENEW_FLOOR_MS) {
+    throw Object.assign(new CliError('too little time left to renew the Tabula login; the next tabula command renews it'), {
+      unreachable: true, timedOut: true,
+    });
+  }
   const o = conn.oauth;
   const res = await fetch(`${conn.url}/oauth/token`, {
     method: 'POST',
@@ -497,7 +511,7 @@ async function rotateRefreshToken(conn, ms) {
   const data = await res.json().catch(() => ({}));
   if (res.ok && typeof data.access_token === 'string' && typeof data.refresh_token === 'string') {
     conn.oauth = { ...o, ...tokenFields(data) };
-    saveLogin(conn);
+    saveLogin(conn, deadline);
     return true;
   }
   if (data.error === 'invalid_grant') return false;
@@ -513,8 +527,16 @@ const tokenFields = (data) => ({
   expires_at: Date.now() + (Number(data.expires_in) > 0 ? Number(data.expires_in) : 3600) * 1000,
 });
 
-function saveLogin(conn) {
-  writeConfigFile({ ...readConfigOrEmpty(), url: conn.url, oauth: conn.oauth });
+/** Saves a renewed pair; in hook mode never past the hook's hard exit. A failure is no network error: it says so. */
+function saveLogin(conn, deadline) {
+  try {
+    writeConfigFile({ ...readConfigOrEmpty(), url: conn.url, oauth: conn.oauth }, { until: deadline ? deadline + HOOK_EXIT_GRACE_MS : undefined });
+  } catch (e) {
+    const why = e instanceof CliError ? e.message : (e?.code ?? e?.message ?? String(e));
+    throw Object.assign(new CliError(`the renewed Tabula login could not be saved to ${configFile()} (${why}); if the next command is refused, run tabula login <url> again`), {
+      rejected: true,
+    });
+  }
 }
 
 function ok(r, what) {
@@ -969,7 +991,9 @@ const isHttpUrl = (v) => typeof v === 'string' && /^https?:\/\/[^/]+/.test(v);
  * A one-shot loopback server for the browser's answer; the system picks its port (RFC 8252). Only the answer that
  * carries this login's state counts: a stray request (an old tab, another page) is turned away and the wait goes on.
  */
-function startCallbackServer(state) {
+async function startCallbackServer(state) {
+  // Loaded here, so the SessionStart hook and the other commands do not pay for it at start-up.
+  const { createServer } = await import('node:http');
   return new Promise((resolveServer, rejectServer) => {
     let answer;
     const result = new Promise((resolve, reject) => {
@@ -1080,6 +1104,8 @@ async function oauthLogin(url, flags) {
  * TABULA_HOOK_DEADLINE_MS exists for the tests and can only shorten it.
  */
 const HOOK_DEADLINE_MS = Math.min(3500, Number(process.env.TABULA_HOOK_DEADLINE_MS) || 3500);
+/** The hook's hard exit comes this long after its deadline. */
+const HOOK_EXIT_GRACE_MS = 900;
 
 /** SessionStart mode: never fails the session and never holds it up for long. */
 async function runHook() {
@@ -1088,7 +1114,7 @@ async function runHook() {
   setTimeout(() => {
     process.stderr.write('tabula: pull timed out; the session starts without it\n');
     process.exit(0);
-  }, HOOK_DEADLINE_MS + 900).unref();
+  }, HOOK_DEADLINE_MS + HOOK_EXIT_GRACE_MS).unref();
   try {
     const conn = readConnection();
     if (!conn.url || (!conn.token && !conn.oauth)) return 0;

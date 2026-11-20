@@ -33,8 +33,13 @@ async function decideInBrowser(authorizeUrl: string, decision: 'allow' | 'deny')
 
 async function login(home: string, cwd: string, decision: 'allow' | 'deny' = 'allow') {
   const cli = spawnCli(['login', server.url], { cwd, env: env(home) });
-  const [, url] = await cli.waitFor(/^ {2}(http\S+\/oauth\/authorize\?\S+)$/m);
-  await decideInBrowser(url!, decision);
+  try {
+    const [, url] = await cli.waitFor(/^ {2}(http\S+\/oauth\/authorize\?\S+)$/m);
+    await decideInBrowser(url!, decision);
+  } catch (e) {
+    cli.kill(); // a CLI left waiting for the browser would outlive the test
+    throw e;
+  }
   return cli.done;
 }
 
@@ -104,7 +109,11 @@ describe('tabula login through the browser', { timeout: 60_000 }, () => {
     await db.transaction(async (tx) => {
       await tx.execute(sql`SELECT hash FROM oauth_refresh_tokens FOR UPDATE`);
       runs = Promise.all([runCli(['status'], { cwd: repo, env: env(home) }), runCli(['status'], { cwd: repo, env: env(home) })]);
-      while ((await lockWaiters()) < 2) await new Promise((r) => setTimeout(r, 50));
+      const giveUp = Date.now() + 20_000;
+      while ((await lockWaiters()) < 2) {
+        if (Date.now() > giveUp) throw new Error('the two refreshes never waited on the refresh token row');
+        await new Promise((r) => setTimeout(r, 50));
+      }
     });
     const [a, b] = await runs!;
     expect(a.code, a.stderr).toBe(0);
@@ -114,6 +123,22 @@ describe('tabula login through the browser', { timeout: 60_000 }, () => {
     const tokens = await db.select().from(oauthRefreshTokens);
     expect(tokens.filter((t) => t.replacedAt !== null)).toHaveLength(1);
     expect(tokens).toHaveLength(2);
+  });
+
+  it('the hook near its deadline starts no rotation, so no pair is lost; the next command renews', async () => {
+    const { home, repo } = await setup();
+    expect((await login(home, repo)).code).toBe(0);
+    expireAccess(home);
+    const before = configOf(home);
+    const hook = await runCli(['pull', '--hook'], { cwd: repo, env: { ...env(home), TABULA_HOOK_DEADLINE_MS: '1000' } });
+    expect(hook.code).toBe(0);
+    expect(hook.stderr).toMatch(/too little time left to renew the Tabula login/);
+    expect(configOf(home).oauth.refresh_token).toBe(before.oauth.refresh_token);
+    expect(await db.select().from(oauthRefreshTokens)).toHaveLength(1);
+    expect((await db.select().from(oauthConnections)).filter((c) => c.revokedAt === null)).toHaveLength(1);
+    const status = await runCli(['status'], { cwd: repo, env: env(home) });
+    expect(status.code, status.stderr).toBe(0);
+    expect(configOf(home).oauth.refresh_token).not.toBe(before.oauth.refresh_token);
   });
 
   it('asks to log in again once the connection is revoked', async () => {

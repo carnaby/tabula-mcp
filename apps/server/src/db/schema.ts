@@ -514,7 +514,10 @@ export const oauthRefreshTokens = pgTable(
     hash: text('hash').primaryKey(),
     connectionId: uuid('connection_id').notNull().references(() => oauthConnections.id, { onDelete: 'cascade' }),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
-    /** Set when the token was rotated; presenting it again later revokes the whole connection. */
+    /**
+     * Set when the token was rotated. Presenting it again within 10 s is refused without revoking (a client retrying
+     * a lost answer); presenting it again later revokes the whole connection.
+     */
     replacedAt: timestamp('replaced_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },

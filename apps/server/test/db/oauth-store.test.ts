@@ -4,7 +4,7 @@ import {
   authenticateAccessToken, countClientsWithoutConnection, createClient, createConnection, createPending, findClient, findPending, insertCode,
   issueTokenPair, listLiveConnections, renameConnection, revokeConnection, takePending,
 } from '../../src/auth/oauth/store.js';
-import { oauthCodes, oauthConnections, oauthRefreshTokens } from '../../src/db/schema.js';
+import { oauthAccessTokens, oauthCodes, oauthConnections, oauthRefreshTokens } from '../../src/db/schema.js';
 import { issueTestAccessToken, useTestDb } from '../helpers.js';
 
 const db = useTestDb();
@@ -71,6 +71,7 @@ describe('OAuth store', () => {
     await issueTokenPair(db, conn, now);
     await insertCode(db, { connectionId: conn.id, redirectUri: CB, codeChallenge: 'c'.repeat(43), resource: 'mcp', scope: 'mcp', now });
     await revokeConnection(db, conn.id, now);
+    await expect(revokeConnection(db, 'not-a-uuid', now)).resolves.toBeUndefined();
     const [refresh] = await db.select().from(oauthRefreshTokens).where(eq(oauthRefreshTokens.connectionId, conn.id));
     const [code] = await db.select().from(oauthCodes).where(eq(oauthCodes.connectionId, conn.id));
     expect(refresh!.expiresAt.getTime()).toBeLessThanOrEqual(now.getTime());
@@ -83,7 +84,9 @@ describe('OAuth store', () => {
     const now = new Date();
     const code = await insertCode(db, { connectionId: conn.id, redirectUri: CB, codeChallenge: 'c'.repeat(43), resource: 'mcp', scope: 'mcp', now });
     const pair = await issueTokenPair(db, conn, now);
-    const dump = JSON.stringify([await db.select().from(oauthCodes), await db.select().from(oauthRefreshTokens)]);
+    const dump = JSON.stringify([
+      await db.select().from(oauthCodes), await db.select().from(oauthRefreshTokens), await db.select().from(oauthAccessTokens),
+    ]);
     for (const secret of [code, pair.accessToken, pair.refreshToken]) expect(dump).not.toContain(secret);
   });
 

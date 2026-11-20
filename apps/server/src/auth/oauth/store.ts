@@ -129,9 +129,10 @@ export async function renameConnection(db: Db, id: string, name: string): Promis
 
 /**
  * Ends a connection and everything derived from it: its access tokens are revoked, its refresh tokens and unused codes
- * expire now (the rows stay for the sweeper, so a reused one is still recognised). Idempotent.
+ * expire now (the rows stay for the sweeper, so a reused one is still recognised). Idempotent; a malformed id is a no-op.
  */
 export async function revokeConnection(q: Q, id: string, now: Date): Promise<void> {
+  if (!isUuid(id)) return;
   await q.update(oauthConnections).set({ revokedAt: now }).where(and(eq(oauthConnections.id, id), isNull(oauthConnections.revokedAt)));
   await q.update(oauthAccessTokens).set({ revokedAt: now }).where(and(eq(oauthAccessTokens.connectionId, id), isNull(oauthAccessTokens.revokedAt)));
   await q.update(oauthRefreshTokens).set({ expiresAt: now }).where(and(eq(oauthRefreshTokens.connectionId, id), gt(oauthRefreshTokens.expiresAt, now)));

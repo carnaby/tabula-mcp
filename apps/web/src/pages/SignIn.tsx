@@ -70,7 +70,7 @@ function SignInCard({ offline, passkeySignIn, onRetry }: { offline: boolean; pas
       <details className="gate__legacy" open={!passkeySignIn}>
         <summary>Sign in with legacy token</summary>
         <form className="t-stack" onSubmit={legacy}>
-          <Field label="Token" hint="TABULA_TOKEN from the server. It stays in this browser until you sign in with a passkey.">
+          <Field label="Token" hint={passkeySignIn ? 'TABULA_TOKEN from the server. It stays in this browser until you sign in with a passkey.' : 'TABULA_TOKEN from the server. It stays in this browser until you sign out.'}>
             {(id) => <Input id={id} type="password" autoComplete="current-password" value={draft} onChange={(e) => setDraft(e.target.value)} />}
           </Field>
           <Button type="submit" disabled={!draft.trim()} block>Sign in</Button>

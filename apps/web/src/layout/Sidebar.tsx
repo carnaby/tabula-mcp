@@ -102,7 +102,7 @@ export function Sidebar({
             // A stored legacy token means no passkey session: the sign-in gate drops the token once a session works.
             const legacy = getToken() !== null;
             const message = legacy
-              ? 'The legacy token is removed from this browser. You sign in again with the token or a passkey.'
+              ? 'The legacy token is removed from this browser. You sign in again with the token.'
               : 'This browser signs out of Tabula. You sign in again with your passkey.';
             if (!(await confirm({ title: 'Sign out?', message, confirmLabel: 'Sign out' }))) return;
             try {

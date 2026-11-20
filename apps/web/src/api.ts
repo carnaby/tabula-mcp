@@ -5,6 +5,7 @@ import type {
   MessageCounts, MessageDetail, MessagePatch, MessageStatusFilter, MessageSummary, MessageToken, MessageType,
 } from './types';
 
+/** The legacy token (TABULA_TOKEN), kept only until this browser signs in with a passkey; removed in the next release. */
 const TOKEN_KEY = 'tabula.token';
 const storage = {
   get: () => { try { return localStorage.getItem(TOKEN_KEY); } catch { return null; } },
@@ -23,11 +24,14 @@ export class ApiError extends Error {
 }
 
 async function request<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+  const token = getToken();
   const res = await fetch(`/api${path}`, {
     method,
     signal,
+    // The session cookie (HttpOnly) goes along by itself; the legacy token only while one is stored.
+    credentials: 'same-origin',
     headers: {
-      Authorization: `Bearer ${getToken() ?? ''}`,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(body !== undefined && { 'content-type': 'application/json' }),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -44,6 +48,18 @@ async function request<T>(method: string, path: string, body?: unknown, signal?:
   return (res.status === 204 ? undefined : await res.json()) as T;
 }
 
+export type Me = { via: 'session' | 'legacy'; fresh: boolean; passkeys: number; publicUrl: string | null };
+
+/** Who this browser is signed in as, or null. `legacy`: ask with the stored legacy token instead of the cookie alone. */
+export async function fetchMe(legacy: boolean): Promise<Me | null> {
+  const token = legacy ? getToken() : null;
+  if (legacy && !token) return null;
+  const res = await fetch('/api/auth/me', { credentials: 'same-origin', headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  if (res.status === 401 || res.status === 403) return null;
+  if (!res.ok) throw new ApiError(res.status, res.statusText);
+  return (await res.json()) as Me;
+}
+
 const qs = (params: Record<string, string | number | boolean | undefined | null>) => {
   const entries = Object.entries(params)
     .filter(([, v]) => v !== undefined && v !== null && v !== '')
@@ -58,6 +74,7 @@ type ThoughtInput = { title: string; body?: string; tags?: string[]; pinned?: bo
 type S = AbortSignal | undefined;
 
 export const api = {
+  logout: () => request<void>('POST', '/auth/logout'),
   files: (project: string, deleted: boolean, signal?: S) =>
     request<ProjectFile[]>('GET', `/projects/${encodeURIComponent(project)}/files${qs({ deleted: deleted ? 1 : undefined })}`, undefined, signal),
   file: (project: string, path: string, signal?: S) =>
@@ -165,7 +182,8 @@ export function uploadAttachment(
   const xhr = new XMLHttpRequest();
   const promise = new Promise<Attachment>((resolve, reject) => {
     xhr.open('POST', `/api/reports/${reportId}/attachments`);
-    xhr.setRequestHeader('Authorization', `Bearer ${getToken() ?? ''}`);
+    const token = getToken();
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
     xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
     xhr.setRequestHeader('X-File-Name', encodeURIComponent(name));
     xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);

@@ -96,9 +96,11 @@ export function Sidebar({
         />
         <IconButton
           icon="logOut"
-          label="Sign out (forget token in this browser)"
+          label="Sign out"
           onClick={async () => {
-            if (await confirm({ title: 'Sign out?', message: 'The token is removed from this browser. You will need it to sign in again.', confirmLabel: 'Sign out' })) {
+            if (await confirm({ title: 'Sign out?', message: 'This browser signs out of Tabula. You sign in again with your passkey.', confirmLabel: 'Sign out' })) {
+              // Ends the session on the server too; a stored legacy token is forgotten.
+              await api.logout().catch(() => undefined);
               clearToken();
               window.location.reload();
             }

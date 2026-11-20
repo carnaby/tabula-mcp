@@ -1,7 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
-import { TokenGate } from './pages/TokenGate';
+import { SignInGate } from './pages/SignIn';
 import { registerPwa } from './pwa';
 import { applyTheme, ConfirmProvider, ToastProvider } from './ui';
 import './app.css';
@@ -13,9 +13,9 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ToastProvider>
       <ConfirmProvider>
-        <TokenGate>
+        <SignInGate>
           <App />
-        </TokenGate>
+        </SignInGate>
       </ConfirmProvider>
     </ToastProvider>
   </StrictMode>,

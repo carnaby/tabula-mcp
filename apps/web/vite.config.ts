@@ -11,5 +11,6 @@ export default defineConfig({
   root: fileURLToPath(new URL('.', import.meta.url)),
   plugins: [react()],
   build: { outDir: 'dist', emptyOutDir: true },
-  server: { proxy: { '/api': apiTarget } },
+  // The pages and endpoints of sign-in live on the server; the dev server passes them through like /api.
+  server: { proxy: Object.fromEntries(['/api', '/auth', '/signin', '/passkey', '/oauth', '/.well-known', '/media', '/cli', '/mcp'].map((p) => [p, apiTarget])) },
 });

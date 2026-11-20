@@ -4,7 +4,7 @@ import { connectionNameProblem, displayClientName, isDisplayableClientName, sugg
 import { clientKey, FixedWindows } from '../../src/auth/rate-limit.js';
 import { hashSecret, newSecret } from '../../src/auth/secrets.js';
 
-const req = (headers: Record<string, string | string[]>, remote = '10.0.0.9') =>
+const req = (headers: Record<string, string | string[]>, remote = '192.0.2.9') =>
   ({ headers, socket: { remoteAddress: remote } }) as unknown as FastifyRequest;
 
 describe('secrets', () => {
@@ -42,8 +42,8 @@ describe('clientKey', () => {
     expect(clientKey(req({ 'x-forwarded-for': '203.0.113.7' }))).toBe('203.0.113.7');
     expect(clientKey(req({ 'x-forwarded-for': '198.51.100.1, 203.0.113.7' }))).toBe('203.0.113.7');
     expect(clientKey(req({ 'x-forwarded-for': ['198.51.100.1', '203.0.113.8'] }))).toBe('203.0.113.8');
-    expect(clientKey(req({}))).toBe('10.0.0.9');
-    expect(clientKey(req({ 'x-forwarded-for': ' , ' }))).toBe('10.0.0.9');
+    expect(clientKey(req({}))).toBe('192.0.2.9');
+    expect(clientKey(req({ 'x-forwarded-for': ' , ' }))).toBe('192.0.2.9');
   });
 });
 

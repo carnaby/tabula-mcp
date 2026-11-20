@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { ne } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { settings } from '../../src/db/schema.js';
 import { buildApp } from '../../src/http/app.js';
@@ -28,11 +29,11 @@ describe('Copy for Claude text', () => {
     expect(saved.statusCode).toBe(200);
     expect(saved.json()).toEqual({ text: 'Process {ref}\nand reply in Slovak.' });
     expect((await get()).json()).toEqual({ text: 'Process {ref}\nand reply in Slovak.' });
-    expect(await db.select().from(settings)).toHaveLength(1);
+    expect(await db.select().from(settings).where(ne(settings.key, 'media_signing_key'))).toHaveLength(1);
 
     const reset = await put({ text: '   ' });
     expect(reset.json()).toEqual({ text: 'Process report {ref}.' });
-    expect(await db.select().from(settings)).toHaveLength(0);
+    expect(await db.select().from(settings).where(ne(settings.key, 'media_signing_key'))).toHaveLength(0);
     expect((await get()).json()).toEqual({ text: 'Process report {ref}.' });
   });
 

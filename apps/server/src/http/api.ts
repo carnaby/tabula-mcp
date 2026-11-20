@@ -41,11 +41,11 @@ const paging = <S extends readonly [string, ...string[]]>(sorts: S) => ({
 
 const withSize = (n: Note) => ({ ...n, wordCount: wordCount(n.body), tokenEstimate: estimateTokens(n.body) });
 
-export const apiRoutes: FastifyPluginAsync<{ db: Db; config: Config; store: MediaStore }> = async (app, { db, config, store }) => {
+export const apiRoutes: FastifyPluginAsync<{ db: Db; config: Config; store: MediaStore; mediaKey: string }> = async (app, { db, config, store, mediaKey }) => {
   app.addHook('preHandler', requireBearer(config.token));
   // Child plugin: inherits the bearer preHandler above.
   await app.register(fileRoutes, { db });
-  await app.register(reportRoutes, { db, config, store });
+  await app.register(reportRoutes, { db, config, store, mediaKey });
   await app.register(homeRoutes, { db, config });
   await app.register(messageRoutes, { db });
 

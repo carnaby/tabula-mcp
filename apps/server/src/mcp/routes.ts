@@ -24,13 +24,13 @@ const MCP_BODY_LIMIT = 8 * FILE_LIMITS.contentBytes;
 
 const METHOD_NOT_ALLOWED = { jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed.' }, id: null };
 
-export function registerMcpRoutes(app: FastifyInstance, deps: { db: Db; config: Config; store: MediaStore }): void {
+export function registerMcpRoutes(app: FastifyInstance, deps: { db: Db; config: Config; store: MediaStore; mediaKey: string }): void {
   // Stateless: a new server + transport per request; agentLabel is captured in the closure.
   const handle = async (req: FastifyRequest, reply: FastifyReply, agentLabel: string) => {
     const server = buildMcpServer({
       db: deps.db, agentLabel, log: req.log,
       transcriptionEnabled: deps.config.fornax !== undefined,
-      media: { store: deps.store, token: deps.config.token, paths: deps.config.media, baseUrl: originOf(req) },
+      media: { store: deps.store, key: deps.mediaKey, paths: deps.config.media, baseUrl: originOf(req) },
     });
     const transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     reply.raw.on('close', () => {

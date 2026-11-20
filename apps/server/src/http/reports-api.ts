@@ -51,10 +51,10 @@ async function withTranscripts(db: Db, list: Attachment[], token: string) {
   }));
 }
 
-export type MediaDeps = { db: Db; config: Config; store: MediaStore };
+export type MediaDeps = { db: Db; config: Config; store: MediaStore; mediaKey: string };
 
-export const reportRoutes: FastifyPluginAsync<MediaDeps> = async (app, { db, config, store }) => {
-  const token = config.token;
+export const reportRoutes: FastifyPluginAsync<MediaDeps> = async (app, { db, config, store, mediaKey }) => {
+  const token = mediaKey;
   const paths = config.media;
 
   app.get('/reports', (req) => {
@@ -235,11 +235,11 @@ export const reportRoutes: FastifyPluginAsync<MediaDeps> = async (app, { db, con
 };
 
 /** GET /media/<id>?exp=&sig= — outside /api: the signature replaces the bearer token. */
-export function registerMediaRoute(app: FastifyInstance, { db, config, store }: MediaDeps): void {
+export function registerMediaRoute(app: FastifyInstance, { db, store, mediaKey }: MediaDeps): void {
   app.get('/media/:id', async (req, reply) => {
     const { id } = parse(idParams, req.params);
     const q = parse(z.object({ exp: z.coerce.number().int(), sig: z.string().max(100) }), req.query);
-    if (!verifyMediaSignature(config.token, id, q.exp, q.sig)) {
+    if (!verifyMediaSignature(mediaKey, id, q.exp, q.sig)) {
       return reply.code(403).send({ error: 'forbidden', message: 'the link is invalid or expired; reload the report' });
     }
     const a = await requireAttachment(db, id);

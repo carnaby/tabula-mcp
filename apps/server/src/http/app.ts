@@ -9,6 +9,7 @@ import { registerMcpRoutes } from '../mcp/routes.js';
 import { apiRoutes } from './api.js';
 import { registerCliRoutes } from './cli.js';
 import { inboxApiRoutes } from './inbox-api.js';
+import { mediaSigningKey } from '../media/key.js';
 import { MediaStore } from '../media/store.js';
 import { registerMediaRoute } from './reports-api.js';
 
@@ -28,6 +29,7 @@ export async function buildApp(deps: {
   logStream?: { write(msg: string): void };
 }): Promise<FastifyInstance> {
   const store = deps.store ?? new MediaStore(deps.config.media.dir, deps.config.media.maxBytes);
+  const mediaKey = await mediaSigningKey(deps.db);
   const secret = deps.config.connectorSecret;
   // Also masks the secret outside /mcp/<secret> (e.g. /MCP/<secret>) in case the URL ends up in the log by another route.
   const mask = (url: string) => {
@@ -67,9 +69,9 @@ export async function buildApp(deps: {
 
   app.get('/healthz', async () => ({ ok: true }));
   registerCliRoutes(app);
-  registerMcpRoutes(app, { ...deps, store });
-  registerMediaRoute(app, { db: deps.db, config: deps.config, store });
-  await app.register(apiRoutes, { prefix: '/api', db: deps.db, config: deps.config, store });
+  registerMcpRoutes(app, { ...deps, store, mediaKey });
+  registerMediaRoute(app, { db: deps.db, config: deps.config, store, mediaKey });
+  await app.register(apiRoutes, { prefix: '/api', db: deps.db, config: deps.config, store, mediaKey });
   await app.register(inboxApiRoutes, { prefix: '/inbox-api/v1', db: deps.db });
 
   const webRoot = resolve(deps.config.webDist);

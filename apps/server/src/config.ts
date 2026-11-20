@@ -9,6 +9,7 @@ const schema = z.object({
     emptyToUndefined,
     z.string().min(32, 'TABULA_CONNECTOR_SECRET must be at least 32 characters').optional(),
   ),
+  TABULA_PUBLIC_URL: z.preprocess(emptyToUndefined, z.string().optional()),
   TABULA_FORNAX_URL: z.preprocess(emptyToUndefined, z.string().optional()),
   TABULA_FORNAX_TOKEN: z.preprocess(emptyToUndefined, z.string().optional()),
   TABULA_FORNAX_PRIORITY: z.preprocess(emptyToUndefined, z.enum(['low', 'normal', 'high']).default('high')),
@@ -28,6 +29,11 @@ export type Config = {
   databaseUrl: string;
   token: string;
   connectorSecret: string | undefined;
+  /**
+   * The public address, https://<host> without a path: the OAuth issuer, the base of /mcp and /api as resources and
+   * the passkey domain. Unset: no OAuth and no passkeys, only TABULA_TOKEN.
+   */
+  publicUrl: string | undefined;
   /** The Fornax job queue that transcribes recordings. Unset = transcription is off. */
   fornax: FornaxConfig | undefined;
   port: number;
@@ -57,6 +63,28 @@ function fornaxUrl(raw: string): string {
   return u.origin;
 }
 
+export const PUBLIC_URL_RULE = 'must be https://<host>[:<port>] without a path, query or fragment, or http://localhost[:<port>]';
+
+/**
+ * The address in the one form clients compare it in, or null. A single trailing slash is dropped; anything else must
+ * already be exactly the URL's origin (no path, query, fragment, user, upper case). An issuer is compared byte for
+ * byte (RFC 8414 §3.3) and the passkey origin too, so nothing is rewritten silently. Plain http only on localhost:
+ * WebAuthn refuses an IP address as the RP ID.
+ */
+export function normalizePublicUrl(raw: string): string | null {
+  const candidate = raw.endsWith('/') ? raw.slice(0, -1) : raw;
+  let url: URL;
+  try {
+    url = new URL(candidate);
+  } catch {
+    return null;
+  }
+  if (url.origin !== candidate) return null;
+  if (url.protocol === 'https:') return url.origin;
+  if (url.protocol === 'http:' && url.hostname === 'localhost') return url.origin;
+  return null;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const parsed = schema.safeParse(env);
   if (!parsed.success) {
@@ -70,10 +98,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (e.TABULA_FORNAX_TOKEN === undefined) throw new Error('Invalid configuration: TABULA_FORNAX_TOKEN is required when TABULA_FORNAX_URL is set');
     fornax = { url: fornaxUrl(e.TABULA_FORNAX_URL), token: e.TABULA_FORNAX_TOKEN, priority: e.TABULA_FORNAX_PRIORITY };
   }
+  let publicUrl: string | undefined;
+  if (e.TABULA_PUBLIC_URL !== undefined) {
+    const normalized = normalizePublicUrl(e.TABULA_PUBLIC_URL);
+    if (normalized === null) throw new Error(`Invalid configuration: TABULA_PUBLIC_URL ${PUBLIC_URL_RULE}`);
+    publicUrl = normalized;
+  }
   return {
     databaseUrl: e.DATABASE_URL,
     token: e.TABULA_TOKEN,
     connectorSecret: e.TABULA_CONNECTOR_SECRET,
+    publicUrl,
     fornax,
     port: e.PORT,
     host: e.HOST,

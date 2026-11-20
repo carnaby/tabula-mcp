@@ -28,7 +28,8 @@ import { refOf } from '@tabula/shared/refs';
 
 export type AgentMedia = {
   store: MediaStore;
-  token: string;
+  /** The /media signing key (media/key.ts). */
+  key: string;
   paths: FfmpegPaths;
   /** Origin the agent reached Tabula at, for absolute attachment links. */
   baseUrl?: string;
@@ -365,7 +366,7 @@ const seconds = (ms: number | null) => (ms === null ? null : Math.round(ms / 100
 
 function attachmentUrl(a: Attachment, m: AgentMedia | undefined): string {
   if (!m) throw new Error('media storage is not configured for this MCP context');
-  return `${m.baseUrl ?? ''}${signMediaPath(m.token, a.id, AGENT_LINK_TTL)}`;
+  return `${m.baseUrl ?? ''}${signMediaPath(m.key, a.id, AGENT_LINK_TTL)}`;
 }
 
 const attachmentForAgent = (a: Attachment, m: AgentMedia | undefined) => ({

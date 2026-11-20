@@ -8,7 +8,8 @@ import type { Db } from '../../db/client.js';
 import type { AuthSettings } from '../settings.js';
 import { useRegistration } from './registrations.js';
 import {
-  consumeChallenge, findPasskey, insertPasskey, listPasskeys, type Passkey, recordPasskeyUse, saveChallenge, webauthnUserId,
+  type ChallengePurpose, consumeChallenge, findPasskey, insertPasskey, listPasskeys, type Passkey, recordPasskeyUse, saveChallenge,
+  webauthnUserId,
 } from './store.js';
 
 const TIMEOUT_MS = 120_000;
@@ -18,6 +19,24 @@ const TIMEOUT_MS = 120_000;
  */
 const ALGORITHMS = [COSEALG.EdDSA, COSEALG.ES256, COSEALG.RS256];
 class Rollback extends Error {}
+
+/**
+ * The challenge check the library calls back. The library turns any error into a refused response, so a database
+ * error is kept here and thrown again after it: a failing database is a server error, never a refused passkey.
+ */
+function challengeCheck(db: Db, purpose: ChallengePurpose, registrationId: string | null, now: Date) {
+  let failure: { error: unknown } | undefined;
+  return {
+    consume: (challenge: string) =>
+      consumeChallenge(db, challenge, purpose, registrationId, now).catch((error: unknown) => {
+        failure = { error };
+        return false;
+      }),
+    rethrow: () => {
+      if (failure) throw failure.error;
+    },
+  };
+}
 
 /** Sign-in without a user name: any of the owner's passkeys (discoverable credentials), user verification required. */
 export async function loginOptions(db: Db, auth: AuthSettings, now: Date): Promise<PublicKeyCredentialRequestOptionsJSON> {
@@ -30,10 +49,12 @@ export async function loginOptions(db: Db, auth: AuthSettings, now: Date): Promi
 export async function verifyLogin(db: Db, auth: AuthSettings, response: AuthenticationResponseJSON, now: Date): Promise<Passkey | null> {
   const passkey = await findPasskey(db, response.id);
   if (!passkey) return null;
+  const challenges = challengeCheck(db, 'login', null, now);
+  let newCounter: number;
   try {
     const result = await verifyAuthenticationResponse({
       response,
-      expectedChallenge: (challenge) => consumeChallenge(db, challenge, 'login', null, now),
+      expectedChallenge: challenges.consume,
       expectedOrigin: auth.issuer,
       expectedRPID: auth.rpId,
       requireUserVerification: true,
@@ -45,16 +66,17 @@ export async function verifyLogin(db: Db, auth: AuthSettings, response: Authenti
       },
     });
     if (!result.verified) return null;
-    const { newCounter } = result.authenticationInfo;
-    // Spec §4.1: a counter that did not move forward means a cloned authenticator. The library refuses it as well;
-    // this check keeps the rule here whatever the library does.
-    if (passkey.counter > 0 && newCounter <= passkey.counter) return null;
-    await recordPasskeyUse(db, passkey.id, newCounter, now);
-    return passkey;
+    newCounter = result.authenticationInfo.newCounter;
   } catch {
+    challenges.rethrow();
     // The library explains why in its message (with the challenge in it); a refused sign-in needs no details.
     return null;
   }
+  // Spec §4.1: a counter that did not move forward means a cloned authenticator. The library refuses it as well;
+  // this check keeps the rule here whatever the library does.
+  if (passkey.counter > 0 && newCounter <= passkey.counter) return null;
+  await recordPasskeyUse(db, passkey.id, newCounter, now);
+  return passkey;
 }
 
 /** A new resident passkey with user verification, attestation "none"; the owner's existing passkeys are excluded. */
@@ -80,11 +102,12 @@ export async function registrationOptions(db: Db, auth: AuthSettings, registrati
 export async function verifyRegistration(
   db: Db, auth: AuthSettings, input: { registrationId: string; response: RegistrationResponseJSON; name: string }, now: Date,
 ): Promise<Passkey | null> {
+  const challenges = challengeCheck(db, 'register', input.registrationId, now);
   let credential: WebAuthnCredential;
   try {
     const result = await verifyRegistrationResponse({
       response: input.response,
-      expectedChallenge: (challenge) => consumeChallenge(db, challenge, 'register', input.registrationId, now),
+      expectedChallenge: challenges.consume,
       expectedOrigin: auth.issuer,
       expectedRPID: auth.rpId,
       requireUserVerification: true,
@@ -93,6 +116,7 @@ export async function verifyRegistration(
     if (!result.verified) return null;
     credential = result.registrationInfo.credential;
   } catch {
+    challenges.rethrow();
     return null;
   }
   try {

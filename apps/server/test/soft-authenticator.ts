@@ -8,7 +8,7 @@ type Cbor = Parameters<typeof isoCBOR.encode>[0];
 const b64u = (b: Uint8Array) => Buffer.from(b).toString('base64url');
 const sha256 = (b: Uint8Array | string) => createHash('sha256').update(b).digest();
 
-/** A WebAuthn authenticator in software for the server tests: P-256 (ES256), attestation "none", user verified. */
+/** A WebAuthn authenticator in software for the server tests: P-256 (ES256), attestation "none", user verified unless `uv: false`. */
 export class SoftAuthenticator {
   readonly credentialId = randomBytes(16);
   private readonly keys: { privateKey: KeyObject; publicKey: KeyObject } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
@@ -39,13 +39,13 @@ export class SoftAuthenticator {
     return Buffer.from(JSON.stringify({ type, challenge, origin, crossOrigin: false }));
   }
 
-  register(options: PublicKeyCredentialCreationOptionsJSON, opts: { origin?: string } = {}): RegistrationResponseJSON {
+  register(options: PublicKeyCredentialCreationOptionsJSON, opts: { origin?: string; uv?: boolean } = {}): RegistrationResponseJSON {
     this.userHandle = options.user.id;
     const idLength = Buffer.alloc(2);
     idLength.writeUInt16BE(this.credentialId.length);
     const attested = Buffer.concat([Buffer.alloc(16), idLength, this.credentialId, this.coseKey()]);
     // Flags: user present (0x01), user verified (0x04), attested credential data (0x40).
-    const authData = this.authData(0x45, attested);
+    const authData = this.authData(opts.uv === false ? 0x41 : 0x45, attested);
     const attestation = new Map<string, unknown>([['fmt', 'none'], ['attStmt', new Map()], ['authData', authData]]);
     return {
       id: b64u(this.credentialId),
@@ -60,9 +60,9 @@ export class SoftAuthenticator {
     };
   }
 
-  login(options: PublicKeyCredentialRequestOptionsJSON, opts: { origin?: string; counter?: number } = {}): AuthenticationResponseJSON {
+  login(options: PublicKeyCredentialRequestOptionsJSON, opts: { origin?: string; counter?: number; uv?: boolean } = {}): AuthenticationResponseJSON {
     this.counter = opts.counter ?? this.counter + 1;
-    const authData = this.authData(0x05);
+    const authData = this.authData(opts.uv === false ? 0x01 : 0x05);
     const clientData = this.clientData('webauthn.get', options.challenge, opts.origin ?? this.origin);
     const signature = sign('sha256', Buffer.concat([authData, sha256(clientData)]), this.keys.privateKey);
     return {

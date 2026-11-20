@@ -18,6 +18,8 @@ const post = (url: string, payload: object, headers: Record<string, string> = {}
   app.inject({ method: 'POST', url, payload, headers: { origin: TEST_PUBLIC_URL, ...headers } });
 const cookieOf = (res: { headers: Record<string, unknown> }) => String(res.headers['set-cookie'] ?? '').split(';')[0]!;
 const me = (headers: Record<string, string>) => app.inject({ method: 'GET', url: '/api/auth/me', headers });
+/** An address of its own for a test that fails on purpose: the per-address limits of one app outlive a test. */
+const from = (n: number) => ({ 'x-forwarded-for': `203.0.113.${n}` });
 
 async function register(name = 'Laptop') {
   const token = await createRegistration(db, 'link', new Date());
@@ -28,7 +30,7 @@ async function register(name = 'Laptop') {
   return { key, token, cookie: cookieOf(res) };
 }
 
-async function signIn(key: SoftAuthenticator, headers: Record<string, string> = {}, opts: { origin?: string; counter?: number } = {}) {
+async function signIn(key: SoftAuthenticator, headers: Record<string, string> = {}, opts: Parameters<SoftAuthenticator['login']>[1] = {}) {
   const { options } = (await post('/auth/passkey/login/options', {}, headers)).json();
   return post('/auth/passkey/login/verify', { response: key.login(options, opts) }, headers);
 }
@@ -40,7 +42,7 @@ describe('passkey registration', () => {
     expect(p).toMatchObject({ name: 'Laptop', counter: 0, transports: ['internal'] });
     const [reg] = await db.select().from(passkeyRegistrations);
     expect(reg!.usedAt).not.toBeNull();
-    expect((await post('/auth/passkey/register/options', { token })).json()).toMatchObject({ error: 'link_invalid' });
+    expect((await post('/auth/passkey/register/options', { token }, from(1))).json()).toMatchObject({ error: 'link_invalid' });
     expect((await me({ cookie })).json()).toEqual({ via: 'session', fresh: true, passkeys: 1, publicUrl: TEST_PUBLIC_URL });
   });
 
@@ -55,7 +57,7 @@ describe('passkey registration', () => {
 
   it('refuses an expired link, a response for another origin and a request from another site', async () => {
     const expired = await createRegistration(db, 'link', new Date(Date.now() - 16 * 60_000));
-    expect((await post('/auth/passkey/register/options', { token: expired })).statusCode).toBe(400);
+    expect((await post('/auth/passkey/register/options', { token: expired }, from(2))).statusCode).toBe(400);
     const token = await createRegistration(db, 'link', new Date());
     expect((await post('/auth/passkey/register/options', { token }, { origin: 'https://evil.example' })).statusCode).toBe(403);
     const key = new SoftAuthenticator(TEST_PUBLIC_URL);
@@ -63,6 +65,16 @@ describe('passkey registration', () => {
     const res = await post('/auth/passkey/register/verify', { token, name: 'x', response: key.register(options, { origin: 'https://evil.example' }) });
     expect(res.statusCode).toBe(400);
     expect(await db.select().from(passkeys)).toHaveLength(0);
+  });
+
+  it('refuses a passkey that did not verify the user', async () => {
+    const token = await createRegistration(db, 'link', new Date());
+    const key = new SoftAuthenticator(TEST_PUBLIC_URL);
+    const { options } = (await post('/auth/passkey/register/options', { token })).json();
+    const res = await post('/auth/passkey/register/verify', { token, name: 'x', response: key.register(options, { uv: false }) });
+    expect(res.json()).toMatchObject({ error: 'passkey_rejected' });
+    expect(await db.select().from(passkeys)).toHaveLength(0);
+    expect((await db.select().from(passkeyRegistrations))[0]!.usedAt).toBeNull();
   });
 
   it('refuses a challenge issued for another registration link', async () => {
@@ -102,19 +114,26 @@ describe('passkey sign-in', () => {
 
   it('refuses a replay, a challenge it did not issue, another origin, a counter that went back and an unknown key', async () => {
     const { key } = await register();
-    const { options } = (await post('/auth/passkey/login/options', {})).json();
+    const at = from(3);
+    const { options } = (await post('/auth/passkey/login/options', {}, at)).json();
     const response = key.login(options);
-    expect((await post('/auth/passkey/login/verify', { response })).statusCode).toBe(200);
-    expect((await post('/auth/passkey/login/verify', { response })).statusCode).toBe(400);
+    expect((await post('/auth/passkey/login/verify', { response }, at)).statusCode).toBe(200);
+    expect((await post('/auth/passkey/login/verify', { response }, at)).statusCode).toBe(400);
     const forged = { challenge: Buffer.from('not issued by the server').toString('base64url') } as PublicKeyCredentialRequestOptionsJSON;
-    expect((await post('/auth/passkey/login/verify', { response: key.login(forged) })).statusCode).toBe(400);
-    expect((await signIn(key, {}, { origin: 'https://evil.example' })).statusCode).toBe(400);
-    expect((await signIn(key, {}, { counter: 5 })).statusCode).toBe(200);
-    expect((await signIn(key, {}, { counter: 3 })).statusCode).toBe(400);
-    expect((await signIn(key, {}, { counter: 5 })).statusCode).toBe(400);
+    expect((await post('/auth/passkey/login/verify', { response: key.login(forged) }, at)).statusCode).toBe(400);
+    expect((await signIn(key, at, { origin: 'https://evil.example' })).statusCode).toBe(400);
+    expect((await signIn(key, at, { counter: 5 })).statusCode).toBe(200);
+    expect((await signIn(key, at, { counter: 3 })).statusCode).toBe(400);
+    expect((await signIn(key, at, { counter: 5 })).statusCode).toBe(400);
     expect((await db.select().from(passkeys))[0]!.counter).toBe(5);
-    expect((await signIn(new SoftAuthenticator(TEST_PUBLIC_URL))).json()).toMatchObject({ error: 'passkey_rejected' });
+    expect((await signIn(new SoftAuthenticator(TEST_PUBLIC_URL), at)).json()).toMatchObject({ error: 'passkey_rejected' });
     expect((await post('/auth/passkey/login/options', {}, { origin: 'https://evil.example' })).statusCode).toBe(403);
+  });
+
+  it('refuses a passkey that did not verify the user', async () => {
+    const { key } = await register();
+    expect((await signIn(key, from(4), { uv: false })).json()).toMatchObject({ error: 'passkey_rejected' });
+    expect((await db.select().from(passkeys))[0]).toMatchObject({ counter: 0, lastUsedAt: null });
   });
 
   it('confirms an open session instead of starting another one', async () => {
@@ -151,5 +170,33 @@ describe('/api/auth', () => {
     expect((await me({ authorization: `Bearer ${TEST_TOKEN}` })).json()).toEqual({ via: 'legacy', fresh: false, passkeys: 0, publicUrl: TEST_PUBLIC_URL });
     const api = await issueTestAccessToken(db, { resource: 'api' });
     expect((await me({ authorization: `Bearer ${api.value}` })).statusCode).toBe(403);
+  });
+});
+
+describe('a failing database', () => {
+  it('is a server error during a ceremony, not a refused passkey', async () => {
+    // Every delete fails, so no challenge can be used up; everything else reaches the real database.
+    const broken = new Proxy(db, {
+      get(target, prop) {
+        if (prop === 'delete') return () => { throw new Error('database unavailable'); };
+        const value: unknown = Reflect.get(target, prop);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    const lines: string[] = [];
+    const brokenApp = await buildApp({ config: testConfig({ publicUrl: TEST_PUBLIC_URL }), db: broken, logStream: { write: (l) => lines.push(l) } });
+    const call = (url: string, payload: object) => brokenApp.inject({ method: 'POST', url, payload, headers: { origin: TEST_PUBLIC_URL, ...from(5) } });
+    try {
+      const { key } = await register();
+      const login = (await call('/auth/passkey/login/options', {})).json();
+      expect((await call('/auth/passkey/login/verify', { response: key.login(login.options) })).json()).toEqual({ error: 'internal', message: 'internal error' });
+      const token = await createRegistration(db, 'add', new Date());
+      const reg = (await call('/auth/passkey/register/options', { token })).json();
+      const res = await call('/auth/passkey/register/verify', { token, name: 'x', response: new SoftAuthenticator(TEST_PUBLIC_URL).register(reg.options) });
+      expect(res.statusCode).toBe(500);
+      expect(lines.filter((l) => l.includes('database unavailable'))).toHaveLength(2);
+    } finally {
+      await brokenApp.close();
+    }
   });
 });

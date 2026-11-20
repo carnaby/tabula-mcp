@@ -1,9 +1,13 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { createServer } from 'node:net';
+import type { AddressInfo } from 'node:net';
 import type { FastifyInstance } from 'fastify';
-import { expect } from 'vitest';
+import { afterAll, beforeAll, expect } from 'vitest';
 import { createSession } from '../src/auth/sessions.js';
+import type { Config } from '../src/config.js';
 import type { Db } from '../src/db/client.js';
-import { TEST_PUBLIC_URL } from './helpers.js';
+import { buildApp } from '../src/http/app.js';
+import { TEST_PUBLIC_URL, testConfig } from './helpers.js';
 
 /** The OAuth client side for the tests, over app.inject: every code comes from /oauth/authorize itself. */
 
@@ -65,4 +69,31 @@ export async function obtainCode(
   expect(res.statusCode).toBe(302);
   const location = new URL(res.headers.location as string);
   return { code: location.searchParams.get('code')!, pkce, clientId, redirectUri: opts.query?.redirect_uri ?? CALLBACK, location };
+}
+
+export function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = createServer();
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const { port } = probe.address() as AddressInfo;
+      probe.close(() => resolve(port));
+    });
+  });
+}
+
+/**
+ * A real Tabula with OAuth and passkeys at http://localhost:<port>. The public URL is the issuer, the passkey origin
+ * and the base of the resources, so it must name the very port the server listens on: the port is picked first.
+ */
+export function useAuthServer(db: Db, overrides: Partial<Config> = {}): { url: string; app?: FastifyInstance } {
+  const server: { url: string; app?: FastifyInstance } = { url: '' };
+  beforeAll(async () => {
+    const port = await freePort();
+    server.url = `http://localhost:${port}`;
+    server.app = await buildApp({ config: testConfig({ publicUrl: server.url, ...overrides }), db });
+    await server.app.listen({ port, host: 'localhost' });
+  });
+  afterAll(() => server.app?.close());
+  return server;
 }

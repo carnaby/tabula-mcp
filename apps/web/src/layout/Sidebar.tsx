@@ -64,6 +64,9 @@ export function Sidebar({
         <NavItem to={href.inbox()} icon="mail" label="Inbox" count={messageCounts.data?.open || undefined} active={section.name === 'inbox' || section.name === 'message'} />
         <NavItem to={href.global()} icon="globe" label="Global" count={global?.memory_count} active={section.name === 'global'} />
 
+        <div className="nav-section">Account</div>
+        <NavItem to={href.security()} icon="gear" label="Security" active={section.name === 'security'} />
+
         <div className="nav-section">
           <span>Projects</span>
           <IconButton size="sm" icon="plus" label="New project" onClick={onNewProject} />

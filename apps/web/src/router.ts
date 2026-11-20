@@ -16,6 +16,7 @@ export type Route =
   | { name: 'inbox' }
   | { name: 'message'; id: string; from?: string }
   | { name: 'project'; project: string; tab: ProjectTab; path?: string; from?: string }
+  | { name: 'security' }
   | { name: 'notFound' };
 
 /** `?a=1&b=2` from the defined values, or '' when there are none. */
@@ -39,6 +40,7 @@ export const href = {
   reports: () => '#/reports',
   report: (id: string, project?: string, from?: string) => `#/reports/${id}${query({ project, from })}`,
   inbox: () => '#/inbox',
+  security: () => '#/security',
   message: (id: string, from?: string) => `#/inbox/${id}${query({ from })}`,
   search: (q = '') => `#/search${q ? `?q=${encodeURIComponent(q)}` : ''}`,
   project: (p: string, tab: ProjectTab = 'state') =>
@@ -73,6 +75,7 @@ export function parse(hash: string): Route {
       : { name: 'reports' };
   }
   if (a === 'inbox') return b ? { name: 'message', id: b, from } : { name: 'inbox' };
+  if (a === 'security' && !b) return { name: 'security' };
   // Links from earlier versions of the UI.
   if (a === 'memories' && !b) return { name: 'global', tab: 'rules' };
   if (a === 'recall' && !b) return { name: 'global', tab: 'recall' };

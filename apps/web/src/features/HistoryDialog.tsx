@@ -37,7 +37,7 @@ export function HistoryDialog({
             <strong>v{thought.version} · current</strong>
             <span className="t-subtle"><TimeAgo iso={thought.updatedAt} /></span>
           </div>
-          <Author {...authorOf(thought.editedBy)} />
+          <Author {...authorOf(thought.editedBy, thought.editedByModel)} />
         </div>
         {!revs.data && <Skeleton height={44} />}
         {revs.data?.length === 0 && <EmptyState icon="history" title="No earlier versions">The text hasn't been changed since it was written.</EmptyState>}
@@ -47,7 +47,7 @@ export function HistoryDialog({
               <strong className="t-truncate">v{r.version} · {r.title}</strong>
               <span className="t-subtle" title={fullDate(r.createdAt)}><TimeAgo iso={r.createdAt} /></span>
             </div>
-            <Author {...authorOf(r.editedBy)} />
+            <Author {...authorOf(r.editedBy, r.editedByModel)} />
           </button>
         ))}
       </div>

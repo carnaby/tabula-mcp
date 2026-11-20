@@ -52,7 +52,7 @@ export function FileView({
         meta={
           f ? (
             <AuthorMeta
-              author={authorOf(f.updatedBy)}
+              author={authorOf(f.updatedBy, f.updatedByModel)}
               iso={f.updatedAt}
               heading="Last changed"
               details={<span className="t-subtle">Version {f.version} · {formatSize(f.size)}</span>}

@@ -25,6 +25,7 @@ export type Memory = {
   deprecatedReason: string | null;
   source: Source;
   agentLabel: string | null;
+  agentModel: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -54,6 +55,7 @@ export type Thought = {
   archived: boolean;
   source: Source;
   editedBy: string;
+  editedByModel: string | null;
   version: number;
   createdAt: string;
   updatedAt: string;
@@ -67,6 +69,7 @@ export type ThoughtRevision = {
   body: string;
   tags: string[];
   editedBy: string;
+  editedByModel: string | null;
   createdAt: string;
 };
 
@@ -99,10 +102,11 @@ export type ProjectFile = {
   isState: boolean;
   updatedAt: string;
   updatedBy: string;
+  updatedByModel: string | null;
   deletedAt: string | null;
 };
 export type ProjectFileContent = ProjectFile & { content: string };
-export type FileRevision = { version: number; sha256: string; size: number; updatedBy: string; createdAt: string };
+export type FileRevision = { version: number; sha256: string; size: number; updatedBy: string; updatedByModel: string | null; createdAt: string };
 export type FileRevisionContent = FileRevision & { content: string };
 
 export type RecallPreview = { text: string; tokens: number; budget: number; trimmed: string[]; overBudget: boolean };
@@ -158,6 +162,7 @@ export type Attachment = {
   /** Frames: the user's note. */
   note: string | null;
   createdBy: string;
+  createdByModel: string | null;
   createdAt: string;
   purgedAt: string | null;
   /** Signed link, null once the file was deleted. */
@@ -175,6 +180,7 @@ export type Report = {
   status: ReportStatus;
   source: Source;
   editedBy: string;
+  editedByModel: string | null;
   version: number;
   closedAt: string | null;
   /** Video and audio stay after the report is closed. */
@@ -271,10 +277,20 @@ export type MessageSummary = {
   waiting_on: MessageWaitingOn | null; related_to: string | null; version: number; created_at: string; updated_at: string;
 };
 export type MessageEvent = {
-  at: string; actor: string; source: Source; version: number; from_status: MessageStatus | null; to_status: MessageStatus | null;
+  at: string; actor: string; model: string | null; source: Source; version: number; from_status: MessageStatus | null; to_status: MessageStatus | null;
   waiting_on: MessageWaitingOn | null; reply: string | null;
 };
 export type MessageDetail = MessageSummary & { body: string; source: Source; created_by: string; closed_at: string | null; events: MessageEvent[] };
 export type MessageCounts = { open: number; waiting_author: number };
 export type MessageToken = { id: string; project: string; name: string; created_at: string; last_used_at: string | null; revoked_at: string | null };
 export type MessagePatch = { expected_version: number; reply?: string; status?: MessageStatus; waiting_on?: MessageWaitingOn };
+
+export type SecurityOverview = {
+  via: 'session' | 'legacy';
+  fresh: boolean;
+  publicUrl: string | null;
+  passkeys: Array<{ id: string; name: string; createdAt: string; lastUsedAt: string | null }>;
+  connections: Array<{ id: string; name: string; app: string; target: string; resource: 'mcp' | 'api'; createdAt: string; lastUsedAt: string | null }>;
+  sessions: Array<{ id: string; device: string; createdAt: string; lastUsedAt: string; current: boolean }>;
+  legacy: { since: string | null; token: string | null; connector: string | null; connectorConfigured: boolean };
+};

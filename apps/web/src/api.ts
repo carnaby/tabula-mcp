@@ -2,7 +2,7 @@ import type {
   FileRevision, FileRevisionContent, Memory, MemoryKind, MemorySort, Note, NoteSort, Page, Project, RecallPreview, RefTarget, SearchHit, Source, Thought,
   ProjectFile, ProjectFileContent, ThoughtRevision, ThoughtSort,
   ActivityPage, ActivityType, Attachment, Dashboard, TranscriptState, WorkerStatus, ReportDetail, Report, ReportSort, ReportStatus, ReportSummary,
-  MessageCounts, MessageDetail, MessagePatch, MessageStatusFilter, MessageSummary, MessageToken, MessageType,
+  MessageCounts, MessageDetail, MessagePatch, MessageStatusFilter, MessageSummary, MessageToken, MessageType, SecurityOverview,
 } from './types';
 
 /** The legacy token (TABULA_TOKEN), kept only until this browser signs in with a passkey; removed in the next release. */
@@ -181,6 +181,12 @@ export const api = {
   setTidyPrompt: (text: string) => request<{ text: string }>('PUT', '/settings/tidy-prompt', { text }),
   compactPrompt: (signal?: S) => request<{ text: string }>('GET', '/settings/compact-prompt', undefined, signal),
   setCompactPrompt: (text: string) => request<{ text: string }>('PUT', '/settings/compact-prompt', { text }),
+  security: (signal?: S) => request<SecurityOverview>('GET', '/security', undefined, signal),
+  renamePasskey: (id: string, name: string) => request<{ id: string; name: string }>('PATCH', `/passkeys/${id}`, { name }),
+  deletePasskey: (id: string) => request<void>('DELETE', `/passkeys/${id}`),
+  renameConnection: (id: string, name: string) => request<{ id: string; name: string }>('PATCH', `/connections/${id}`, { name }),
+  revokeConnection: (id: string) => request<void>('POST', `/connections/${id}/revoke`),
+  signOutSession: (id: string) => request<void>('DELETE', `/sessions/${id}`),
 };
 
 /**

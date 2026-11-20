@@ -111,6 +111,8 @@ describe('the MCP SDK OAuth client, end to end', () => {
     const saved = JSON.parse((result.content as Array<{ text: string }>)[0]!.text) as { id: string };
     expect(await getThought(db, saved.id)).toMatchObject({ editedBy: 'e2e-client', editedByModel: 'claude-opus-5-5' });
     await client.close();
+    // The transport refreshes silently on a 401 and retries; nothing was saved, so the issued token itself was accepted.
+    expect(provider.saved).toBe(issued);
 
     // A refresh: auth() with a refresh token on hand rotates the pair.
     expect(await auth(provider, { serverUrl: mcpUrl })).toBe('AUTHORIZED');
@@ -118,17 +120,31 @@ describe('the MCP SDK OAuth client, end to end', () => {
     expect(refreshed.access_token).not.toBe(issued.access_token);
     expect(refreshed.refresh_token).not.toBe(issued.refresh_token);
 
+    // The rotated-out refresh token is refused; reused within seconds it does not end the connection.
+    const reused = await fetch(`${server.url}/oauth/token`, {
+      method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: issued.refresh_token!, client_id: provider.client!.client_id }),
+    });
+    expect(reused.status).toBe(400);
+    expect(await reused.json()).toMatchObject({ error: 'invalid_grant' });
+
+    // The same raw request with the refreshed access token: accepted before the revocation, refused after it.
+    const initialize = () => fetch(mcpUrl, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${refreshed.access_token}`, accept: 'application/json, text/event-stream', 'content-type': 'application/json' },
+      body: JSON.stringify(init),
+    });
+    const before = await initialize();
+    expect(before.status).toBe(200);
+    await before.text();
+
     // Revoking the refresh token ends the connection: the access token is refused.
     const revoked = await fetch(`${server.url}/oauth/revoke`, {
       method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ token: refreshed.refresh_token!, client_id: provider.client!.client_id }),
     });
     expect(revoked.status).toBe(200);
-    const after = await fetch(mcpUrl, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${refreshed.access_token}`, accept: 'application/json, text/event-stream', 'content-type': 'application/json' },
-      body: JSON.stringify(init),
-    });
+    const after = await initialize();
     expect(after.status).toBe(401);
     expect(after.headers.get('www-authenticate')).toContain('error="invalid_token"');
   });

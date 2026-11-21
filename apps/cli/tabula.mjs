@@ -396,7 +396,8 @@ function writeAtomic(repo, path, bytes) {
 
 /**
  * fetch with the token and a timeout; network failures become a CliError. In hook mode every call ends by the deadline.
- * Errors are tagged for the pull loop: `unreachable` (no answer; `timedOut` when the timeout fired) and `rejected` (401).
+ * Errors are tagged for the pull loop: `unreachable` (no answer, or a renewal the server could not serve: 5xx, 429;
+ * `timedOut` when the timeout fired) and `rejected` (401).
  */
 export function makeApi(conn, deadline) {
   const timeLeft = () => (deadline ? Math.max(1, deadline - Date.now()) : 60000);
@@ -446,6 +447,12 @@ const isCurrent = (o) => typeof o.access_token === 'string' && o.access_token !=
 async function bearerFor(conn, ms, deadline) {
   if (conn.token) return conn.token;
   if (isCurrent(conn.oauth)) return conn.oauth.access_token;
+  // Too little time to rotate safely (RENEW_FLOOR_MS), but the token still works past this command: use it, the next
+  // command renews with its full time.
+  const o = conn.oauth;
+  if (ms < RENEW_FLOOR_MS && Number(o.expires_at) > Date.now() + ms && typeof o.access_token === 'string' && o.access_token !== '') {
+    return o.access_token;
+  }
   // One renewal at a time in this process; requests that need it meanwhile get its token.
   conn.renewing ??= renewLogin(conn, ms, deadline).finally(() => {
     conn.renewing = undefined;
@@ -502,7 +509,9 @@ async function rotateRefreshToken(conn, ms, deadline) {
     });
   }
   const o = conn.oauth;
-  const res = await fetch(`${conn.url}/oauth/token`, {
+  // The endpoint the server advertised at login; logins saved before it was kept use the server's own path.
+  const endpoint = isHttpUrl(o.token_endpoint) ? o.token_endpoint : `${conn.url}/oauth/token`;
+  const res = await fetch(endpoint, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: o.refresh_token, client_id: o.client_id, resource: `${conn.url}/api` }),
@@ -516,6 +525,10 @@ async function rotateRefreshToken(conn, ms, deadline) {
   }
   if (data.error === 'invalid_grant') return false;
   if (['invalid_client', 'invalid_target', 'invalid_scope'].includes(data.error)) throw loginEnded();
+  // Overloaded or throttled (5xx, 429): the login itself is fine; the next command tries again.
+  if (res.status >= 500 || res.status === 429) {
+    throw Object.assign(new CliError(`Tabula could not renew the login right now (HTTP ${res.status}); try again in a minute`), { unreachable: true });
+  }
   throw Object.assign(new CliError(`renewing the Tabula login: HTTP ${res.status}`), { rejected: true });
 }
 
@@ -1089,7 +1102,7 @@ async function oauthLogin(url, flags) {
     }
     // A legacy token would win over the new login (readConnection); it goes.
     const { token: _replaced, ...saved } = readConfigOrEmpty();
-    const file = writeConfigFile({ ...saved, url: base, oauth: { client_id: client.client_id, ...tokenFields(tokens) } });
+    const file = writeConfigFile({ ...saved, url: base, oauth: { client_id: client.client_id, token_endpoint: meta.token_endpoint, ...tokenFields(tokens) } });
     out(`Logged in to ${base}. Saved ${file}`);
     return 0;
   } finally {

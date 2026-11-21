@@ -1,54 +1,17 @@
-import { readFileSync, statSync, writeFileSync } from 'node:fs';
+import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import { sql } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import { revokeConnection } from '../../src/auth/oauth/store.js';
 import { oauthConnections, oauthRefreshTokens, projectFiles } from '../../src/db/schema.js';
-import { seedProject, TEST_TOKEN, useTestDb } from '../helpers.js';
-import { pendingOf, signedInCookie, useAuthServer } from '../oauth-flow.js';
-import { makeRepo, type RunResult, runCli, spawnCli, tempDir } from './harness.js';
+import { TEST_TOKEN, useTestDb } from '../helpers.js';
+import { type RunResult, runCli } from './harness.js';
+import { configOf, env, rewrite, useLoginServer } from './login-flow.js';
 
 const db = useTestDb();
-const server = useAuthServer(db);
-const env = (home: string) => ({ TABULA_HOME: home, TABULA_URL: undefined, TABULA_TOKEN: undefined, TABULA_NO_BROWSER: '1' });
-const configOf = (home: string) => JSON.parse(readFileSync(join(home, 'config.json'), 'utf8'));
-const expireAccess = (home: string) => {
-  const c = configOf(home);
-  writeFileSync(join(home, 'config.json'), JSON.stringify({ ...c, oauth: { ...c.oauth, expires_at: 0 } }));
-};
-
-/** The browser's part: the owner, signed in, decides on the consent page; the redirect reaches the CLI's loopback server. */
-async function decideInBrowser(authorizeUrl: string, decision: 'allow' | 'deny') {
-  const cookie = await signedInCookie(db);
-  const page = await fetch(authorizeUrl, { headers: { cookie }, redirect: 'manual' });
-  expect(page.status).toBe(200);
-  const decided = await fetch(`${server.url}/oauth/authorize`, {
-    method: 'POST', redirect: 'manual',
-    headers: { cookie, origin: server.url, 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ pending: pendingOf(await page.text()), decision, name: 'tabula-cli', replace: 'on' }),
-  });
-  expect(decided.status).toBe(302);
-  await fetch(decided.headers.get('location')!);
-}
-
-async function login(home: string, cwd: string, decision: 'allow' | 'deny' = 'allow') {
-  const cli = spawnCli(['login', server.url], { cwd, env: env(home) });
-  try {
-    const [, url] = await cli.waitFor(/^ {2}(http\S+\/oauth\/authorize\?\S+)$/m);
-    await decideInBrowser(url!, decision);
-  } catch (e) {
-    cli.kill(); // a CLI left waiting for the browser would outlive the test
-    throw e;
-  }
-  return cli.done;
-}
-
-async function setup() {
-  const home = tempDir('tabula-login-');
-  await seedProject(db, 'demo');
-  const repo = makeRepo(join(home, 'demo'), { sync: ['docs/**'] }, { 'docs/a.md': '# A\n' });
-  return { home, repo };
-}
+// Nine logins: one server takes at most ten (see useLoginServer); further login tests go to login-checks.test.ts.
+const { server, login, setup } = useLoginServer(db);
+const expireAccess = (home: string) => rewrite(home, (c) => ({ ...c, oauth: { ...c.oauth, expires_at: 0 } }));
 
 /** Sessions of this database that wait for a row lock. */
 async function lockWaiters(): Promise<number> {
@@ -66,7 +29,10 @@ describe('tabula login through the browser', { timeout: 60_000 }, () => {
     expect(r.stdout).toContain(`Logged in to ${server.url}`);
     expect(configOf(home)).toEqual({
       url: server.url,
-      oauth: { client_id: expect.any(String), refresh_token: expect.any(String), access_token: expect.any(String), expires_at: expect.any(Number) },
+      oauth: {
+        client_id: expect.any(String), refresh_token: expect.any(String), access_token: expect.any(String), expires_at: expect.any(Number),
+        token_endpoint: `${server.url}/oauth/token`,
+      },
     });
     const { oauth } = configOf(home);
     for (const secret of [oauth.access_token, oauth.refresh_token]) expect(r.stdout + r.stderr).not.toContain(secret);

@@ -9,8 +9,10 @@ import { findClient, type IssuedPair, issueTokenPair, revokeConnection, type Tx 
 /*
  * What the token and revocation endpoints decide, apart from HTTP (Limen's core/oauth/tokens.ts on Postgres). Each
  * grant reads its row FOR UPDATE, checks everything, and only then spends it, in one transaction: a request that fails
- * a check leaves the code or refresh token as it was, and the spend commits together with its successor. The one
- * refusal that writes is a replay, which revokes the connection (spec §3.4); it returns normally, so it commits.
+ * a check leaves the code or refresh token as it was, and the spend commits together with its successor. A replay
+ * revokes the connection (spec §3.4), after the grant's transaction and in a transaction of its own: revoking while
+ * holding the token's row would take the connection's lock after the token's, the reverse of /oauth/revoke, and the
+ * two could deadlock.
  * Codes and refresh tokens belong to a client only through their connection, so the presented client_id is compared
  * with the connection's. Raw values from the request reach the database only as hashSecret() of them (hex), and a
  * client_id only through findClient's uuid check: a malformed one is a refusal, never a Postgres error.
@@ -22,6 +24,15 @@ export const REFRESH_REUSE_GRACE_MS = 10_000;
 export type TokenError = 'invalid_grant' | 'invalid_client' | 'invalid_scope' | 'invalid_target';
 export type TokenOutcome = { ok: true; tokens: IssuedPair & { scope: string } } | { ok: false; error: TokenError };
 const refuse = (error: TokenError): TokenOutcome => ({ ok: false, error });
+
+/** A refusal that ends the connection; the revocation runs once the grant's transaction, and its row lock, are over. */
+type Decision = TokenOutcome | { ok: false; error: 'invalid_grant'; revoke: string };
+
+async function settle(db: Db, decision: Decision, now: Date): Promise<TokenOutcome> {
+  if (decision.ok || !('revoke' in decision)) return decision;
+  await revokeConnection(db, decision.revoke, now);
+  return refuse('invalid_grant');
+}
 
 /** undefined = no resource sent (allowed); null = a resource that is not one of the two. */
 const presentedKind = (auth: AuthSettings, resource: string | undefined): ResourceKind | undefined | null =>
@@ -40,14 +51,11 @@ export async function exchangeCode(
   if (presented === null) return refuse('invalid_target');
   if (!(await findClient(db, input.clientId))) return refuse('invalid_client');
   const hash = hashSecret(input.code);
-  return db.transaction(async (tx) => {
+  return settle(db, await db.transaction(async (tx): Promise<Decision> => {
     const [code] = await tx.select().from(oauthCodes).where(eq(oauthCodes.hash, hash)).for('update');
     if (!code) return refuse('invalid_grant');
     // RFC 6749 §4.1.2: a code presented twice ends everything issued from it.
-    if (code.usedAt !== null) {
-      await revokeConnection(tx, code.connectionId, now);
-      return refuse('invalid_grant');
-    }
+    if (code.usedAt !== null) return { ok: false, error: 'invalid_grant', revoke: code.connectionId };
     if (code.expiresAt <= now) return refuse('invalid_grant');
     if (presented !== undefined && presented !== code.resource) return refuse('invalid_target');
     // Exact: the code is bound to the redirect URI presented at /oauth/authorize, a loopback port included.
@@ -58,7 +66,7 @@ export async function exchangeCode(
     await tx.update(oauthCodes).set({ usedAt: now }).where(eq(oauthCodes.hash, hash));
     const pair = await issueTokenPair(tx, connection, now);
     return { ok: true, tokens: { ...pair, scope: code.scope } };
-  });
+  }), now);
 }
 
 export async function refreshTokens(
@@ -68,13 +76,13 @@ export async function refreshTokens(
   if (presented === null) return refuse('invalid_target');
   if (!(await findClient(db, input.clientId))) return refuse('invalid_client');
   const hash = hashSecret(input.refreshToken);
-  return db.transaction(async (tx) => {
+  return settle(db, await db.transaction(async (tx): Promise<Decision> => {
     // A concurrent rotation of the same token holds this lock; once it commits, the row read here is already replaced.
     const [row] = await tx.select().from(oauthRefreshTokens).where(eq(oauthRefreshTokens.hash, hash)).for('update');
     if (!row) return refuse('invalid_grant');
     if (row.replacedAt !== null) {
-      if (now.getTime() - row.replacedAt.getTime() > REFRESH_REUSE_GRACE_MS) await revokeConnection(tx, row.connectionId, now);
-      return refuse('invalid_grant');
+      const late = now.getTime() - row.replacedAt.getTime() > REFRESH_REUSE_GRACE_MS;
+      return late ? { ok: false, error: 'invalid_grant', revoke: row.connectionId } : refuse('invalid_grant');
     }
     if (row.expiresAt <= now) return refuse('invalid_grant');
     const connection = await usableConnection(tx, row.connectionId, input.clientId);
@@ -87,7 +95,7 @@ export async function refreshTokens(
     await tx.update(oauthRefreshTokens).set({ replacedAt: now }).where(eq(oauthRefreshTokens.hash, hash));
     const pair = await issueTokenPair(tx, connection, now);
     return { ok: true, tokens: { ...pair, scope } };
-  });
+  }), now);
 }
 
 /**

@@ -1,5 +1,8 @@
-import type { FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyError, FastifyReply, FastifyRequest } from 'fastify';
 import { clientKey, FixedWindows } from '../rate-limit.js';
+
+export const FORM_BODY_LIMIT = 8 * 1024;
+export const INVALID_FORM = 'send the parameters, each once, as application/x-www-form-urlencoded';
 
 /** An OAuth error (RFC 6749 §5.2, RFC 7591 §3.2.2): a fixed code and a fixed description, never what the caller sent or a secret. */
 export function sendOAuthError(reply: FastifyReply, status: number, error: string, description: string): FastifyReply {
@@ -14,4 +17,10 @@ export function perAddressLimit(limit: number, windowMs: number, description: st
     reply.header('retry-after', String(Math.ceil(windowMs / 1000)));
     return sendOAuthError(reply, 429, 'slow_down', description);
   };
+}
+
+/** A body Fastify could not read (too large, another media type) is answered in RFC 6749's shape. */
+export async function unreadableForm(error: FastifyError, _req: FastifyRequest, reply: FastifyReply) {
+  if ((error.statusCode ?? 500) >= 500) throw error;
+  return sendOAuthError(reply, 400, 'invalid_request', INVALID_FORM);
 }

@@ -130,16 +130,20 @@ export async function renameConnection(db: Db, id: string, name: string): Promis
 /**
  * Ends a connection and everything derived from it: its access tokens are revoked, its refresh tokens and unused codes
  * expire now (the rows stay for the sweeper, so a reused one is still recognised). Idempotent; a malformed id is a no-op.
+ * Locks the connection row first; callers must not hold a token or code row of the connection when calling it.
  */
 export async function revokeConnection(q: Q, id: string, now: Date): Promise<void> {
   if (!isUuid(id)) return;
-  await q.update(oauthConnections).set({ revokedAt: now }).where(and(eq(oauthConnections.id, id), isNull(oauthConnections.revokedAt)));
-  await q.update(oauthAccessTokens).set({ revokedAt: now }).where(and(eq(oauthAccessTokens.connectionId, id), isNull(oauthAccessTokens.revokedAt)));
-  await q.update(oauthRefreshTokens).set({ expiresAt: now }).where(and(eq(oauthRefreshTokens.connectionId, id), gt(oauthRefreshTokens.expiresAt, now)));
-  await q
-    .update(oauthCodes)
-    .set({ expiresAt: now })
-    .where(and(eq(oauthCodes.connectionId, id), isNull(oauthCodes.usedAt), gt(oauthCodes.expiresAt, now)));
+  // One transaction (a savepoint inside the caller's): a connection is never half revoked.
+  await q.transaction(async (tx) => {
+    await tx.update(oauthConnections).set({ revokedAt: now }).where(and(eq(oauthConnections.id, id), isNull(oauthConnections.revokedAt)));
+    await tx.update(oauthAccessTokens).set({ revokedAt: now }).where(and(eq(oauthAccessTokens.connectionId, id), isNull(oauthAccessTokens.revokedAt)));
+    await tx.update(oauthRefreshTokens).set({ expiresAt: now }).where(and(eq(oauthRefreshTokens.connectionId, id), gt(oauthRefreshTokens.expiresAt, now)));
+    await tx
+      .update(oauthCodes)
+      .set({ expiresAt: now })
+      .where(and(eq(oauthCodes.connectionId, id), isNull(oauthCodes.usedAt), gt(oauthCodes.expiresAt, now)));
+  });
 }
 
 // ── codes and tokens ─────────────────────────────────────────────────────
@@ -161,12 +165,15 @@ export async function insertCode(
 export async function issueTokenPair(q: Q, connection: Pick<Connection, 'id' | 'resource'>, now: Date): Promise<IssuedPair> {
   const accessToken = newSecret();
   const refreshToken = newSecret();
-  await q.insert(oauthAccessTokens).values({
-    hash: hashSecret(accessToken), connectionId: connection.id, resource: connection.resource,
-    expiresAt: new Date(now.getTime() + ACCESS_TOKEN_TTL_SECONDS * 1000),
-  });
-  await q.insert(oauthRefreshTokens).values({
-    hash: hashSecret(refreshToken), connectionId: connection.id, expiresAt: new Date(now.getTime() + REFRESH_TOKEN_TTL_MS),
+  // One transaction (a savepoint inside the caller's): never an access token without its refresh token.
+  await q.transaction(async (tx) => {
+    await tx.insert(oauthAccessTokens).values({
+      hash: hashSecret(accessToken), connectionId: connection.id, resource: connection.resource,
+      expiresAt: new Date(now.getTime() + ACCESS_TOKEN_TTL_SECONDS * 1000),
+    });
+    await tx.insert(oauthRefreshTokens).values({
+      hash: hashSecret(refreshToken), connectionId: connection.id, expiresAt: new Date(now.getTime() + REFRESH_TOKEN_TTL_MS),
+    });
   });
   return { accessToken, refreshToken, expiresIn: ACCESS_TOKEN_TTL_SECONDS };
 }

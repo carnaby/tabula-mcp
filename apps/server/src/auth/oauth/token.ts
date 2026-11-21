@@ -1,12 +1,9 @@
-import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { Db } from '../../db/client.js';
 import { type FormBody, formOf, useFormBody } from '../form.js';
 import type { AuthSettings } from '../settings.js';
-import { perAddressLimit, sendOAuthError } from './errors.js';
+import { FORM_BODY_LIMIT, INVALID_FORM, perAddressLimit, sendOAuthError, unreadableForm } from './errors.js';
 import { exchangeCode, refreshTokens, type TokenError, type TokenOutcome } from './tokens.js';
-
-export const FORM_BODY_LIMIT = 8 * 1024;
-export const INVALID_FORM = 'send the parameters, each once, as application/x-www-form-urlencoded';
 
 /** Fixed texts: never anything the caller sent, never which check failed. */
 const DESCRIPTIONS: Record<TokenError, string> = {
@@ -15,12 +12,6 @@ const DESCRIPTIONS: Record<TokenError, string> = {
   invalid_scope: 'scope may only narrow the scope already granted',
   invalid_target: "resource must be this server's /mcp or /api, the one the grant was made for",
 };
-
-/** A body Fastify could not read (too large, another media type) is answered in RFC 6749's shape. */
-export async function unreadableForm(error: FastifyError, _req: FastifyRequest, reply: FastifyReply) {
-  if ((error.statusCode ?? 500) >= 500) throw error;
-  return sendOAuthError(reply, 400, 'invalid_request', INVALID_FORM);
-}
 
 /** Every listed parameter, present and non-empty, or undefined. */
 function required<K extends string>(form: FormBody, names: readonly K[]): Record<K, string> | undefined {

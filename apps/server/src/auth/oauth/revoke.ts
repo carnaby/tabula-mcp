@@ -1,8 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Db } from '../../db/client.js';
 import { formOf, useFormBody } from '../form.js';
-import { perAddressLimit, sendOAuthError } from './errors.js';
-import { FORM_BODY_LIMIT, INVALID_FORM, unreadableForm } from './token.js';
+import { FORM_BODY_LIMIT, INVALID_FORM, perAddressLimit, sendOAuthError, unreadableForm } from './errors.js';
 import { revokeToken } from './tokens.js';
 
 /** RFC 7009: the same 200 whatever the token was, so the endpoint never tells which strings were tokens. Throttled like /oauth/token. */

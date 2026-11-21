@@ -39,7 +39,7 @@ export function testConfig(overrides: Partial<Config> = {}): Config {
     fornax: { url: 'https://fornax.example.com', token: 'f'.repeat(32), priority: 'high' },
     port: 0,
     host: '127.0.0.1',
-    webDist: 'does-not-exist',
+    webDist: null,
     media: { dir: 'does-not-exist', maxBytes: 10 * 1024 * 1024, purgeAfterHours: 24, ffmpeg: 'ffmpeg', ffprobe: 'ffprobe' },
     ...overrides,
   };

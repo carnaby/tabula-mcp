@@ -192,7 +192,7 @@ function ActivityRow({ item: it, projects }: { item: ActivityItem; projects: Pro
         )}
         <div className="activity-row__meta">
           <ProjectTag id={it.project} projects={projects} none={null} />
-          <Author {...authorOf(it.by)} />
+          <Author {...authorOf(it.by, it.model)} />
           <time dateTime={it.at} title={fullDate(it.at)}>{time}</time>
         </div>
         {open && files.length > 0 && (

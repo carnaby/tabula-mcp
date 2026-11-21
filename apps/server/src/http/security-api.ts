@@ -1,4 +1,4 @@
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { type AuthContext, requirePerson } from '../auth/authenticate.js';
 import { clearedSessionCookie } from '../auth/cookie.js';
@@ -8,12 +8,19 @@ import { isLoopbackRedirect } from '../auth/oauth/crypto.js';
 import { findConnection, listLiveConnections, renameConnection, revokeConnection } from '../auth/oauth/store.js';
 import { countPasskeys, deletePasskey, listPasskeys, renamePasskey } from '../auth/passkeys/store.js';
 import { deleteSession, deviceLabel, isFresh, listSessions } from '../auth/sessions.js';
+import type { AuthSettings } from '../auth/settings.js';
 import { notFound } from '../domain/errors.js';
 import { parse } from './parse.js';
 
 const idParams = z.object({ id: z.uuid() });
 const nameBody = z.object({ name: z.string().max(200) });
 const iso = (d: Date | null) => d?.toISOString() ?? null;
+
+/**
+ * Sign the browser out: the cleared cookie replaces the renewed one that authenticating this request may already have
+ * set, so the browser gets one tabula_session cookie, not two. These routes set no other cookie.
+ */
+const clearSession = (reply: FastifyReply, auth: AuthSettings) => reply.removeHeader('set-cookie').header('Set-Cookie', clearedSessionCookie(auth));
 
 /** Sign-in state and security settings of the web UI. Only the person: an app's OAuth token gets 403. */
 export const securityRoutes: FastifyPluginAsync<{ authCtx: AuthContext }> = async (app, { authCtx }) => {
@@ -34,7 +41,7 @@ export const securityRoutes: FastifyPluginAsync<{ authCtx: AuthContext }> = asyn
     const p = req.principal!;
     if (p.kind === 'session') {
       await deleteSession(db, p.session.id);
-      if (auth) reply.header('Set-Cookie', clearedSessionCookie(auth));
+      if (auth) clearSession(reply, auth);
     }
     return reply.code(204).send();
   });
@@ -107,7 +114,7 @@ export const securityRoutes: FastifyPluginAsync<{ authCtx: AuthContext }> = asyn
     const { id } = parse(idParams, req.params);
     if (!(await deleteSession(db, id))) throw notFound(`session ${id} does not exist`);
     const p = req.principal!;
-    if (p.kind === 'session' && p.session.id === id && auth) reply.header('Set-Cookie', clearedSessionCookie(auth));
+    if (p.kind === 'session' && p.session.id === id && auth) clearSession(reply, auth);
     return reply.code(204).send();
   });
 };

@@ -10,7 +10,7 @@ import { RegistrationLinks, registerPasskeyRoutes } from '../auth/passkeys/route
 import { authSettings } from '../auth/settings.js';
 import type { Config } from '../config.js';
 import type { Db } from '../db/client.js';
-import { DomainError, loggableError } from '../domain/errors.js';
+import { DomainError, isNulRefusal, loggableError, NUL_REFUSED } from '../domain/errors.js';
 import { registerMcpRoutes } from '../mcp/routes.js';
 import { apiRoutes } from './api.js';
 import { registerCliRoutes } from './cli.js';
@@ -72,6 +72,10 @@ export async function buildApp(deps: {
       if (err.cause) app.log[err.status >= 500 ? 'error' : 'warn']({ err: loggableError(err.cause) }, err.message);
       return reply.code(err.status).send({ error: err.code, message: err.message });
     }
+    if (isNulRefusal(err)) {
+      app.log.warn({ err: loggableError(err) }, NUL_REFUSED);
+      return reply.code(400).send({ error: 'bad_request', message: NUL_REFUSED });
+    }
     const status = (err as { statusCode?: number }).statusCode ?? 500;
     if (status >= 500) {
       // Never the query values (transcripts, file contents) that database errors carry.
@@ -95,11 +99,10 @@ export async function buildApp(deps: {
   await app.register(apiRoutes, { prefix: '/api', db: deps.db, config: deps.config, store, mediaKey, authCtx });
   await app.register(inboxApiRoutes, { prefix: '/inbox-api/v1', db: deps.db });
 
-  const webRoot = resolve(deps.config.webDist);
-  if (existsSync(webRoot)) {
-    await app.register(fastifyStatic, { root: webRoot, index: 'index.html' });
-  } else {
-    app.log.warn({ webRoot }, 'web build not found; UI is not served');
+  if (deps.config.webDist !== null) {
+    const webRoot = resolve(deps.config.webDist);
+    if (existsSync(webRoot)) await app.register(fastifyStatic, { root: webRoot, index: 'index.html' });
+    else app.log.warn({ webRoot }, 'web build not found; UI is not served');
   }
 
   return app;

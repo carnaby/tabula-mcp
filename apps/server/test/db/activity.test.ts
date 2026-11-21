@@ -2,8 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { refOf } from '@tabula/shared/refs';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
+import { createClient, createConnection } from '../../src/auth/oauth/store.js';
 import {
-  notes, projectFileRevisions, projectFiles, reportAttachments, reports, reportTranscripts, thoughtRevisions, thoughts,
+  notes, oauthConnections, projectFileRevisions, projectFiles, reportAttachments, reports, reportTranscripts, thoughtRevisions, thoughts,
 } from '../../src/db/schema.js';
 import { type ActivityItem, type ActivityType, activityPage, collect, mergeActivity } from '../../src/domain/activity.js';
 import { seedProject, useTestDb } from '../helpers.js';
@@ -366,5 +367,62 @@ describe('activity', () => {
     await note({ title: 'Late', created: '2026-11-08T23:30:00Z' });
     expect((await page({ tz: 'UTC' })).days.map((d) => d.date)).toEqual(['2026-11-08']);
     expect((await page({ tz: 'Europe/Bratislava' })).days.map((d) => d.date)).toEqual(['2026-11-09']);
+  });
+});
+
+describe('who pushed', () => {
+  const connection = async (name: string, resource: 'api' | 'mcp') => {
+    const client = await createClient(db, { clientName: name, redirectUris: ['http://127.0.0.1/callback'] });
+    return createConnection(db, { clientId: client.id, name, resource, scope: resource, redirectUri: 'http://127.0.0.1/callback' });
+  };
+
+  it('calls a file write of an /api connection a push, also after it was revoked, and an MCP write an edit', async () => {
+    await seedProject(db, 'demo');
+    await connection('tabula-cli', 'api');
+    const old = await connection('old-cli', 'api');
+    await db.update(oauthConnections).set({ revokedAt: T('2026-11-09T07:00:00Z') }).where(eq(oauthConnections.id, old.id));
+    await connection('claude-code', 'mcp');
+    await file('demo', 'docs/a.md', 'tabula-cli', '2026-11-09T08:00:00Z');
+    await file('demo', 'docs/b.md', 'old-cli', '2026-11-09T08:10:00Z');
+    await file('demo', 'docs/c.md', 'claude-code', '2026-11-09T08:20:00Z');
+    await file('demo', 'docs/d.md', 'cli', '2026-11-09T08:30:00Z');
+    const byAuthor = Object.fromEntries((await items({ type: 'files' })).map((i) => [i.by, i.action]));
+    expect(byAuthor).toEqual({ 'tabula-cli': 'Pushed 1 file', 'old-cli': 'Pushed 1 file', 'claude-code': 'Edited 1 file', cli: 'Pushed 1 file' });
+  });
+
+  it("shows the model of a row's last change, and none when it named none", async () => {
+    await seedProject(db, 'demo');
+    const f = await file('demo', 'docs/a.md', 'claude-code', '2026-11-09T08:00:00Z');
+    // updated_at is set again: an update would move it to now, past the page.
+    await db.update(projectFiles).set({ updatedByModel: 'claude-opus-5-5', updatedAt: f.updatedAt }).where(eq(projectFiles.id, f.id));
+    const t = await thought({ by: 'claude-ai', created: '2026-11-09T09:00:00Z' });
+    await db.update(thoughts).set({ editedByModel: 'claude-sonnet-5', updatedAt: t.updatedAt }).where(eq(thoughts.id, t.id));
+    await thought({ title: 'Mine', by: 'human', created: '2026-11-09T09:30:00Z' });
+    const rows = await items();
+    expect(rows.find((i) => i.type === 'file')).toMatchObject({ model: 'claude-opus-5-5' });
+    expect(rows.find((i) => i.title === 'Idea')).toMatchObject({ model: 'claude-sonnet-5' });
+    expect(rows.find((i) => i.title === 'Mine')).not.toHaveProperty('model');
+  });
+
+  it("shows a report's model for its agent author only: not after a human edit, nor for an upload by another label", async () => {
+    await seedProject(db, 'demo');
+    const model = 'claude-opus-5-5';
+    await report({ title: 'Created', source: 'agent', editedBy: 'claude-code', editedByModel: model, created: '2026-11-09T08:00:00Z' });
+    await report({ title: 'Triaged', editedBy: 'claude-code', editedByModel: model, triage: 'cause', version: 2, created: '2026-11-09T06:00:00Z', updated: '2026-11-09T09:00:00Z' });
+    await report({
+      title: 'Edited', source: 'agent', editedBy: 'human', editedByModel: model, version: 2, created: '2026-11-09T06:00:00Z', updated: '2026-11-09T10:00:00Z',
+    });
+    const uploaded = await report({
+      title: 'Uploaded', editedBy: 'claude-code', editedByModel: model, version: 2, created: '2026-11-09T06:00:00Z', updated: '2026-11-09T11:00:00Z',
+    });
+    await recording(uploaded.id, 'tabula-recorder', '2026-11-09T11:00:00Z');
+    const rows = (await items({ type: 'reports' })).map((i) => ({ title: i.title, action: i.action, by: i.by, model: i.model }));
+    expect(rows).toEqual(expect.arrayContaining([
+      { title: 'Created', action: 'New report', by: 'claude-code', model },
+      { title: 'Triaged', action: 'Triage written', by: 'claude-code', model },
+      { title: 'Edited', action: 'Edited', by: 'human', model: undefined },
+      { title: 'Edited', action: 'New report', by: 'agent', model: undefined },
+      { title: 'Uploaded', action: 'Updated', by: 'tabula-recorder', model: undefined },
+    ]));
   });
 });

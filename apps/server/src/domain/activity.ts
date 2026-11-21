@@ -4,7 +4,7 @@ import { and, eq, gte, isNull, lt, or, type SQL, sql } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import type { Db } from '../db/client.js';
 import {
-  notes, projectFileRevisions, projectFiles, reportAttachments, reports, reportTranscripts, thoughtRevisions, thoughts,
+  notes, oauthConnections, projectFileRevisions, projectFiles, reportAttachments, reports, reportTranscripts, thoughtRevisions, thoughts,
 } from '../db/schema.js';
 import { badRequest } from './errors.js';
 
@@ -25,6 +25,8 @@ export const SERVER_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
 /** Who transcribes recordings. */
 export const WORKER = 'worker';
 const HUMAN = 'human';
+/** The label the CLI wrote under with the shared token (X-Tabula-Agent: cli). */
+const LEGACY_CLI = 'cli';
 
 /** One change before merging. */
 export type ActivityEvent = {
@@ -38,8 +40,10 @@ export type ActivityEvent = {
   at: Date;
   /** This change created the record (version 1, a new report or note). */
   create: boolean;
-  /** What a record's row says (file rows build their own). */
+  /** What a record's row says; file events: 'Pushed' or 'Edited'. */
   action: string;
+  /** The model the writer named, as stated; null or absent when none. */
+  model?: string | null;
   /** Files: the path. */
   path?: string;
   /** Transcripts: the report of the recording. */
@@ -59,6 +63,8 @@ export type ActivityItem = {
   by: string;
   /** The row's last change (ISO). */
   at: string;
+  /** The model the last change's writer named (as stated, not verified); absent when none. */
+  model?: string;
   /** A batch of two or more files: how many. */
   count?: number;
   /** One file: its path. */
@@ -187,13 +193,14 @@ function fileRow(batch: ActivityEvent[]): ActivityItem {
   const n = files.length;
   const row: ActivityItem = {
     type: 'file',
-    action: `${last.by === 'cli' ? 'Pushed' : 'Edited'} ${n} ${n === 1 ? 'file' : 'files'}`,
+    action: `${last.action} ${n} ${n === 1 ? 'file' : 'files'}`,
     ref: refOf(newest.recordId),
     id: newest.recordId,
     title: n === 1 ? newest.path! : `${newest.path} and ${n - 1} more`,
     project: newest.project,
     by: last.by,
     at: last.at.toISOString(),
+    ...(last.model ? { model: last.model } : {}),
   };
   if (n === 1) return { ...row, path: newest.path };
   return { ...row, count: n, children: files.map((f) => ({ id: f.recordId, path: f.path!, ref: refOf(f.recordId) })) };
@@ -220,7 +227,9 @@ function fileRows(events: ActivityEvent[]): ActivityItem[] {
 function recordRow(group: ActivityEvent[]): ActivityItem {
   const last = group[group.length - 1]!;
   const action = (group.find((e) => e.create) ?? last).action;
-  const base = { action, title: last.title, project: last.project, by: last.by, at: last.at.toISOString() };
+  const base = {
+    action, title: last.title, project: last.project, by: last.by, at: last.at.toISOString(), ...(last.model ? { model: last.model } : {}),
+  };
   if (last.kind === 'transcript') {
     return { type: 'report', ...base, ref: refOf(last.recordId), id: last.reportId!, attachment_id: last.recordId };
   }
@@ -273,12 +282,12 @@ export async function collect(db: Db, from: Date, to: Date, type: ActivityType |
   const want = (t: ActivityType) => !type || type === t;
   const inWindow = (c: AnyPgColumn) => and(gte(c, from), lt(c, to));
   const none: Promise<never[]> = Promise.resolve([]);
-  const [files, fileRevisions, reportRows, transcripts, thoughtRows, thoughtVersions, noteRows] = await Promise.all([
+  const [files, fileRevisions, reportRows, transcripts, thoughtRows, thoughtVersions, noteRows, apiConnections] = await Promise.all([
     want('files')
       ? db
           .select({
             id: projectFiles.id, project: projectFiles.projectId, path: projectFiles.path, by: projectFiles.updatedBy, at: projectFiles.updatedAt,
-            version: projectFiles.version,
+            version: projectFiles.version, model: projectFiles.updatedByModel,
           })
           .from(projectFiles)
           .where(and(isNull(projectFiles.deletedAt), inWindow(projectFiles.updatedAt)))
@@ -287,7 +296,7 @@ export async function collect(db: Db, from: Date, to: Date, type: ActivityType |
       ? db
           .select({
             id: projectFiles.id, project: projectFiles.projectId, path: projectFiles.path, by: projectFileRevisions.updatedBy,
-            at: projectFileRevisions.createdAt, version: projectFileRevisions.version,
+            at: projectFileRevisions.createdAt, version: projectFileRevisions.version, model: projectFileRevisions.updatedByModel,
           })
           .from(projectFileRevisions)
           .innerJoin(projectFiles, eq(projectFiles.id, projectFileRevisions.fileId))
@@ -297,8 +306,8 @@ export async function collect(db: Db, from: Date, to: Date, type: ActivityType |
       ? db
           .select({
             id: reports.id, projectId: reports.projectId, title: reports.title, status: reports.status, source: reports.source,
-            editedBy: reports.editedBy, version: reports.version, createdAt: reports.createdAt, updatedAt: reports.updatedAt,
-            closedAt: reports.closedAt,
+            editedBy: reports.editedBy, editedByModel: reports.editedByModel, version: reports.version, createdAt: reports.createdAt,
+            updatedAt: reports.updatedAt, closedAt: reports.closedAt,
             hasTriage: sql<boolean>`${reports.triage} <> ''`,
             // An upload sets updated_at (not edited_by): its author made that change. The outer columns are written
             // with their table: drizzle leaves a one-table select list unqualified, and a bare "id" would be a.id here.
@@ -322,13 +331,18 @@ export async function collect(db: Db, from: Date, to: Date, type: ActivityType |
       : none,
     want('thoughts')
       ? db
-          .select({ id: thoughts.id, title: thoughts.title, by: thoughts.editedBy, at: thoughts.updatedAt, version: thoughts.version })
+          .select({
+            id: thoughts.id, title: thoughts.title, by: thoughts.editedBy, at: thoughts.updatedAt, version: thoughts.version, model: thoughts.editedByModel,
+          })
           .from(thoughts)
           .where(and(eq(thoughts.archived, false), inWindow(thoughts.updatedAt)))
       : none,
     want('thoughts')
       ? db
-          .select({ id: thoughts.id, title: thoughts.title, by: thoughtRevisions.editedBy, at: thoughtRevisions.createdAt, version: thoughtRevisions.version })
+          .select({
+            id: thoughts.id, title: thoughts.title, by: thoughtRevisions.editedBy, at: thoughtRevisions.createdAt, version: thoughtRevisions.version,
+            model: thoughtRevisions.editedByModel,
+          })
           .from(thoughtRevisions)
           .innerJoin(thoughts, eq(thoughts.id, thoughtRevisions.thoughtId))
           .where(and(eq(thoughts.archived, false), inWindow(thoughtRevisions.createdAt)))
@@ -339,22 +353,34 @@ export async function collect(db: Db, from: Date, to: Date, type: ActivityType |
           .from(notes)
           .where(or(inWindow(notes.createdAt), inWindow(notes.updatedAt)))
       : none,
+    want('files')
+      ? db.selectDistinct({ name: oauthConnections.name }).from(oauthConnections).where(eq(oauthConnections.resource, 'api'))
+      : none,
   ]);
 
   const inside = (d: Date) => d.getTime() >= from.getTime() && d.getTime() < to.getTime();
   const events: ActivityEvent[] = [];
+  // A file written over /api is a push: by the shared token's "cli" label or by an /api connection (revoked ones too,
+  // so older rows keep their verb). A connection renamed later shows its earlier rows, written under the old name, as "Edited".
+  const pushers = new Set([LEGACY_CLI, ...apiConnections.map((c) => c.name)]);
   for (const f of [...files, ...fileRevisions]) {
-    events.push({ kind: 'file', recordId: f.id, title: f.path, path: f.path, project: f.project, by: f.by, at: f.at, create: f.version === 1, action: '' });
+    events.push({
+      kind: 'file', recordId: f.id, title: f.path, path: f.path, project: f.project, by: f.by, at: f.at, create: f.version === 1,
+      action: pushers.has(f.by) ? 'Pushed' : 'Edited', model: f.model,
+    });
   }
   for (const r of reportRows) {
     if (inside(r.createdAt)) {
       // The creator's label survives only while nobody has changed the report.
       const by = r.source === 'human' ? HUMAN : r.version === 1 ? r.editedBy : 'agent';
-      events.push({ kind: 'report', recordId: r.id, title: r.title, project: r.projectId, by, at: r.createdAt, create: true, action: 'New report' });
+      const model = r.source !== 'human' && r.version === 1 ? r.editedByModel : null;
+      events.push({ kind: 'report', recordId: r.id, title: r.title, project: r.projectId, by, at: r.createdAt, create: true, action: 'New report', model });
     }
     if (r.updatedAt.getTime() > r.createdAt.getTime() && inside(r.updatedAt)) {
       const { action, by } = reportUpdate(r);
-      events.push({ kind: 'report', recordId: r.id, title: r.title, project: r.projectId, by, at: r.updatedAt, create: false, action });
+      // The model is the last editor's: none for a human change or an upload by someone else.
+      const model = by === r.editedBy && by !== HUMAN ? r.editedByModel : null;
+      events.push({ kind: 'report', recordId: r.id, title: r.title, project: r.projectId, by, at: r.updatedAt, create: false, action, model });
     }
   }
   for (const t of transcripts) {
@@ -365,7 +391,10 @@ export async function collect(db: Db, from: Date, to: Date, type: ActivityType |
   }
   for (const t of [...thoughtRows, ...thoughtVersions]) {
     const first = t.version === 1;
-    events.push({ kind: 'thought', recordId: t.id, title: t.title, project: null, by: t.by, at: t.at, create: first, action: first ? 'Saved thought' : 'Edited thought' });
+    events.push({
+      kind: 'thought', recordId: t.id, title: t.title, project: null, by: t.by, at: t.at, create: first, action: first ? 'Saved thought' : 'Edited thought',
+      model: t.model,
+    });
   }
   // Notes have no author column: only the UI writes them.
   for (const n of noteRows) {

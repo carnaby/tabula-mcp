@@ -114,6 +114,14 @@ describe('auth pages', () => {
     expect(reg!.kind).toBe('add');
   });
 
+  it('send the session cookie again when the Add passkey page renewed the session', async () => {
+    const { session, token } = await createSession(db, { userAgent: 'test', now: new Date() });
+    await db.update(uiSessions).set({ lastUsedAt: new Date(Date.now() - 2 * 3600_000) }).where(eq(uiSessions.id, session.id));
+    const res = await get('/passkey/add', { cookie: `tabula_session=${token}` });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['set-cookie']).toBe(`tabula_session=${token}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Strict`);
+  });
+
   it('let the old token add the first passkey through a form from Tabula itself', async () => {
     const form = (token: string, headers: Record<string, string> = { origin: TEST_PUBLIC_URL }) =>
       app.inject({ method: 'POST', url: '/passkey/add', headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers }, payload: new URLSearchParams({ legacy_token: token }).toString() });

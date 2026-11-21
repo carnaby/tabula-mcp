@@ -4,6 +4,7 @@ import type { Db } from '../db/client.js';
 import { notFound } from '../domain/errors.js';
 import { authenticateMessageToken, type InboxToken } from '../domain/message-tokens.js';
 import { getMessage, inboxFeed, listMessageEvents, messageDetailView, messageSummaryView, updateMessage } from '../domain/messages.js';
+import { bearerToken } from './auth.js';
 import { messagePatchBody, toMessagePatch } from './message-body.js';
 import { parse } from './parse.js';
 
@@ -30,8 +31,8 @@ export const inboxApiRoutes: FastifyPluginAsync<{ db: Db }> = async (app, { db }
 
   // Before the body is read: only a valid token gets that far.
   app.addHook('onRequest', async (req, reply) => {
-    const m = /^Bearer\s+(.+)$/i.exec(req.headers.authorization ?? '');
-    const token = m ? await authenticateMessageToken(db, m[1]!.trim()) : undefined;
+    const raw = bearerToken(req);
+    const token = raw ? await authenticateMessageToken(db, raw) : undefined;
     if (!token) return reply.code(401).header('WWW-Authenticate', 'Bearer').send({ error: 'unauthorized' });
     tokens.set(req, token);
   });

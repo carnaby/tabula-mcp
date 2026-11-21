@@ -8,7 +8,7 @@ import {
 } from '../agent/operations.js';
 import { agentGetMessage, agentListMessages, agentSendMessage, agentUpdateMessage } from '../agent/messages.js';
 import { REPORT_STATUSES } from '../domain/reports.js';
-import { badRequest, DomainError, loggableError } from '../domain/errors.js';
+import { badRequest, DomainError, isNulRefusal, loggableError, NUL_REFUSED } from '../domain/errors.js';
 import { MESSAGE_STATUSES, MESSAGE_TYPES, UPDATE_STATUSES, WAITING_ON } from '../domain/messages.js';
 import { createProject } from '../domain/projects.js';
 import { MEMORY_KINDS, normalizeModel, validateProjectSlug } from '../domain/validation.js';
@@ -29,7 +29,7 @@ const modelParam = z
   .describe('The exact identifier of the model generating this call, e.g. "claude-opus-5-5"; "unknown" if you do not know it. Stored with what you write, as stated by you.');
 
 /** Logger is optional only for places where the server is built without a request (e.g. tests). */
-export type McpLogger = { error(obj: unknown): void };
+export type McpLogger = { error(obj: unknown): void; warn(obj: unknown): void };
 export type McpContext = AgentContext & { log?: McpLogger };
 
 /** Like runTool, for tools that answer with an image (and a line of JSON about it). */
@@ -83,6 +83,10 @@ async function runTool(log: McpLogger | undefined, fn: () => Promise<unknown>) {
     if (e instanceof DomainError) {
       if (e.cause) log?.error({ err: loggableError(e.cause), msg: e.message });
       return { content: [{ type: 'text' as const, text: `${e.status}: ${e.message}` }], isError: true };
+    }
+    if (isNulRefusal(e)) {
+      log?.warn({ err: loggableError(e), msg: NUL_REFUSED });
+      return { content: [{ type: 'text' as const, text: `400: ${NUL_REFUSED}` }], isError: true };
     }
     log?.error(loggableError(e));
     return { content: [{ type: 'text' as const, text: '500: internal error in Tabula; retry later' }], isError: true };

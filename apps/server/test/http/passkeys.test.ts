@@ -90,14 +90,14 @@ describe('passkey registration', () => {
 
   it('stops an address after ten unknown links for a minute; a valid link does not count', async () => {
     const token = await createRegistration(db, 'link', new Date());
-    const from = { 'x-forwarded-for': '203.0.113.60' };
-    for (let i = 0; i < 12; i++) expect((await post('/auth/passkey/register/options', { token }, from)).statusCode).toBe(200);
-    for (let i = 0; i < 10; i++) expect((await post('/auth/passkey/register/options', { token: `unknown-${i}` }, from)).statusCode).toBe(400);
-    const limited = await post('/auth/passkey/register/options', { token }, from);
+    const address = { 'x-forwarded-for': '203.0.113.60' };
+    for (let i = 0; i < 12; i++) expect((await post('/auth/passkey/register/options', { token }, address)).statusCode).toBe(200);
+    for (let i = 0; i < 10; i++) expect((await post('/auth/passkey/register/options', { token: `unknown-${i}` }, address)).statusCode).toBe(400);
+    const limited = await post('/auth/passkey/register/options', { token }, address);
     expect(limited.statusCode).toBe(429);
     expect(limited.headers['retry-after']).toBe('60');
     const response = { id: 'x', rawId: 'x', type: 'public-key', response: {} };
-    expect((await post('/auth/passkey/register/verify', { token, name: 'x', response }, from)).statusCode).toBe(429);
+    expect((await post('/auth/passkey/register/verify', { token, name: 'x', response }, address)).statusCode).toBe(429);
     expect((await post('/auth/passkey/register/options', { token }, { 'x-forwarded-for': '203.0.113.61' })).statusCode).toBe(200);
   });
 });
@@ -147,12 +147,29 @@ describe('passkey sign-in', () => {
     expect((await me({ cookie })).json()).toMatchObject({ fresh: true });
   });
 
+  it('sends the cookie again when a sign-in renewed the open session', async () => {
+    const { key, cookie } = await register();
+    await db.update(uiSessions).set({ lastUsedAt: new Date(Date.now() - 2 * 3600_000) });
+    const res = await signIn(key, { cookie, ...from(7) });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['set-cookie']).toBe(`${cookie}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Strict`);
+  });
+
   it('stops an address after ten failures for a minute', async () => {
     const stranger = new SoftAuthenticator(TEST_PUBLIC_URL);
-    const from = { 'x-forwarded-for': '203.0.113.50' };
-    for (let i = 0; i < 10; i++) expect((await signIn(stranger, from)).statusCode).toBe(400);
-    expect((await signIn(stranger, from)).statusCode).toBe(429);
+    const address = { 'x-forwarded-for': '203.0.113.50' };
+    for (let i = 0; i < 10; i++) expect((await signIn(stranger, address)).statusCode).toBe(400);
+    expect((await signIn(stranger, address)).statusCode).toBe(429);
     expect((await signIn(stranger, { 'x-forwarded-for': '203.0.113.51' })).statusCode).toBe(400);
+  });
+
+  it('gives an address 30 sign-in challenges a minute; another address is not affected', async () => {
+    for (let i = 0; i < 30; i++) expect((await post('/auth/passkey/login/options', {}, from(90))).statusCode).toBe(200);
+    const refused = await post('/auth/passkey/login/options', {}, from(90));
+    expect(refused.statusCode).toBe(429);
+    expect(refused.headers['retry-after']).toBe('60');
+    expect(refused.json()).toMatchObject({ error: 'too_many_requests' });
+    expect((await post('/auth/passkey/login/options', {}, from(91))).statusCode).toBe(200);
   });
 });
 
@@ -164,6 +181,16 @@ describe('/api/auth', () => {
     expect(res.headers['set-cookie']).toBe('tabula_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict');
     expect(await db.select().from(uiSessions)).toHaveLength(0);
     expect((await me({ cookie })).statusCode).toBe(401);
+  });
+
+  it('signs out a session due for renewal: the one cookie sent clears it', async () => {
+    const { cookie } = await register();
+    await db.update(uiSessions).set({ lastUsedAt: new Date(Date.now() - 2 * 3600_000) });
+    const res = await app.inject({ method: 'POST', url: '/api/auth/logout', headers: { cookie, origin: TEST_PUBLIC_URL } });
+    expect(res.statusCode).toBe(204);
+    const sent = [res.headers['set-cookie'] ?? []].flat();
+    expect(sent.filter((c) => c.startsWith('tabula_session='))).toEqual(['tabula_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict']);
+    expect(await db.select().from(uiSessions)).toHaveLength(0);
   });
 
   it('answers the old token, and refuses an app connection', async () => {

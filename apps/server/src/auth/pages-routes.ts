@@ -42,7 +42,7 @@ export async function registerAuthPages(app: FastifyInstance, ctx: AuthContext &
   // Another passkey for a signed-in owner: a fresh passkey check first (spec §4.3), then a single-use permission.
   app.get('/passkey/add', async (req, reply) => {
     const now = new Date();
-    const found = await sessionFromCookie(ctx, req, now);
+    const found = await sessionFromCookie(ctx, req, reply, now);
     if (!found || !isFresh(found.session, now)) {
       return reply.header('cache-control', 'no-store').redirect(`/signin?next=${encodeURIComponent('/passkey/add')}&reason=fresh`, 302);
     }

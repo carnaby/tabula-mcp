@@ -20,13 +20,17 @@ function authorBase(source: Source, label?: string | null): { kind: AuthorKind; 
   return label ? { kind: 'agent', name: label, title: `Written by agent ${label}` } : { kind: 'agent', name: 'Agent', title: 'Written by an agent' };
 }
 
+/** The model an agent named, or null: "unknown" (stored when a client named none) is not worth showing. */
+export const statedModel = (model?: string | null): string | null => (model && model !== 'unknown' ? model : null);
+
 /**
  * Who wrote it. `label` is the app connection (verified by its token); `model` is what the agent said it is, shown next
  * to the name and marked as stated by the model (spec §5).
  */
 export function authorInfo(source: Source, label?: string | null, model?: string | null): { kind: AuthorKind; name: string; title: string } {
   const base = authorBase(source, label);
-  return model ? { ...base, title: `${base.title}; model ${model} (as stated by the model)` } : base;
+  const m = statedModel(model);
+  return m ? { ...base, title: `${base.title}; model ${m} (as stated by the model)` } : base;
 }
 
 /** Records that keep only who edited them last ("human" or the agent's label) as an author. */
@@ -44,6 +48,7 @@ export const authorIcon = (kind: AuthorKind): IconName => (kind === 'you' ? 'use
 export function Author({ source, label, model, compact }: { source: Source; label?: string | null; model?: string | null; compact?: boolean }) {
   const a = authorInfo(source, label, model);
   const icon = authorIcon(a.kind);
+  const shown = statedModel(model);
   return (
     <span className="t-author" title={a.title}>
       <span className={cx('t-avatar', AUTHOR_CLASS[a.kind])} {...(compact ? { role: 'img', 'aria-label': a.title } : {})}>
@@ -52,7 +57,7 @@ export function Author({ source, label, model, compact }: { source: Source; labe
       {!compact && (
         <span className="t-truncate">
           {a.name}
-          {model && <span className="t-subtle" title="As stated by the model"> · {model}</span>}
+          {shown && <span className="t-subtle" title="As stated by the model"> · {shown}</span>}
         </span>
       )}
     </span>
@@ -90,7 +95,7 @@ export function AuthorMeta({
           <div className="author-meta__info">
             <span className="t-subtle" id={labelId}>{heading}{a ? ' by' : ''}</span>
             {author && <Author source={author.source} label={author.label} model={author.model} />}
-            {author?.model && <span className="t-subtle">Model as stated by the model; not verified.</span>}
+            {statedModel(author?.model) && <span className="t-subtle">Model as stated by the model; not verified.</span>}
             <time dateTime={iso}>{fullDate(iso)}</time>
             {details}
           </div>

@@ -23,4 +23,15 @@ describe('static UI', () => {
     expect((await app.inject({ method: 'GET', url: '/healthz' })).statusCode).toBe(200);
     await app.close();
   });
+
+  it('warns about a missing web build, and not when the UI is off on purpose', async () => {
+    const logsOf = async (webDist: string | null) => {
+      const logs: string[] = [];
+      const app = await buildApp({ config: testConfig({ webDist }), db, logStream: { write: (m) => void logs.push(m) } });
+      await app.close();
+      return logs.join('');
+    };
+    expect(await logsOf('does-not-exist')).toContain('web build not found');
+    expect(await logsOf(null)).not.toContain('web build not found');
+  });
 });

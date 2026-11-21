@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm';
+import { eq, isNotNull, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { oauthAccessTokens, oauthConnections, oauthRefreshTokens } from '../../src/db/schema.js';
@@ -219,6 +219,35 @@ describe('refresh_token', () => {
     expect((await callMcp(second.access_token)).statusCode).toBe(401);
   });
 
+  it('a replay while a revocation ends the same connection is refused, never a server error', async () => {
+    const flow = await obtainCode(app, db);
+    const first = (await exchange(flow)).json();
+    expect((await refresh(first.refresh_token, flow.clientId)).statusCode).toBe(200);
+    await db.update(oauthRefreshTokens).set({ replacedAt: new Date(Date.now() - 11_000) }).where(isNotNull(oauthRefreshTokens.replacedAt));
+    const [connection] = await live();
+    let replay: ReturnType<typeof refresh> | undefined;
+    await db.transaction(async (tx) => {
+      // A revocation's first step, as revokeConnection takes it: the connection row.
+      await tx.update(oauthConnections).set({ revokedAt: new Date() }).where(eq(oauthConnections.id, connection!.id));
+      replay = refresh(first.refresh_token, flow.clientId);
+      const deadline = Date.now() + 5000;
+      while ((await lockWaits()) < 1) {
+        if (Date.now() > deadline) throw new Error('the replay never waited for the connection row');
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      // Its next step: the connection's refresh tokens, one of which the replay holds if it revokes inside its grant.
+      await tx.update(oauthRefreshTokens).set({ expiresAt: new Date() }).where(eq(oauthRefreshTokens.connectionId, connection!.id));
+    });
+    const res = await replay!;
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe('invalid_grant');
+    expect(await live()).toHaveLength(0);
+    // The test's transaction left the access tokens alone: only the replay's own revocation can have ended them.
+    const tokens = await db.select().from(oauthAccessTokens).where(eq(oauthAccessTokens.connectionId, connection!.id));
+    expect(tokens).toHaveLength(2);
+    expect(tokens.filter((t) => t.revokedAt === null)).toEqual([]);
+  });
+
   it('may narrow the scope, never widen it, and only for its own resource and client', async () => {
     const flow = await obtainCode(app, db);
     const first = (await exchange(flow)).json();
@@ -274,7 +303,9 @@ describe('limits and secrets', () => {
   it('allows 30 token requests a minute per address', async () => {
     const from = { 'x-forwarded-for': '203.0.113.80' };
     for (let i = 0; i < 30; i++) expect((await form('/oauth/token', { grant_type: 'nope' }, from)).statusCode).toBe(400);
-    expect((await form('/oauth/token', { grant_type: 'nope' }, from)).json().error).toBe('slow_down');
+    const res = await form('/oauth/token', { grant_type: 'nope' }, from);
+    expect(res.json().error).toBe('slow_down');
+    expect(res.headers['retry-after']).toBe('60');
   });
 
   it('never stores or logs a code, verifier or token', async () => {

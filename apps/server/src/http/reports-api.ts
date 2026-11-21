@@ -25,7 +25,7 @@ const UI_LINK_TTL = 12 * 3600;
 const segmentParams = z.object({ id: z.uuid(), index: z.string().regex(/^[0-9]+$/).transform(Number).pipe(z.number().int().max(Number.MAX_SAFE_INTEGER)) });
 const idParams = z.object({ id: z.uuid() });
 
-export const attachmentView = (a: Attachment, token: string, ttl = UI_LINK_TTL) => ({
+export const attachmentView = (a: Attachment, key: string, ttl = UI_LINK_TTL) => ({
   id: a.id,
   reportId: a.reportId,
   kind: a.kind,
@@ -40,14 +40,14 @@ export const attachmentView = (a: Attachment, token: string, ttl = UI_LINK_TTL) 
   createdByModel: a.createdByModel,
   createdAt: a.createdAt,
   purgedAt: a.purgedAt,
-  url: a.purgedAt ? null : signMediaPath(token, a.id, ttl),
+  url: a.purgedAt ? null : signMediaPath(key, a.id, ttl),
 });
 
 /** Attachments as the UI gets them: video and audio carry their transcript or its state; photos and frames null. */
-async function withTranscripts(db: Db, list: Attachment[], token: string) {
+async function withTranscripts(db: Db, list: Attachment[], key: string) {
   const states = await transcriptStates(db, list.filter(isRecording).map((a) => a.id));
   return list.map((a) => ({
-    ...attachmentView(a, token),
+    ...attachmentView(a, key),
     transcript: isRecording(a) ? (states.get(a.id) ?? { status: 'none' as const }) : null,
   }));
 }
@@ -55,7 +55,6 @@ async function withTranscripts(db: Db, list: Attachment[], token: string) {
 export type MediaDeps = { db: Db; config: Config; store: MediaStore; mediaKey: string };
 
 export const reportRoutes: FastifyPluginAsync<MediaDeps> = async (app, { db, config, store, mediaKey }) => {
-  const token = mediaKey;
   const paths = config.media;
 
   app.get('/reports', (req) => {
@@ -87,7 +86,7 @@ export const reportRoutes: FastifyPluginAsync<MediaDeps> = async (app, { db, con
     const { id } = parse(idParams, req.params);
     const report = await requireReport(db, id);
     // purgeAfterHours: the UI warns before Keep media is turned off on a report whose grace period is over.
-    return { ...report, attachments: await withTranscripts(db, await listAttachments(db, id), token), purgeAfterHours: config.media.purgeAfterHours };
+    return { ...report, attachments: await withTranscripts(db, await listAttachments(db, id), mediaKey), purgeAfterHours: config.media.purgeAfterHours };
   });
 
   app.patch('/reports/:id', (req) => {
@@ -121,7 +120,7 @@ export const reportRoutes: FastifyPluginAsync<MediaDeps> = async (app, { db, con
   app.patch('/attachments/:id', async (req) => {
     const { id } = parse(idParams, req.params);
     const { note } = parse(z.object({ note: z.string().nullable() }), req.body);
-    return attachmentView(await setFrameNote(db, id, note), token);
+    return attachmentView(await setFrameNote(db, id, note), mediaKey);
   });
 
   /** A still from a video at a moment (the UI's "save frame" while the video is paused). */
@@ -129,7 +128,7 @@ export const reportRoutes: FastifyPluginAsync<MediaDeps> = async (app, { db, con
     const { id } = parse(idParams, req.params);
     const { at } = parse(z.object({ at: z.union([z.number(), z.string()]) }), req.body);
     const { frame } = await frameAt(db, store, paths, id, parseTimestamp(at), apiEditor(req));
-    return attachmentView(frame, token);
+    return attachmentView(frame, mediaKey);
   });
 
   /** "Try again" after a failed transcription, or "Transcribe" for a recording that was never queued. */
@@ -229,7 +228,7 @@ export const reportRoutes: FastifyPluginAsync<MediaDeps> = async (app, { db, con
         throw e;
       }
       const a = await addAttachment(db, store, paths, id, file, fileName, apiEditor(req));
-      const [view] = await withTranscripts(db, [a], token);
+      const [view] = await withTranscripts(db, [a], mediaKey);
       return reply.code(201).send(view);
     });
   });

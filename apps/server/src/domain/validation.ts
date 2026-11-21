@@ -68,11 +68,13 @@ export function normalizeTags(tags?: readonly string[]): string[] {
 
 const LABEL = /^[a-z0-9._-]{1,40}$/;
 
+/** An agent label, which a connection name becomes: never "human", which the UI alone writes as. */
+export const isAgentLabel = (v: string): boolean => LABEL.test(v) && v !== 'human';
+
 export function sanitizeAgentLabel(raw: unknown): string {
   if (typeof raw !== 'string') return 'unknown';
   const v = raw.trim().toLowerCase();
-  // An agent must never pose as the human: that label is reserved for the UI.
-  return LABEL.test(v) && v !== 'human' ? v : 'unknown';
+  return isAgentLabel(v) ? v : 'unknown';
 }
 
 const MODEL = /^[a-z0-9._-]{1,60}$/;

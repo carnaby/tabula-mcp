@@ -129,13 +129,13 @@ export function makeRepo(dir: string, tabulaJson: object, files: Record<string, 
  */
 export async function startProxy(
   target: string,
-  behave: (url: string) => number | 'drop' | { status: number },
+  behave: (url: string) => number | 'drop' | { status: number; body?: string },
 ): Promise<{ url: string; close: () => void }> {
   const proxy = createServer((req, res) => {
     void (async () => {
       const d = behave(req.url ?? '');
       if (d === 'drop') return void res.destroy();
-      if (typeof d === 'object') return void res.writeHead(d.status, { 'content-type': 'application/json' }).end('{}');
+      if (typeof d === 'object') return void res.writeHead(d.status, { 'content-type': 'application/json' }).end(d.body ?? '{}');
       if (d > 0) await new Promise((r) => setTimeout(r, d));
       try {
         const chunks: Buffer[] = [];

@@ -396,7 +396,8 @@ function writeAtomic(repo, path, bytes) {
 
 /**
  * fetch with the token and a timeout; network failures become a CliError. In hook mode every call ends by the deadline.
- * Errors are tagged for the pull loop: `unreachable` (no answer; `timedOut` when the timeout fired) and `rejected` (401).
+ * Errors are tagged for the pull loop: `unreachable` (no answer, or a renewal the server could not serve: 5xx, 429;
+ * `timedOut` when the timeout fired) and `rejected` (401).
  */
 export function makeApi(conn, deadline) {
   const timeLeft = () => (deadline ? Math.max(1, deadline - Date.now()) : 60000);
@@ -440,12 +441,19 @@ const TAKEOVER_POLL_MS = 100;
  */
 const RENEW_FLOOR_MS = 2000;
 
-const isCurrent = (o) => typeof o.access_token === 'string' && o.access_token !== '' && Number(o.expires_at) - REFRESH_MARGIN_MS > Date.now();
+const hasAccessToken = (o) => typeof o.access_token === 'string' && o.access_token !== '';
+const isCurrent = (o) => hasAccessToken(o) && Number(o.expires_at) - REFRESH_MARGIN_MS > Date.now();
 
 /** The bearer for /api: the shared token as is, or this login's OAuth access token, renewed when it is about to expire. */
 async function bearerFor(conn, ms, deadline) {
   if (conn.token) return conn.token;
   if (isCurrent(conn.oauth)) return conn.oauth.access_token;
+  // Too little time to rotate safely (RENEW_FLOOR_MS), but the token still works past this command: use it, the next
+  // command renews with its full time.
+  const o = conn.oauth;
+  if (ms < RENEW_FLOOR_MS && Number(o.expires_at) > Date.now() + ms && hasAccessToken(o)) {
+    return o.access_token;
+  }
   // One renewal at a time in this process; requests that need it meanwhile get its token.
   conn.renewing ??= renewLogin(conn, ms, deadline).finally(() => {
     conn.renewing = undefined;
@@ -492,8 +500,9 @@ function savedPairOtherThan(conn, refreshToken) {
 /**
  * One refresh_token grant. true: the new pair is in conn.oauth and saved before anything else happens (the old refresh
  * token is spent). false: the server refused the refresh token. Any other failure throws. With less than
- * RENEW_FLOOR_MS left (the SessionStart hook near its deadline) nothing is sent: the hook stops as if timed out and
- * the next command renews with its full time.
+ * RENEW_FLOOR_MS left (the SessionStart hook near its deadline) nothing is sent; bearerFor uses an access token that
+ * outlives the deadline before it gets here, so the hook stops as if timed out only when the access token does not,
+ * and the next command renews with its full time.
  */
 async function rotateRefreshToken(conn, ms, deadline) {
   if (ms < RENEW_FLOOR_MS) {
@@ -502,7 +511,9 @@ async function rotateRefreshToken(conn, ms, deadline) {
     });
   }
   const o = conn.oauth;
-  const res = await fetch(`${conn.url}/oauth/token`, {
+  // The endpoint the server advertised at login; logins saved before it was kept use the server's own path.
+  const endpoint = isHttpUrl(o.token_endpoint) ? o.token_endpoint : `${conn.url}/oauth/token`;
+  const res = await fetch(endpoint, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: o.refresh_token, client_id: o.client_id, resource: `${conn.url}/api` }),
@@ -516,6 +527,10 @@ async function rotateRefreshToken(conn, ms, deadline) {
   }
   if (data.error === 'invalid_grant') return false;
   if (['invalid_client', 'invalid_target', 'invalid_scope'].includes(data.error)) throw loginEnded();
+  // Overloaded or throttled (5xx, 429): the login itself is fine; the next command tries again.
+  if (res.status >= 500 || res.status === 429) {
+    throw Object.assign(new CliError(`Tabula could not renew the login right now (HTTP ${res.status}); try again in a minute`), { unreachable: true });
+  }
   throw Object.assign(new CliError(`renewing the Tabula login: HTTP ${res.status}`), { rejected: true });
 }
 
@@ -940,7 +955,11 @@ function promptHidden(question) {
 }
 
 const CALLBACK_PATH = '/callback';
-const LOGIN_TIMEOUT_MS = 10 * 60000;
+/**
+ * How long a login waits for the browser. TABULA_LOGIN_TIMEOUT_MS exists for the tests and can only shorten it; a
+ * value that is not a positive number is ignored.
+ */
+const LOGIN_TIMEOUT_MS = Math.min(10 * 60000, Math.max(0, Number(process.env.TABULA_LOGIN_TIMEOUT_MS)) || 10 * 60000);
 
 async function login(args, flags) {
   const url = (args[0] ?? '').replace(/\/+$/, '');
@@ -999,6 +1018,8 @@ async function startCallbackServer(state) {
     const result = new Promise((resolve, reject) => {
       answer = { resolve, reject };
     });
+    // The wait can end before anyone awaits the result (during registration); that must not be an unhandled rejection.
+    result.catch(() => {});
     const page = (res, status, text) =>
       res.writeHead(status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }).end(`<!doctype html><title>tabula</title><p>${text}</p>`);
     const server = createServer((req, res) => {
@@ -1008,7 +1029,7 @@ async function startCallbackServer(state) {
       page(res, 200, 'Done. You can close this tab and go back to the terminal.');
       answer.resolve(u.searchParams);
     });
-    const timer = setTimeout(() => answer.reject(new CliError('no answer from the browser within 10 minutes; run tabula login again')), LOGIN_TIMEOUT_MS);
+    const timer = setTimeout(() => answer.reject(new CliError('no answer from the browser in time; run tabula login again')), LOGIN_TIMEOUT_MS);
     timer.unref();
     server.on('error', rejectServer);
     server.listen(0, '127.0.0.1', () =>
@@ -1047,7 +1068,15 @@ async function oauthLogin(url, flags) {
   if (![meta.issuer, meta.registration_endpoint, meta.authorization_endpoint, meta.token_endpoint].every(isHttpUrl)) {
     throw new CliError(`${url} does not describe its OAuth endpoints; is it a Tabula server?`);
   }
+  // RFC 8414 §3.3: the metadata must name the address it was fetched from. Another address would be where the
+  // tokens go from now on, so the owner chooses it explicitly.
   const base = meta.issuer.replace(/\/+$/, '');
+  if (base !== url) {
+    const shown = /^https?:\/\/[\x21-\x7e]{1,200}$/.test(base) ? base : null;
+    // An address that cannot be printed safely is not shown at all.
+    throw new CliError(shown ? `${url} says its address is ${shown}; run tabula login ${shown}`
+      : `${url} names a different address than the one you typed; log in at the address its owner gives you`);
+  }
   const resource = `${base}/api`;
   const state = randomBytes(16).toString('base64url');
   const callback = await startCallbackServer(state);
@@ -1089,7 +1118,7 @@ async function oauthLogin(url, flags) {
     }
     // A legacy token would win over the new login (readConnection); it goes.
     const { token: _replaced, ...saved } = readConfigOrEmpty();
-    const file = writeConfigFile({ ...saved, url: base, oauth: { client_id: client.client_id, ...tokenFields(tokens) } });
+    const file = writeConfigFile({ ...saved, url: base, oauth: { client_id: client.client_id, token_endpoint: meta.token_endpoint, ...tokenFields(tokens) } });
     out(`Logged in to ${base}. Saved ${file}`);
     return 0;
   } finally {

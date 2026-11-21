@@ -125,7 +125,7 @@ export function SecurityPage() {
       <section className="t-card security-card" aria-labelledby="sec-passkeys">
         <h2 id="sec-passkeys">Passkeys</h2>
         <p className="t-subtle">Each passkey signs you in on its own: add one on your computer, one on your phone, or a security key.</p>
-        {data.passkeys.length === 0 && <Alert tone="warn">No passkey yet. Add one now: the legacy token stops working in the next release.</Alert>}
+        {data.publicUrl !== null && data.passkeys.length === 0 && <Alert tone="warn">No passkey yet. Add one now: the legacy token stops working in the next release.</Alert>}
         {data.passkeys.map((k) => (
           <div key={k.id} className="security-row">
             <strong>{k.name}</strong>
@@ -144,6 +144,7 @@ export function SecurityPage() {
             </span>
           </div>
         ))}
+        {data.passkeys.length === 1 && <p className="t-subtle">The last passkey cannot be deleted: add another one first.</p>}
         <div><Button icon="plus" disabled={data.publicUrl === null} onClick={addPasskey}>Add passkey</Button></div>
         {data.via === 'legacy' && data.passkeys.length > 0 && (
           <p className="t-subtle">This browser is signed in with the legacy token: adding another passkey asks for one you already have first.</p>

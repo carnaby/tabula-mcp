@@ -72,7 +72,10 @@ export async function buildApp(deps: {
       if (err.cause) app.log[err.status >= 500 ? 'error' : 'warn']({ err: loggableError(err.cause) }, err.message);
       return reply.code(err.status).send({ error: err.code, message: err.message });
     }
-    if (isNulRefusal(err)) return reply.code(400).send({ error: 'bad_request', message: NUL_REFUSED });
+    if (isNulRefusal(err)) {
+      app.log.warn({ err: loggableError(err) }, NUL_REFUSED);
+      return reply.code(400).send({ error: 'bad_request', message: NUL_REFUSED });
+    }
     const status = (err as { statusCode?: number }).statusCode ?? 500;
     if (status >= 500) {
       // Never the query values (transcripts, file contents) that database errors carry.

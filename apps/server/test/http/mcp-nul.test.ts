@@ -3,15 +3,16 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 import { type SQL, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { isNulRefusal } from '../../src/domain/errors.js';
+import { isNulRefusal, loggableError, NUL_REFUSED } from '../../src/domain/errors.js';
 import { buildApp } from '../../src/http/app.js';
 import { issueTestAccessToken, seedProject, TEST_PUBLIC_URL, testConfig, useTestDb } from '../helpers.js';
 
 const db = useTestDb();
 let app: FastifyInstance;
 let base: string;
+const logs: string[] = [];
 beforeAll(async () => {
-  app = await buildApp({ config: testConfig({ publicUrl: TEST_PUBLIC_URL }), db });
+  app = await buildApp({ config: testConfig({ publicUrl: TEST_PUBLIC_URL }), db, logStream: { write: (m) => void logs.push(m) } });
   await app.listen({ port: 0, host: '127.0.0.1' });
   base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
 });
@@ -65,6 +66,25 @@ describe('a NUL character', () => {
     expect(await refusal(sql`SELECT ${bad}::text`)).toBe(true);
     expect(await refusal(sql`SELECT ${JSON.stringify({ a: bad })}::jsonb`)).toBe(true);
     expect(await refusal(sql`SELECT 1/0`)).toBe(false);
+  });
+
+  it('refused by Postgres is logged as a warning without the value, in text or in jsonb', async () => {
+    const value = `hiddenword${bad}`;
+    for (const q of [sql`SELECT ${value}::text`, sql`SELECT ${JSON.stringify({ a: value })}::jsonb`]) {
+      const e = await db.execute(q).then(() => undefined, (err: unknown) => err);
+      expect(isNulRefusal(e)).toBe(true);
+      // As the log serializes an error: its enumerable fields, its message and its stack.
+      const cause = (loggableError(e) as Error).cause as Error;
+      expect(JSON.stringify({ ...cause, message: cause.message, stack: cause.stack })).not.toContain('hiddenword');
+    }
+    logs.length = 0;
+    expect(await tool('search', { query: `"hiddenword${bad}"` })).toEqual({ text: `400: ${NUL_REFUSED}`, isError: true });
+    const { value: api } = await issueTestAccessToken(db, { resource: 'api' });
+    const res = await app.inject({ method: 'GET', url: '/api/notes?tag=hiddenword%00b', headers: { authorization: `Bearer ${api}` } });
+    expect(res.statusCode).toBe(400);
+    const warned = logs.map((l) => JSON.parse(l) as { level: number; msg: string }).filter((l) => l.level === 40);
+    expect(warned.map((l) => l.msg)).toEqual([NUL_REFUSED, NUL_REFUSED]);
+    expect(logs.join('')).not.toContain('hiddenword');
   });
 
   it('in an /api path is a 400', async () => {

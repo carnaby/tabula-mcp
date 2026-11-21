@@ -37,13 +37,17 @@ export function isNulRefusal(e: unknown): boolean {
   return false;
 }
 
-/** Fields of database errors that hold the values of a query (transcript text, file contents, note bodies). */
-const VALUE_FIELDS = new Set(['params', 'parameters', 'args', 'detail']);
+/**
+ * Fields of database errors that hold the values of a query (transcript text, file contents, note bodies). `where`
+ * is Postgres's context, which quotes the start of a refused jsonb value.
+ */
+const VALUE_FIELDS = new Set(['params', 'parameters', 'args', 'detail', 'where']);
 
 /**
  * An error as it may go to the log. drizzle's DrizzleQueryError puts the query's parameters into its message, its
- * stack and a `params` field, and Postgres repeats a refused row in `detail`; anywhere in the cause chain such an
- * error is replaced by a copy with the SQL only. Errors without these come back unchanged.
+ * stack and a `params` field, and Postgres repeats a refused row in `detail` and a refused jsonb value in `where`;
+ * anywhere in the cause chain such an error is replaced by a copy with the SQL only. Errors without these come back
+ * unchanged.
  */
 export function loggableError(err: unknown, depth = 0): unknown {
   if (!(err instanceof Error) || depth > 8) return err;

@@ -441,7 +441,8 @@ const TAKEOVER_POLL_MS = 100;
  */
 const RENEW_FLOOR_MS = 2000;
 
-const isCurrent = (o) => typeof o.access_token === 'string' && o.access_token !== '' && Number(o.expires_at) - REFRESH_MARGIN_MS > Date.now();
+const hasAccessToken = (o) => typeof o.access_token === 'string' && o.access_token !== '';
+const isCurrent = (o) => hasAccessToken(o) && Number(o.expires_at) - REFRESH_MARGIN_MS > Date.now();
 
 /** The bearer for /api: the shared token as is, or this login's OAuth access token, renewed when it is about to expire. */
 async function bearerFor(conn, ms, deadline) {
@@ -450,7 +451,7 @@ async function bearerFor(conn, ms, deadline) {
   // Too little time to rotate safely (RENEW_FLOOR_MS), but the token still works past this command: use it, the next
   // command renews with its full time.
   const o = conn.oauth;
-  if (ms < RENEW_FLOOR_MS && Number(o.expires_at) > Date.now() + ms && typeof o.access_token === 'string' && o.access_token !== '') {
+  if (ms < RENEW_FLOOR_MS && Number(o.expires_at) > Date.now() + ms && hasAccessToken(o)) {
     return o.access_token;
   }
   // One renewal at a time in this process; requests that need it meanwhile get its token.
@@ -499,8 +500,9 @@ function savedPairOtherThan(conn, refreshToken) {
 /**
  * One refresh_token grant. true: the new pair is in conn.oauth and saved before anything else happens (the old refresh
  * token is spent). false: the server refused the refresh token. Any other failure throws. With less than
- * RENEW_FLOOR_MS left (the SessionStart hook near its deadline) nothing is sent: the hook stops as if timed out and
- * the next command renews with its full time.
+ * RENEW_FLOOR_MS left (the SessionStart hook near its deadline) nothing is sent; bearerFor uses an access token that
+ * outlives the deadline before it gets here, so the hook stops as if timed out only when the access token does not,
+ * and the next command renews with its full time.
  */
 async function rotateRefreshToken(conn, ms, deadline) {
   if (ms < RENEW_FLOOR_MS) {
@@ -953,8 +955,11 @@ function promptHidden(question) {
 }
 
 const CALLBACK_PATH = '/callback';
-/** How long a login waits for the browser. TABULA_LOGIN_TIMEOUT_MS exists for the tests and can only shorten it. */
-const LOGIN_TIMEOUT_MS = Math.min(10 * 60000, Number(process.env.TABULA_LOGIN_TIMEOUT_MS) || 10 * 60000);
+/**
+ * How long a login waits for the browser. TABULA_LOGIN_TIMEOUT_MS exists for the tests and can only shorten it; a
+ * value that is not a positive number is ignored.
+ */
+const LOGIN_TIMEOUT_MS = Math.min(10 * 60000, Math.max(0, Number(process.env.TABULA_LOGIN_TIMEOUT_MS)) || 10 * 60000);
 
 async function login(args, flags) {
   const url = (args[0] ?? '').replace(/\/+$/, '');
@@ -1067,8 +1072,10 @@ async function oauthLogin(url, flags) {
   // tokens go from now on, so the owner chooses it explicitly.
   const base = meta.issuer.replace(/\/+$/, '');
   if (base !== url) {
-    const shown = /^https?:\/\/[\x21-\x7e]{1,200}$/.test(base) ? base : 'another address';
-    throw new CliError(`${url} says its address is ${shown}; run tabula login ${shown}`);
+    const shown = /^https?:\/\/[\x21-\x7e]{1,200}$/.test(base) ? base : null;
+    // An address that cannot be printed safely is not shown at all.
+    throw new CliError(shown ? `${url} says its address is ${shown}; run tabula login ${shown}`
+      : `${url} names a different address than the one you typed; log in at the address its owner gives you`);
   }
   const resource = `${base}/api`;
   const state = randomBytes(16).toString('base64url');

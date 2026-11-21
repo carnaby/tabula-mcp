@@ -143,4 +143,23 @@ describe('tabula login checks', { timeout: 60_000 }, () => {
       proxy.close();
     }
   });
+
+  it('names no address it cannot print, before registering', async () => {
+    const real = (await (await fetch(`${server.url}/.well-known/oauth-authorization-server`)).json()) as Record<string, unknown>;
+    // Built at runtime: the source file holds no control character.
+    const issuer = `https://other.example/${String.fromCharCode(7)}x`;
+    const metadata = JSON.stringify({ ...real, issuer });
+    const proxy = await startProxy(server.url, (url) => (url.startsWith('/.well-known/oauth-authorization-server') ? { status: 200, body: metadata } : 0));
+    try {
+      const { home, repo } = await setup();
+      const cli = spawnCli(['login', proxy.url], { cwd: repo, env: env(home) });
+      const r = await within(cli, 30_000);
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain(`${proxy.url} names a different address than the one you typed; log in at the address its owner gives you`);
+      expect([...r.stdout + r.stderr].map((ch) => ch.charCodeAt(0)).filter((c) => c < 32 && c !== 10 && c !== 13)).toEqual([]);
+      expect(await db.select().from(oauthClients)).toHaveLength(0);
+    } finally {
+      proxy.close();
+    }
+  });
 });

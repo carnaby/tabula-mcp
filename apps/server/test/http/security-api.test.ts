@@ -6,7 +6,7 @@ import { createClient, createConnection } from '../../src/auth/oauth/store.js';
 import { insertPasskey } from '../../src/auth/passkeys/store.js';
 import { hashSecret } from '../../src/auth/secrets.js';
 import { createSession } from '../../src/auth/sessions.js';
-import { passkeys, uiSessions } from '../../src/db/schema.js';
+import { oauthConnections, passkeys, uiSessions } from '../../src/db/schema.js';
 import { buildApp } from '../../src/http/app.js';
 import { issueTestAccessToken, TEST_PUBLIC_URL, TEST_TOKEN, testConfig, useTestDb } from '../helpers.js';
 
@@ -156,5 +156,28 @@ describe('sessions', () => {
     const { cookie } = await session();
     expect((await call('DELETE', '/sessions/not-a-uuid', { cookie })).statusCode).toBe(400);
     expect((await call('DELETE', '/sessions/00000000-0000-4000-8000-000000000000', { cookie })).statusCode).toBe(404);
+  });
+});
+
+describe('changes with the session cookie', () => {
+  it('are refused from another origin and without an Origin, and change nothing', async () => {
+    const { cookie } = await session();
+    const k = await passkey('one');
+    await passkey('two');
+    const other = await session();
+    const api = await issueTestAccessToken(db, { resource: 'api', name: 'stays' });
+    const changes: Array<['PATCH' | 'POST' | 'DELETE', string, object?]> = [
+      ['PATCH', `/passkeys/${k.id}`, { name: 'x' }], ['DELETE', `/passkeys/${k.id}`], ['PATCH', `/connections/${api.connectionId}`, { name: 'renamed' }],
+      ['POST', `/connections/${api.connectionId}/revoke`], ['DELETE', `/sessions/${other.id}`], ['POST', '/auth/logout'],
+    ];
+    for (const origin of ['https://evil.example', undefined]) {
+      for (const [method, url, payload] of changes) {
+        const res = await app.inject({ method, url: `/api${url}`, headers: { cookie, ...(origin ? { origin } : {}) }, ...(payload && { payload }) });
+        expect(res.statusCode, `${method} ${url} from ${origin ?? 'no Origin'}`).toBe(403);
+      }
+    }
+    expect(await db.select().from(passkeys)).toHaveLength(2);
+    expect(await db.select().from(uiSessions)).toHaveLength(2);
+    expect((await db.select().from(oauthConnections)).find((c) => c.id === api.connectionId)).toMatchObject({ name: 'stays', revokedAt: null });
   });
 });

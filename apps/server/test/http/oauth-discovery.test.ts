@@ -107,12 +107,37 @@ describe('dynamic client registration', () => {
     expect(form.json().error).toBe('invalid_client_metadata');
   });
 
+  it('registers loopback callbacks on localhost, 127.0.0.1 and [::1]', async () => {
+    for (const uri of ['http://127.0.0.1/callback', 'http://[::1]:8080/callback', 'http://localhost/cb']) {
+      expect((await register({ redirect_uris: [uri] })).statusCode, uri).toBe(201);
+    }
+  });
+
+  it('takes a client name of 100 characters and a redirect URI of 512, not 513', async () => {
+    const prefix = 'https://c.example.com/';
+    const uri = prefix + 'p'.repeat(512 - prefix.length);
+    expect((await register({ redirect_uris: [uri], client_name: 'n'.repeat(100) })).statusCode).toBe(201);
+    expect((await register({ redirect_uris: [`${uri}p`] })).json().error).toBe('invalid_redirect_uri');
+  });
+
+  it('answers malformed JSON and a body over 16 KiB in the shape of RFC 7591', async () => {
+    const raw = (payload: string, n: number) =>
+      app.inject({ method: 'POST', url: '/oauth/register', payload, headers: { 'content-type': 'application/json', 'x-forwarded-for': `203.0.113.${71 + n}` } });
+    const bad = await raw('{"redirect_uris": [', 1);
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().error).toBe('invalid_client_metadata');
+    const big = await raw(JSON.stringify({ redirect_uris: ['https://c.example.com/cb'], pad: 'x'.repeat(17 * 1024) }), 2);
+    expect(big.statusCode).toBe(413);
+    expect(big.json().error).toBe('invalid_client_metadata');
+  });
+
   it('allows ten registrations an hour per address', async () => {
     const from = { 'x-forwarded-for': '203.0.113.70' };
     for (let i = 0; i < 10; i++) expect((await register({ redirect_uris: ['https://c.example.com/cb'] }, from)).statusCode).toBe(201);
     const res = await register({ redirect_uris: ['https://c.example.com/cb'] }, from);
     expect(res.statusCode).toBe(429);
     expect(res.json().error).toBe('slow_down');
+    expect(res.headers['retry-after']).toBe('3600');
   });
 
   it('stops at 1000 clients nobody approved', async () => {

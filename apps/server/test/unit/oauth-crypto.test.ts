@@ -47,3 +47,28 @@ describe('redirect URIs', () => {
     }
   });
 });
+
+describe('redirect URI boundaries', () => {
+  it('accept the loopback hosts localhost, 127.0.0.1 and [::1], with or without a port', () => {
+    for (const uri of ['http://localhost/cb', 'http://localhost:8080/cb', 'http://127.0.0.1:1/cb', 'http://[::1]/cb', 'http://[::1]:65535/cb']) {
+      expect(isAllowedRedirect(uri), uri).toBe(true);
+      expect(isLoopbackRedirect(uri), uri).toBe(true);
+    }
+    expect(isAllowedRedirect('http://localhost:70000/cb')).toBe(false);
+  });
+
+  it('ignore only a real port of a loopback redirect', () => {
+    expect(redirectMatches('http://127.0.0.1/cb', 'http://127.0.0.1:65535/cb')).toBe(true);
+    expect(redirectMatches('http://127.0.0.1/cb', 'http://127.0.0.1:65536/cb')).toBe(false);
+    expect(redirectMatches('http://[::1]/cb', 'http://[::1]:99999/cb')).toBe(false);
+    expect(isLoopbackRedirect('http://localhost:70000/cb')).toBe(false);
+  });
+});
+
+describe('PKCE verifier length', () => {
+  const challengeOf = (v: string) => createHash('sha256').update(v).digest('base64url');
+  it('takes 43 to 128 characters', () => {
+    for (const v of ['b'.repeat(43), 'a'.repeat(128)]) expect(verifyPkceS256(v, challengeOf(v)), String(v.length)).toBe(true);
+    for (const v of ['b'.repeat(42), 'a'.repeat(129)]) expect(verifyPkceS256(v, challengeOf(v)), String(v.length)).toBe(false);
+  });
+});

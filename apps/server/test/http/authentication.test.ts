@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { revokeConnection } from '../../src/auth/oauth/store.js';
 import { createSession } from '../../src/auth/sessions.js';
-import { settings, uiSessions } from '../../src/db/schema.js';
+import { oauthAccessTokens, settings, uiSessions } from '../../src/db/schema.js';
 import { getFile } from '../../src/domain/files.js';
 import { buildApp } from '../../src/http/app.js';
 import { issueTestAccessToken, seedProject, TEST_PUBLIC_URL, TEST_SECRET, TEST_TOKEN, testConfig, useTestDb } from '../helpers.js';
@@ -91,6 +91,41 @@ describe('/api', () => {
     expect((await getFile(db, 'demo', 'docs/b.md')).updatedBy).toBe('tabula-cli');
     expect((await getFile(db, 'demo', 'docs/c.md')).updatedBy).toBe('human');
     expect((await getFile(db, 'demo', 'docs/d.md')).updatedBy).toBe('cli');
+  });
+
+  it('never falls back to the cookie when a bearer token is refused', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/projects', headers: { ...bearer('not-a-token'), cookie: await sessionCookie() } });
+    expect(res.statusCode).toBe(401);
+    expect(res.headers['www-authenticate']).toBe(`${API_CHALLENGE}, error="invalid_token"`);
+  });
+
+  it('answers an expired token with invalid_token on /api and /mcp', async () => {
+    const api = await issueTestAccessToken(db, { resource: 'api' });
+    const forMcp = await issueTestAccessToken(db, { resource: 'mcp' });
+    await db.update(oauthAccessTokens).set({ expiresAt: new Date(Date.now() - 1000) });
+    const a = await app.inject({ method: 'GET', url: '/api/projects', headers: bearer(api.value) });
+    expect(a.statusCode).toBe(401);
+    expect(a.headers['www-authenticate']).toBe(`${API_CHALLENGE}, error="invalid_token"`);
+    const m = await mcp(app, bearer(forMcp.value));
+    expect(m.statusCode).toBe(401);
+    expect(m.headers['www-authenticate']).toBe(`${MCP_CHALLENGE}, error="invalid_token"`);
+  });
+
+  it('refuses PUT, PATCH and DELETE with the cookie but without an Origin', async () => {
+    const cookie = await sessionCookie();
+    const other = await createSession(db, { userAgent: 'other', now: new Date() });
+    const conn = await issueTestAccessToken(db, { resource: 'api', name: 'keep-me' });
+    const changes = [
+      { method: 'PUT' as const, url: '/api/projects/demo/files', payload: { path: 'docs/a.md', content: 'x', base_sha256: null } },
+      { method: 'PATCH' as const, url: `/api/connections/${conn.connectionId}`, payload: { name: 'renamed' } },
+      { method: 'DELETE' as const, url: `/api/sessions/${other.session.id}` },
+    ];
+    for (const c of changes) {
+      const res = await app.inject({ method: c.method, url: c.url, headers: { cookie }, ...(c.payload && { payload: c.payload }) });
+      expect(res.statusCode, `${c.method} ${c.url}`).toBe(403);
+    }
+    await expect(getFile(db, 'demo', 'docs/a.md')).rejects.toMatchObject({ code: 'not_found' });
+    expect((await db.select().from(uiSessions)).map((s) => s.id)).toContain(other.session.id);
   });
 });
 

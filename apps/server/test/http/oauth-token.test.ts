@@ -299,7 +299,9 @@ describe('limits and secrets', () => {
   it('allows 30 token requests a minute per address', async () => {
     const from = { 'x-forwarded-for': '203.0.113.80' };
     for (let i = 0; i < 30; i++) expect((await form('/oauth/token', { grant_type: 'nope' }, from)).statusCode).toBe(400);
-    expect((await form('/oauth/token', { grant_type: 'nope' }, from)).json().error).toBe('slow_down');
+    const res = await form('/oauth/token', { grant_type: 'nope' }, from);
+    expect(res.json().error).toBe('slow_down');
+    expect(res.headers['retry-after']).toBe('60');
   });
 
   it('never stores or logs a code, verifier or token', async () => {

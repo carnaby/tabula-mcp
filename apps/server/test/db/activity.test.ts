@@ -403,4 +403,26 @@ describe('who pushed', () => {
     expect(rows.find((i) => i.title === 'Idea')).toMatchObject({ model: 'claude-sonnet-5' });
     expect(rows.find((i) => i.title === 'Mine')).not.toHaveProperty('model');
   });
+
+  it("shows a report's model for its agent author only: not after a human edit, nor for an upload by another label", async () => {
+    await seedProject(db, 'demo');
+    const model = 'claude-opus-5-5';
+    await report({ title: 'Created', source: 'agent', editedBy: 'claude-code', editedByModel: model, created: '2026-11-09T08:00:00Z' });
+    await report({ title: 'Triaged', editedBy: 'claude-code', editedByModel: model, triage: 'cause', version: 2, created: '2026-11-09T06:00:00Z', updated: '2026-11-09T09:00:00Z' });
+    await report({
+      title: 'Edited', source: 'agent', editedBy: 'human', editedByModel: model, version: 2, created: '2026-11-09T06:00:00Z', updated: '2026-11-09T10:00:00Z',
+    });
+    const uploaded = await report({
+      title: 'Uploaded', editedBy: 'claude-code', editedByModel: model, version: 2, created: '2026-11-09T06:00:00Z', updated: '2026-11-09T11:00:00Z',
+    });
+    await recording(uploaded.id, 'tabula-recorder', '2026-11-09T11:00:00Z');
+    const rows = (await items({ type: 'reports' })).map((i) => ({ title: i.title, action: i.action, by: i.by, model: i.model }));
+    expect(rows).toEqual(expect.arrayContaining([
+      { title: 'Created', action: 'New report', by: 'claude-code', model },
+      { title: 'Triaged', action: 'Triage written', by: 'claude-code', model },
+      { title: 'Edited', action: 'Edited', by: 'human', model: undefined },
+      { title: 'Edited', action: 'New report', by: 'agent', model: undefined },
+      { title: 'Uploaded', action: 'Updated', by: 'tabula-recorder', model: undefined },
+    ]));
+  });
 });

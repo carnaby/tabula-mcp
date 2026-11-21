@@ -147,6 +147,15 @@ describe('passkeys', () => {
     expect(await recordPasskeyUse(db, p.id, 0, new Date())).toBe(true);
   });
 
+  it('refuse a counter of 0 once the authenticator has counted', async () => {
+    const p = (await passkey('counted'))!;
+    const t0 = new Date();
+    expect(await recordPasskeyUse(db, p.id, 3, t0)).toBe(true);
+    expect(await recordPasskeyUse(db, p.id, 0, at(1000, t0))).toBe(false);
+    const [row] = await db.select().from(passkeys).where(eq(passkeys.id, p.id));
+    expect(row).toMatchObject({ counter: 3, lastUsedAt: t0 });
+  });
+
   it('ignore a second registration of the same credential', async () => {
     expect(await passkey('same')).toBeDefined();
     expect(await passkey('same')).toBeUndefined();

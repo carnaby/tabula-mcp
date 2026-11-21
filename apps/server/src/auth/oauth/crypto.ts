@@ -27,7 +27,7 @@ const LOOPBACK_AUTHORITY = /^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d{1,5})
 function withoutLoopbackPort(uri: string): string | null {
   const match = LOOPBACK_AUTHORITY.exec(uri);
   if (match === null || !LOOPBACK_HOSTS.has(match[1] ?? '')) return null;
-  // A port is 0 to 65535; a longer number would only fail later, when the redirect is built.
+  // A port is 0 to 65535; a larger number is not a real port, whatever later parsing would make of it.
   if (match[2] !== undefined && Number(match[2].slice(1)) > 65535) return null;
   return `http://${match[1] ?? ''}${uri.slice(match[0].length)}`;
 }

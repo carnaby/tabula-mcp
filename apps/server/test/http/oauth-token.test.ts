@@ -242,6 +242,10 @@ describe('refresh_token', () => {
     expect(res.statusCode).toBe(400);
     expect(res.json().error).toBe('invalid_grant');
     expect(await live()).toHaveLength(0);
+    // The test's transaction left the access tokens alone: only the replay's own revocation can have ended them.
+    const tokens = await db.select().from(oauthAccessTokens).where(eq(oauthAccessTokens.connectionId, connection!.id));
+    expect(tokens).toHaveLength(2);
+    expect(tokens.filter((t) => t.revokedAt === null)).toEqual([]);
   });
 
   it('may narrow the scope, never widen it, and only for its own resource and client', async () => {

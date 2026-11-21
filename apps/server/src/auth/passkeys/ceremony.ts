@@ -73,9 +73,9 @@ export async function verifyLogin(db: Db, auth: AuthSettings, response: Authenti
     return null;
   }
   // Spec §4.1: a counter that did not move forward means a cloned authenticator. The library refuses it as well;
-  // this check keeps the rule here whatever the library does.
+  // this check keeps the rule here whatever the library does, and the update repeats it atomically for racing sign-ins.
   if (passkey.counter > 0 && newCounter <= passkey.counter) return null;
-  await recordPasskeyUse(db, passkey.id, newCounter, now);
+  if (!(await recordPasskeyUse(db, passkey.id, newCounter, now))) return null;
   return passkey;
 }
 

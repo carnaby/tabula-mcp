@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { and, asc, count, eq, gt, isNull, sql } from 'drizzle-orm';
+import { and, asc, count, eq, gt, isNull, lt } from 'drizzle-orm';
 import type { Db } from '../../db/client.js';
 import { passkeys, settings, webauthnChallenges } from '../../db/schema.js';
 import { badRequest, conflict, notFound } from '../../domain/errors.js';
@@ -43,9 +43,18 @@ export async function insertPasskey(
   return row;
 }
 
-/** A sign-in with this passkey. The signature counter never moves back, even when two sign-ins race. */
-export async function recordPasskeyUse(db: Db, id: string, counter: number, now: Date): Promise<void> {
-  await db.update(passkeys).set({ counter: sql`GREATEST(${passkeys.counter}, ${counter})`, lastUsedAt: now }).where(eq(passkeys.id, id));
+/**
+ * A sign-in with this passkey, counted only if its signature counter moved forward (spec §4.1): of two sign-ins with
+ * one counter value only the first counts, so a cloned authenticator cannot sign in alongside the real one. An
+ * authenticator that keeps no counter always reports 0 and is always counted.
+ */
+export async function recordPasskeyUse(db: Db, id: string, counter: number, now: Date): Promise<boolean> {
+  const rows = await db
+    .update(passkeys)
+    .set({ counter, lastUsedAt: now })
+    .where(and(eq(passkeys.id, id), counter === 0 ? eq(passkeys.counter, 0) : lt(passkeys.counter, counter)))
+    .returning({ id: passkeys.id });
+  return rows.length > 0;
 }
 
 export async function renamePasskey(db: Db, id: string, raw: string): Promise<Passkey> {

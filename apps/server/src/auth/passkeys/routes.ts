@@ -16,6 +16,8 @@ const MINUTE = 60_000;
 /** Spec §7: failed passkey checks and registration-link attempts, per address and minute. */
 const MAX_FAILURES = 10;
 const MAX_LINK_FAILURES = 10;
+/** Sign-in challenges per address and minute: each one is a database row until it expires. */
+const MAX_LOGIN_OPTIONS = 30;
 
 export type LinkLookup =
   | { ok: true; registration: { id: string; kind: RegistrationKind } }
@@ -54,6 +56,7 @@ const LINK_ATTEMPTS = { error: 'too_many_requests', message: 'too many registrat
 export function registerPasskeyRoutes(app: FastifyInstance, ctx: AuthContext & { auth: AuthSettings; links: RegistrationLinks }): void {
   const { db, auth, links } = ctx;
   const failures = new FixedWindows(MINUTE);
+  const loginOptionCalls = new FixedWindows(MINUTE);
 
   const requireOrigin = async (req: FastifyRequest, reply: FastifyReply) => {
     if (!sameOrigin(req, auth)) return reply.code(403).send({ error: 'forbidden', message: 'cross-origin request refused' });
@@ -75,7 +78,13 @@ export function registerPasskeyRoutes(app: FastifyInstance, ctx: AuthContext & {
     reply.header('Set-Cookie', sessionCookie(auth, token, SESSION_TTL_MS));
   };
 
-  app.post('/auth/passkey/login/options', { onRequest: requireOrigin }, async () => ({ options: await loginOptions(db, auth, new Date()) }));
+  app.post('/auth/passkey/login/options', { onRequest: requireOrigin }, async (req, reply) => {
+    const now = new Date();
+    if (loginOptionCalls.add(clientKey(req), now.getTime()) > MAX_LOGIN_OPTIONS) {
+      return reply.code(429).header('retry-after', '60').send({ error: 'too_many_requests', message: 'too many sign-in attempts from this address; wait a minute' });
+    }
+    return { options: await loginOptions(db, auth, now) };
+  });
 
   app.post('/auth/passkey/login/verify', { onRequest: requireOrigin, bodyLimit: 16 * 1024 }, async (req, reply) => {
     const key = clientKey(req);

@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { and, eq, gt, isNull } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import { clearedSessionCookie, readCookie, sessionCookie } from '../../src/auth/cookie.js';
 import {
@@ -8,7 +8,7 @@ import {
 import { createRegistration, findRegistration, useRegistration } from '../../src/auth/passkeys/registrations.js';
 import { authenticateSession, createSession, deleteSession, deviceLabel, isFresh, listSessions, markVerified } from '../../src/auth/sessions.js';
 import { authSettings } from '../../src/auth/settings.js';
-import { passkeys, uiSessions } from '../../src/db/schema.js';
+import { passkeyRegistrations, passkeys, uiSessions } from '../../src/db/schema.js';
 import { useTestDb } from '../helpers.js';
 
 const db = useTestDb();
@@ -92,6 +92,17 @@ describe('registration links', () => {
     expect(await useRegistration(db, live.id, at(6000, t0))).toBe(false);
     expect(await findRegistration(db, add, at(7000, t0))).toBeUndefined();
   });
+
+  it('leave one live link when two are made at once', async () => {
+    const now = new Date();
+    // Without a lock both transactions expire the older links before either insert is visible: both stay live.
+    for (let i = 0; i < 5; i++) await Promise.all([createRegistration(db, 'link', now), createRegistration(db, 'link', now)]);
+    const live = await db
+      .select()
+      .from(passkeyRegistrations)
+      .where(and(eq(passkeyRegistrations.kind, 'link'), isNull(passkeyRegistrations.usedAt), gt(passkeyRegistrations.expiresAt, now)));
+    expect(live).toHaveLength(1);
+  });
 });
 
 describe('WebAuthn challenges', () => {
@@ -120,13 +131,20 @@ describe('passkeys', () => {
     await expect(deletePasskey(db, 'not-a-uuid')).rejects.toMatchObject({ code: 'not_found' });
   });
 
-  it('never move their signature counter back', async () => {
+  it('count a sign-in only when the signature counter moved forward', async () => {
     const p = (await passkey('c'))!;
     const t0 = new Date();
-    await recordPasskeyUse(db, p.id, 7, t0);
-    await recordPasskeyUse(db, p.id, 4, at(1000, t0));
+    expect(await recordPasskeyUse(db, p.id, 7, t0)).toBe(true);
+    expect(await recordPasskeyUse(db, p.id, 7, at(1000, t0))).toBe(false);
+    expect(await recordPasskeyUse(db, p.id, 4, at(2000, t0))).toBe(false);
     const [row] = await db.select().from(passkeys).where(eq(passkeys.id, p.id));
-    expect(row).toMatchObject({ counter: 7, lastUsedAt: at(1000, t0) });
+    expect(row).toMatchObject({ counter: 7, lastUsedAt: t0 });
+  });
+
+  it('accept every sign-in of an authenticator that keeps no counter (always 0)', async () => {
+    const p = (await passkey('zero'))!;
+    expect(await recordPasskeyUse(db, p.id, 0, new Date())).toBe(true);
+    expect(await recordPasskeyUse(db, p.id, 0, new Date())).toBe(true);
   });
 
   it('ignore a second registration of the same credential', async () => {

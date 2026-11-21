@@ -90,14 +90,14 @@ describe('passkey registration', () => {
 
   it('stops an address after ten unknown links for a minute; a valid link does not count', async () => {
     const token = await createRegistration(db, 'link', new Date());
-    const from = { 'x-forwarded-for': '203.0.113.60' };
-    for (let i = 0; i < 12; i++) expect((await post('/auth/passkey/register/options', { token }, from)).statusCode).toBe(200);
-    for (let i = 0; i < 10; i++) expect((await post('/auth/passkey/register/options', { token: `unknown-${i}` }, from)).statusCode).toBe(400);
-    const limited = await post('/auth/passkey/register/options', { token }, from);
+    const address = { 'x-forwarded-for': '203.0.113.60' };
+    for (let i = 0; i < 12; i++) expect((await post('/auth/passkey/register/options', { token }, address)).statusCode).toBe(200);
+    for (let i = 0; i < 10; i++) expect((await post('/auth/passkey/register/options', { token: `unknown-${i}` }, address)).statusCode).toBe(400);
+    const limited = await post('/auth/passkey/register/options', { token }, address);
     expect(limited.statusCode).toBe(429);
     expect(limited.headers['retry-after']).toBe('60');
     const response = { id: 'x', rawId: 'x', type: 'public-key', response: {} };
-    expect((await post('/auth/passkey/register/verify', { token, name: 'x', response }, from)).statusCode).toBe(429);
+    expect((await post('/auth/passkey/register/verify', { token, name: 'x', response }, address)).statusCode).toBe(429);
     expect((await post('/auth/passkey/register/options', { token }, { 'x-forwarded-for': '203.0.113.61' })).statusCode).toBe(200);
   });
 });
@@ -157,10 +157,19 @@ describe('passkey sign-in', () => {
 
   it('stops an address after ten failures for a minute', async () => {
     const stranger = new SoftAuthenticator(TEST_PUBLIC_URL);
-    const from = { 'x-forwarded-for': '203.0.113.50' };
-    for (let i = 0; i < 10; i++) expect((await signIn(stranger, from)).statusCode).toBe(400);
-    expect((await signIn(stranger, from)).statusCode).toBe(429);
+    const address = { 'x-forwarded-for': '203.0.113.50' };
+    for (let i = 0; i < 10; i++) expect((await signIn(stranger, address)).statusCode).toBe(400);
+    expect((await signIn(stranger, address)).statusCode).toBe(429);
     expect((await signIn(stranger, { 'x-forwarded-for': '203.0.113.51' })).statusCode).toBe(400);
+  });
+
+  it('gives an address 30 sign-in challenges a minute; another address is not affected', async () => {
+    for (let i = 0; i < 30; i++) expect((await post('/auth/passkey/login/options', {}, from(90))).statusCode).toBe(200);
+    const refused = await post('/auth/passkey/login/options', {}, from(90));
+    expect(refused.statusCode).toBe(429);
+    expect(refused.headers['retry-after']).toBe('60');
+    expect(refused.json()).toMatchObject({ error: 'too_many_requests' });
+    expect((await post('/auth/passkey/login/options', {}, from(91))).statusCode).toBe(200);
   });
 });
 

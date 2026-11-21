@@ -1,14 +1,44 @@
-import { rmSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { oauthRefreshTokens } from '../../src/db/schema.js';
+import { oauthClients, oauthRefreshTokens } from '../../src/db/schema.js';
 import { useTestDb } from '../helpers.js';
-import { readText, runCli, startProxy } from './harness.js';
+import { readText, runCli, spawnCli, startProxy } from './harness.js';
 import { configOf, env, rewrite, useLoginServer } from './login-flow.js';
 
 const db = useTestDb();
 // Its own server: login.test.ts uses up most of the ten client registrations one server allows per address and hour.
-const { server, login, setup } = useLoginServer(db);
+const { server, login, setup, decideInBrowser } = useLoginServer(db);
+
+/** Starts `tabula login` and returns the authorize URL it printed; the CLI keeps waiting for the browser's answer. */
+async function startLogin(home: string, cwd: string, extraEnv: Record<string, string> = {}) {
+  const cli = spawnCli(['login', server.url], { cwd, env: { ...env(home), ...extraEnv } });
+  try {
+    const [, printed] = await cli.waitFor(/^ {2}(http\S+\/oauth\/authorize\?\S+)$/m);
+    return { cli, authorize: new URL(printed!) };
+  } catch (e) {
+    cli.kill(); // a CLI left waiting for the browser would outlive the test
+    throw e;
+  }
+}
+/** The CLI's loopback address with these query parameters. */
+const callbackOf = (authorize: URL, params: Record<string, string>) => {
+  const u = new URL(authorize.searchParams.get('redirect_uri')!);
+  u.search = new URLSearchParams(params).toString();
+  return u;
+};
+/** The CLI's result, or a failure (and the CLI killed) after `ms`. */
+async function within(cli: ReturnType<typeof spawnCli>, ms: number) {
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => (cli.kill(), reject(new Error(`the CLI did not finish within ${ms} ms`))), ms);
+  });
+  try {
+    return await Promise.race([cli.done, late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 describe('tabula login renewal', { timeout: 60_000 }, () => {
   it('renews at the token endpoint the server advertised', async () => {
@@ -66,5 +96,51 @@ describe('tabula login renewal', { timeout: 60_000 }, () => {
     expect(hook.stdout + hook.stderr).not.toMatch(/too little time left|timed out| of \d+ files/);
     expect(readText(repo, 'docs/a.md')).toBe('# A\n');
     expect(await db.select().from(oauthRefreshTokens)).toHaveLength(1);
+  });
+});
+
+describe('tabula login checks', { timeout: 60_000 }, () => {
+  it('turns away an answer with another state and keeps waiting for the real one', async () => {
+    const { home, repo } = await setup();
+    const { cli, authorize } = await startLogin(home, repo);
+    const stray = await fetch(callbackOf(authorize, { code: 'x', state: 'not-this-login', iss: server.url }));
+    expect(stray.status).toBe(400);
+    expect(await stray.text()).toMatch(/another tabula login/);
+    await decideInBrowser(authorize.href, 'allow');
+    const r = await within(cli, 30_000);
+    expect(r.code, r.stderr).toBe(0);
+  });
+
+  it('refuses an answer that names another server and saves nothing', async () => {
+    const { home, repo } = await setup();
+    const { cli, authorize } = await startLogin(home, repo);
+    await fetch(callbackOf(authorize, { code: 'x', state: authorize.searchParams.get('state')!, iss: 'https://evil.example' }));
+    const r = await within(cli, 30_000);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toMatch(/another server/);
+    expect(existsSync(join(home, 'config.json'))).toBe(false);
+  });
+
+  it('gives up when the browser never answers', async () => {
+    const { home, repo } = await setup();
+    // Long enough to register and print the address first: the wait starts before both.
+    const { cli } = await startLogin(home, repo, { TABULA_LOGIN_TIMEOUT_MS: '3000' });
+    const r = await within(cli, 30_000);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toMatch(/no answer from the browser/);
+  });
+
+  it('refuses a server whose metadata names another address, before registering', async () => {
+    const proxy = await startProxy(server.url, () => 0);
+    try {
+      const { home, repo } = await setup();
+      const cli = spawnCli(['login', proxy.url], { cwd: repo, env: env(home) });
+      const r = await within(cli, 30_000);
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain(`tabula login ${server.url}`);
+      expect(await db.select().from(oauthClients)).toHaveLength(0);
+    } finally {
+      proxy.close();
+    }
   });
 });

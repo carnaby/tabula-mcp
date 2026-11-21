@@ -54,5 +54,5 @@ export function useLoginServer(db: Db) {
     return { home, repo };
   }
 
-  return { server, login, setup };
+  return { server, login, setup, decideInBrowser };
 }

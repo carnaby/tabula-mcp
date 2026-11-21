@@ -953,7 +953,8 @@ function promptHidden(question) {
 }
 
 const CALLBACK_PATH = '/callback';
-const LOGIN_TIMEOUT_MS = 10 * 60000;
+/** How long a login waits for the browser. TABULA_LOGIN_TIMEOUT_MS exists for the tests and can only shorten it. */
+const LOGIN_TIMEOUT_MS = Math.min(10 * 60000, Number(process.env.TABULA_LOGIN_TIMEOUT_MS) || 10 * 60000);
 
 async function login(args, flags) {
   const url = (args[0] ?? '').replace(/\/+$/, '');
@@ -1012,6 +1013,8 @@ async function startCallbackServer(state) {
     const result = new Promise((resolve, reject) => {
       answer = { resolve, reject };
     });
+    // The wait can end before anyone awaits the result (during registration); that must not be an unhandled rejection.
+    result.catch(() => {});
     const page = (res, status, text) =>
       res.writeHead(status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }).end(`<!doctype html><title>tabula</title><p>${text}</p>`);
     const server = createServer((req, res) => {
@@ -1021,7 +1024,7 @@ async function startCallbackServer(state) {
       page(res, 200, 'Done. You can close this tab and go back to the terminal.');
       answer.resolve(u.searchParams);
     });
-    const timer = setTimeout(() => answer.reject(new CliError('no answer from the browser within 10 minutes; run tabula login again')), LOGIN_TIMEOUT_MS);
+    const timer = setTimeout(() => answer.reject(new CliError('no answer from the browser in time; run tabula login again')), LOGIN_TIMEOUT_MS);
     timer.unref();
     server.on('error', rejectServer);
     server.listen(0, '127.0.0.1', () =>
@@ -1060,7 +1063,13 @@ async function oauthLogin(url, flags) {
   if (![meta.issuer, meta.registration_endpoint, meta.authorization_endpoint, meta.token_endpoint].every(isHttpUrl)) {
     throw new CliError(`${url} does not describe its OAuth endpoints; is it a Tabula server?`);
   }
+  // RFC 8414 §3.3: the metadata must name the address it was fetched from. Another address would be where the
+  // tokens go from now on, so the owner chooses it explicitly.
   const base = meta.issuer.replace(/\/+$/, '');
+  if (base !== url) {
+    const shown = /^https?:\/\/[\x21-\x7e]{1,200}$/.test(base) ? base : 'another address';
+    throw new CliError(`${url} says its address is ${shown}; run tabula login ${shown}`);
+  }
   const resource = `${base}/api`;
   const state = randomBytes(16).toString('base64url');
   const callback = await startCallbackServer(state);

@@ -9,7 +9,7 @@ const ID = (n: number) => `${String(n).padStart(8, '0')}-0000-4000-8000-00000000
 const at = (minutes: number) => new Date(Date.UTC(2026, 10, 9, 8, 0) + minutes * 60_000);
 const fileEvent = (n: number, minutes: number, o: Partial<ActivityEvent> = {}): ActivityEvent => ({
   kind: 'file', recordId: ID(n), title: `docs/${n}.md`, path: `docs/${n}.md`, project: 'demo', by: 'cli', at: at(minutes), create: false,
-  action: '', ...o,
+  action: 'Pushed', ...o,
 });
 const rows = (events: ActivityEvent[]) => mergeActivity(events).map((r) => [r.action, r.by, r.at.slice(11, 16)]);
 
@@ -53,7 +53,7 @@ describe('activity rows', () => {
   });
 
   it('keeps projects and authors apart', () => {
-    expect(rows([fileEvent(1, 0), fileEvent(2, 1, { project: 'shop' }), fileEvent(3, 2, { by: 'human' }), fileEvent(4, 3)])).toEqual([
+    expect(rows([fileEvent(1, 0), fileEvent(2, 1, { project: 'shop' }), fileEvent(3, 2, { by: 'human', action: 'Edited' }), fileEvent(4, 3)])).toEqual([
       ['Pushed 2 files', 'cli', '08:03'],
       ['Edited 1 file', 'human', '08:02'],
       ['Pushed 1 file', 'cli', '08:01'],
@@ -67,12 +67,18 @@ describe('activity rows', () => {
       at: '2026-11-09T08:02:00.000Z', count: 2,
       children: [{ id: ID(1), path: 'docs/1.md', ref: 'tabula:00000001' }, { id: ID(2), path: 'docs/2.md', ref: 'tabula:00000002' }],
     });
-    expect(mergeActivity([fileEvent(7, 0, { by: 'claude-code' })])).toEqual([
+    expect(mergeActivity([fileEvent(7, 0, { by: 'claude-code', action: 'Edited' })])).toEqual([
       {
         type: 'file', action: 'Edited 1 file', ref: 'tabula:00000007', id: ID(7), title: 'docs/7.md', path: 'docs/7.md', project: 'demo',
         by: 'claude-code', at: '2026-11-09T08:00:00.000Z',
       },
     ]);
+  });
+
+  it('takes the model of the last change of a batch and leaves it out when there is none', () => {
+    const [batch] = mergeActivity([fileEvent(1, 0, { model: 'a-model' }), fileEvent(2, 1, { model: 'b-model' })]);
+    expect(batch!.model).toBe('b-model');
+    expect(mergeActivity([fileEvent(3, 0)])[0]).not.toHaveProperty('model');
   });
 
   it('merges the changes of one record by one author within an hour of the first', () => {

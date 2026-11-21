@@ -1,5 +1,5 @@
 // Tabula service worker: makes the app installable and the shell load fast and offline.
-// Data never goes through the cache: /api and /mcp always hit the network (they need the token
+// Data never goes through the cache: /api and /mcp always hit the network (they need the sign-in
 // and must be fresh — agents write while the app is open). /media is left to the browser too:
 // video and audio are fetched with Range requests, which a service worker would break.
 const SHELL = 'tabula-shell-v1';

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, ApiError } from '../api';
-import { TimeAgo } from '../features/common';
+import { statedModel, TimeAgo } from '../features/common';
 import { CopyRefButton } from '../features/CopyRefButton';
 import { EditorBar } from '../features/EditorBar';
 import { MESSAGE_TONE, statusText } from '../features/inbox/InboxList';
@@ -150,7 +150,7 @@ export function MessagePage({ id, from, projects }: { id: string; from?: string;
               <div className="message-history__meta">
                 <strong>
                   {e.source === 'human' ? 'You' : e.actor}
-                  {e.model && <span className="t-subtle" title="As stated by the model"> · {e.model}</span>}
+                  {statedModel(e.model) && <span className="t-subtle" title="As stated by the model"> · {statedModel(e.model)}</span>}
                 </strong>
                 <span>{eventText(e)}</span>
                 <span className="t-spacer" />

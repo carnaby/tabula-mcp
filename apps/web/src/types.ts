@@ -252,6 +252,8 @@ export type ActivityItem = {
   project: string | null;
   /** 'human', 'cli', an agent's label, or 'worker'. */
   by: string;
+  /** The model the writer named (as stated); absent when none. */
+  model?: string;
   at: string;
   count?: number;
   /** One file: its path. */

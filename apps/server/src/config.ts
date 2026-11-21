@@ -39,7 +39,8 @@ export type Config = {
   fornax: FornaxConfig | undefined;
   port: number;
   host: string;
-  webDist: string;
+  /** The built web UI; null: not served (tests). */
+  webDist: string | null;
   media: {
     /** Where attachments of reports are stored (a volume in Docker). */
     dir: string;

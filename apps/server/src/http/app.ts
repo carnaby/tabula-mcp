@@ -96,11 +96,10 @@ export async function buildApp(deps: {
   await app.register(apiRoutes, { prefix: '/api', db: deps.db, config: deps.config, store, mediaKey, authCtx });
   await app.register(inboxApiRoutes, { prefix: '/inbox-api/v1', db: deps.db });
 
-  const webRoot = resolve(deps.config.webDist);
-  if (existsSync(webRoot)) {
-    await app.register(fastifyStatic, { root: webRoot, index: 'index.html' });
-  } else {
-    app.log.warn({ webRoot }, 'web build not found; UI is not served');
+  if (deps.config.webDist !== null) {
+    const webRoot = resolve(deps.config.webDist);
+    if (existsSync(webRoot)) await app.register(fastifyStatic, { root: webRoot, index: 'index.html' });
+    else app.log.warn({ webRoot }, 'web build not found; UI is not served');
   }
 
   return app;

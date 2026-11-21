@@ -9,6 +9,7 @@ import { purgeClosedMedia } from './domain/reports.js';
 import { fornaxClient } from './fornax/client.js';
 import { createFornaxSync } from './fornax/sync.js';
 import { buildApp } from './http/app.js';
+import { singleFlight } from './maintenance/single-flight.js';
 import { MediaStore } from './media/store.js';
 
 const config = loadConfig();
@@ -28,7 +29,7 @@ const authSweep = async () => {
     app.log.error({ err: loggableError(e) }, 'could not clean up expired sign-in data; retrying in a minute');
   }
 };
-const authTimer = auth ? setInterval(authSweep, 60_000) : null;
+const authTimer = auth ? setInterval(singleFlight(authSweep), 60_000) : null;
 
 // Without usable media storage Tabula still runs: only report uploads and new frames fail (503).
 const mediaProblem = await store.startup();
@@ -58,8 +59,9 @@ const purge = async () => {
     app.log.error(loggableError(e) as Error);
   }
 };
-const purgeTimer = setInterval(purge, 15 * 60 * 1000);
-void purge();
+const purgeOnce = singleFlight(purge);
+const purgeTimer = setInterval(purgeOnce, 15 * 60 * 1000);
+void purgeOnce();
 
 const shutdown = async () => {
   clearInterval(purgeTimer);

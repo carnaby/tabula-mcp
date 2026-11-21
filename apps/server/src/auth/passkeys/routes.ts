@@ -69,7 +69,7 @@ export function registerPasskeyRoutes(app: FastifyInstance, ctx: AuthContext & {
 
   /** A browser that has a session confirms it (fresh again); otherwise a new session starts. */
   const signIn = async (req: FastifyRequest, reply: FastifyReply, now: Date) => {
-    const current = await sessionFromCookie(ctx, req, now);
+    const current = await sessionFromCookie(ctx, req, reply, now);
     if (current) return markVerified(db, current.session.id, now);
     const { token } = await createSession(db, { userAgent: req.headers['user-agent'], now });
     reply.header('Set-Cookie', sessionCookie(auth, token, SESSION_TTL_MS));

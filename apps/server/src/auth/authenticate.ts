@@ -42,11 +42,16 @@ export function challenge(auth: AuthSettings | null, kind: ResourceKind, invalid
 /** A browser request that changes something with the session cookie must come from Tabula's own pages (spec §4.3). */
 export const sameOrigin = (req: FastifyRequest, auth: AuthSettings): boolean => req.headers.origin === auth.issuer;
 
-/** The live session of the request's cookie, if any. */
-export async function sessionFromCookie(ctx: Pick<AuthContext, 'db' | 'auth'>, req: FastifyRequest, now: Date) {
+/**
+ * The live session of the request's cookie, if any. A use that renewed the session (its 30 days start again) sends the
+ * cookie again, so the browser keeps it as long as the server does, on every route that reads it.
+ */
+export async function sessionFromCookie(ctx: Pick<AuthContext, 'db' | 'auth'>, req: FastifyRequest, reply: FastifyReply, now: Date) {
   if (!ctx.auth) return undefined;
   const value = readCookie(req.headers.cookie, ctx.auth.cookie.name);
-  return value ? authenticateSession(ctx.db, value, now) : undefined;
+  const found = value ? await authenticateSession(ctx.db, value, now) : undefined;
+  if (found?.renewed) reply.header('Set-Cookie', sessionCookie(ctx.auth, value!, SESSION_TTL_MS));
+  return found;
 }
 
 async function fromBearer(ctx: AuthContext, token: string, kind: ResourceKind): Promise<Principal | null> {
@@ -72,12 +77,11 @@ export function apiAuth(ctx: AuthContext) {
       req.principal = p;
       return;
     }
-    const found = await sessionFromCookie(ctx, req, new Date());
+    const found = await sessionFromCookie(ctx, req, reply, new Date());
     if (ctx.auth && found) {
       if (!SAFE_METHODS.has(req.method) && !sameOrigin(req, ctx.auth)) {
         return reply.code(403).send({ error: 'forbidden', message: 'cross-origin request refused' });
       }
-      if (found.renewed) reply.header('Set-Cookie', sessionCookie(ctx.auth, readCookie(req.headers.cookie, ctx.auth.cookie.name)!, SESSION_TTL_MS));
       req.principal = { kind: 'session', session: found.session };
       return;
     }

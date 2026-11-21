@@ -123,7 +123,7 @@ export async function registerAuthorize(app: FastifyInstance, ctx: AuthContext &
     const checked = await check(db, auth, (req.query ?? {}) as Query);
     if (!checked.ok) return sendPage(reply, 400, messagePage(checked.title, checked.text));
     const now = new Date();
-    const found = await sessionFromCookie(ctx, req, now);
+    const found = await sessionFromCookie(ctx, req, reply, now);
     if (!found || !isFresh(found.session, now)) {
       return redirect(reply, `/signin?next=${encodeURIComponent(req.url)}&reason=${found ? 'fresh' : 'signin'}`);
     }
@@ -140,7 +140,7 @@ export async function registerAuthorize(app: FastifyInstance, ctx: AuthContext &
     forms.post(AUTHORIZE_PATH, { bodyLimit: 8 * 1024 }, async (req, reply) => {
       if (!sameOrigin(req, auth)) return sendPage(reply, 403, messagePage('Refused', 'The decision must be sent from the Tabula consent page.'));
       const now = new Date();
-      const found = await sessionFromCookie(ctx, req, now);
+      const found = await sessionFromCookie(ctx, req, reply, now);
       if (!found) return sendPage(reply, 401, messagePage('Signed out', 'Sign in again, then start the connection again in the app.'));
       const form = formOf(req);
       if (!form || form.repeated) return sendPage(reply, 400, messagePage('Refused', BAD_DECISION_TEXT));

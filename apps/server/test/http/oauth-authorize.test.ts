@@ -2,7 +2,8 @@ import { eq, isNull } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { authenticateAccessToken, issueTokenPair } from '../../src/auth/oauth/store.js';
-import { oauthConnections, oauthPending } from '../../src/db/schema.js';
+import { createSession } from '../../src/auth/sessions.js';
+import { oauthConnections, oauthPending, uiSessions } from '../../src/db/schema.js';
 import { buildApp } from '../../src/http/app.js';
 import { TEST_PUBLIC_URL, testConfig, useTestDb } from '../helpers.js';
 import { authorizeQuery, CALLBACK, decide, newPkce, obtainCode, pendingOf, registerClient, signedInCookie } from '../oauth-flow.js';
@@ -70,6 +71,19 @@ describe('GET /oauth/authorize', () => {
     expect(anonymous.headers.location).toBe(`/signin?next=${encodeURIComponent(`/oauth/authorize?${query}`)}&reason=signin`);
     const stale = await authorize(query, await signedInCookie(db, { verifiedAgoMs: 10 * 60_000 }));
     expect(stale.headers.location).toMatch(/&reason=fresh$/);
+  });
+
+  it('sends the session cookie again when the consent page renewed the session, never for a dead one', async () => {
+    const id = await registerClient(app);
+    const { session, token } = await createSession(db, { userAgent: 'test', now: new Date() });
+    await db.update(uiSessions).set({ lastUsedAt: new Date(Date.now() - 2 * 3600_000) }).where(eq(uiSessions.id, session.id));
+    const renewed = await authorize(authorizeQuery(id, newPkce()), `tabula_session=${token}`);
+    expect(renewed.statusCode).toBe(200);
+    expect(renewed.headers['set-cookie']).toBe(`tabula_session=${token}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Strict`);
+    await db.update(uiSessions).set({ expiresAt: new Date(Date.now() - 1000) }).where(eq(uiSessions.id, session.id));
+    const dead = await authorize(authorizeQuery(id, newPkce()), `tabula_session=${token}`);
+    expect(dead.statusCode).toBe(302);
+    expect(dead.headers['set-cookie']).toBeUndefined();
   });
 
   it('shows the app as unverified text, where the access goes and which resource', async () => {

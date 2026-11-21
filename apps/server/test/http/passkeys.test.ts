@@ -147,6 +147,14 @@ describe('passkey sign-in', () => {
     expect((await me({ cookie })).json()).toMatchObject({ fresh: true });
   });
 
+  it('sends the cookie again when a sign-in renewed the open session', async () => {
+    const { key, cookie } = await register();
+    await db.update(uiSessions).set({ lastUsedAt: new Date(Date.now() - 2 * 3600_000) });
+    const res = await signIn(key, { cookie, ...from(7) });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['set-cookie']).toBe(`${cookie}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Strict`);
+  });
+
   it('stops an address after ten failures for a minute', async () => {
     const stranger = new SoftAuthenticator(TEST_PUBLIC_URL);
     const from = { 'x-forwarded-for': '203.0.113.50' };
@@ -164,6 +172,16 @@ describe('/api/auth', () => {
     expect(res.headers['set-cookie']).toBe('tabula_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict');
     expect(await db.select().from(uiSessions)).toHaveLength(0);
     expect((await me({ cookie })).statusCode).toBe(401);
+  });
+
+  it('signs out a session due for renewal: the last cookie sent clears it', async () => {
+    const { cookie } = await register();
+    await db.update(uiSessions).set({ lastUsedAt: new Date(Date.now() - 2 * 3600_000) });
+    const res = await app.inject({ method: 'POST', url: '/api/auth/logout', headers: { cookie, origin: TEST_PUBLIC_URL } });
+    expect(res.statusCode).toBe(204);
+    const sent = [res.headers['set-cookie'] ?? []].flat();
+    expect(sent.filter((c) => c.startsWith('tabula_session=')).at(-1)).toBe('tabula_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict');
+    expect(await db.select().from(uiSessions)).toHaveLength(0);
   });
 
   it('answers the old token, and refuses an app connection', async () => {

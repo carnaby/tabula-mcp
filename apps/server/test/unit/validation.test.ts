@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DomainError } from '../../src/domain/errors.js';
 import {
-  normalizeModel, normalizeTags, sanitizeAgentLabel, validateMemoryText, validateNoteText, validateProjectSlug,
+  isAgentLabel, normalizeModel, normalizeTags, sanitizeAgentLabel, validateMemoryText, validateNoteText, validateProjectSlug,
 } from '../../src/domain/validation.js';
 
 const fails = (fn: () => unknown, re: RegExp) => {
@@ -74,5 +74,12 @@ describe('normalizeModel', () => {
 
   it('is "unknown" when nothing usable is left', () => {
     for (const nothing of ['', '   ', '!!!', undefined, null, 42]) expect(normalizeModel(nothing)).toBe('unknown');
+  });
+});
+
+describe('isAgentLabel', () => {
+  it('is the rule of agent labels and connection names', () => {
+    for (const ok of ['claude-code', 'tabula-cli', 'gemini_cli.2', 'x'.repeat(40)]) expect(isAgentLabel(ok), ok).toBe(true);
+    for (const bad of ['', 'human', 'Claude', 'a b', 'x'.repeat(41), 'é']) expect(isAgentLabel(bad), bad).toBe(false);
   });
 });

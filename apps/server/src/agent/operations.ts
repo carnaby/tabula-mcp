@@ -461,8 +461,6 @@ const reportForAgent = (r: Report) => ({
   closed_at: r.closedAt?.toISOString() ?? null,
 });
 
-const agentEditorOf = (ctx: AgentContext) => ({ source: 'agent' as const, label: ctx.agentLabel, model: ctx.model ?? null });
-
 export async function agentListReports(
   ctx: AgentContext,
   p: { project?: string; status?: ReportStatusFilter; query?: string; limit?: number },
@@ -501,7 +499,7 @@ export async function agentGetReport(ctx: AgentContext, id: string) {
 
 /** create_report: every field is optional; the project is set only when the user named it. */
 export async function agentCreateReport(ctx: AgentContext, input: { project?: string; title?: string; description?: string }) {
-  const r = await createReport(ctx.db, { projectId: input.project ?? null, title: input.title, body: input.description }, agentEditorOf(ctx));
+  const r = await createReport(ctx.db, { projectId: input.project ?? null, title: input.title, body: input.description }, agentEditor(ctx));
   return { id: r.id, ref: refOf(r.id), version: r.version, project: r.projectId ?? NO_PROJECT, title: r.title };
 }
 
@@ -520,7 +518,7 @@ export async function agentUpdateReport(
     ctx.db,
     r.id,
     { triage: input.triage, appendTriage: input.append_triage, status: input.status, title: input.title, expectedVersion: input.expected_version },
-    agentEditorOf(ctx),
+    agentEditor(ctx),
   );
   return { id: out.id, ref: refOf(out.id), version: out.version, status: out.status };
 }
@@ -535,7 +533,7 @@ export async function agentViewAttachment(ctx: AgentContext, id: string): Promis
 
 export async function agentGetFrame(ctx: AgentContext, input: { video_id: string; at: string | number }): Promise<AgentImage> {
   const m = requireMedia(ctx);
-  const { frame, created } = await frameAt(ctx.db, m.store, m.paths, await resolveAttachmentId(ctx, input.video_id), parseTimestamp(input.at), agentEditorOf(ctx));
+  const { frame, created } = await frameAt(ctx.db, m.store, m.paths, await resolveAttachmentId(ctx, input.video_id), parseTimestamp(input.at), agentEditor(ctx));
   const { image } = await attachmentImage(ctx.db, m.store, m.paths, frame.id);
   return { image, mime: 'image/jpeg', text: JSON.stringify({ ...attachmentForAgent(frame, m), saved: created ? 'new frame saved to the report' : 'this frame was already saved' }) };
 }

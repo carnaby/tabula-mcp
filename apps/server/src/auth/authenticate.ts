@@ -2,7 +2,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { Config } from '../config.js';
 import type { Db } from '../db/client.js';
 import { sanitizeAgentLabel } from '../domain/validation.js';
-import { safeEqual } from '../http/auth.js';
+import { bearerToken, safeEqual } from '../http/auth.js';
 import { readCookie, sessionCookie } from './cookie.js';
 import type { LegacyUse, LegacyVia } from './legacy.js';
 import { authenticateAccessToken } from './oauth/store.js';
@@ -25,8 +25,6 @@ declare module 'fastify' {
 export type AuthContext = { db: Db; config: Config; auth: AuthSettings | null; legacy: LegacyUse };
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
-
-const bearerOf = (req: FastifyRequest): string | undefined => /^Bearer\s+(.+)$/i.exec(req.headers.authorization ?? '')?.[1]?.trim();
 
 /**
  * The 401 challenge (RFC 6750, RFC 9728): where the authorization server is described and which scope this resource
@@ -70,7 +68,7 @@ const unauthorized = (reply: FastifyReply, ctx: AuthContext, kind: ResourceKind,
 /** /api: an OAuth token for /api (the CLI), the session cookie (the web UI) or, in this release, TABULA_TOKEN. */
 export function apiAuth(ctx: AuthContext) {
   return async (req: FastifyRequest, reply: FastifyReply) => {
-    const bearer = bearerOf(req);
+    const bearer = bearerToken(req);
     if (bearer !== undefined) {
       const p = await fromBearer(ctx, bearer, 'api');
       if (!p) return unauthorized(reply, ctx, 'api', true);
@@ -92,7 +90,7 @@ export function apiAuth(ctx: AuthContext) {
 /** /mcp: an OAuth token for /mcp or, in this release, TABULA_TOKEN. Never the session cookie. */
 export function mcpAuth(ctx: AuthContext) {
   return async (req: FastifyRequest, reply: FastifyReply) => {
-    const bearer = bearerOf(req);
+    const bearer = bearerToken(req);
     const p = bearer === undefined ? null : await fromBearer(ctx, bearer, 'mcp');
     if (!p) return unauthorized(reply, ctx, 'mcp', bearer !== undefined);
     req.principal = p;
@@ -107,22 +105,17 @@ export async function requirePerson(req: FastifyRequest, reply: FastifyReply) {
   }
 }
 
-/** Who writes over /api: an app by its connection name, the web UI as "human", the old token by its X-Tabula-Agent header. */
-export function apiWriterLabel(req: FastifyRequest): string {
-  const p = req.principal;
-  if (p?.kind === 'oauth') return p.name;
-  if (p?.kind === 'legacy') {
-    const header = req.headers['x-tabula-agent'];
-    return header ? sanitizeAgentLabel(header) : 'human';
-  }
-  return 'human';
-}
-
 /**
- * The editor of a write over /api, labelled by apiWriterLabel: only "human" (the web UI) writes as the human; an app
- * connection, or the old token with an X-Tabula-Agent header, writes as an agent. /api never carries a model.
+ * Who writes over /api, from how the request authenticated: an app by its connection name, the old token by its
+ * X-Tabula-Agent header, both as agents; the web UI, and the old token without the header, as the human. /api never
+ * carries a model.
  */
 export function apiEditor(req: FastifyRequest): { source: 'agent' | 'human'; label: string } {
-  const label = apiWriterLabel(req);
-  return { source: label === 'human' ? 'human' : 'agent', label };
+  const p = req.principal;
+  if (p?.kind === 'oauth') return { source: 'agent', label: p.name };
+  const header = p?.kind === 'legacy' ? req.headers['x-tabula-agent'] : undefined;
+  if (header) return { source: 'agent', label: sanitizeAgentLabel(header) };
+  return { source: 'human', label: 'human' };
 }
+
+export const apiWriterLabel = (req: FastifyRequest): string => apiEditor(req).label;

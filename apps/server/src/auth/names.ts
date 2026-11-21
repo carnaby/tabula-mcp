@@ -1,9 +1,9 @@
-const NAME = /^[a-z0-9._-]{1,40}$/;
+import { isAgentLabel } from '../domain/validation.js';
 
 /** Why a connection name cannot be used, or null. The same rules as an agent label: it becomes one. */
 export function connectionNameProblem(name: string): string | null {
-  if (!NAME.test(name)) return 'a connection name is 1 to 40 lowercase letters, digits, dots, dashes or underscores';
   if (name === 'human') return '"human" is reserved for what you write in the web UI';
+  if (!isAgentLabel(name)) return 'a connection name is 1 to 40 lowercase letters, digits, dots, dashes or underscores';
   return null;
 }
 
@@ -27,7 +27,7 @@ export function suggestConnectionName(clientName: string | null, redirectUri: st
     .replace(/^[-._]+/, '')
     .slice(0, 40)
     .replace(/[-._]+$/, '');
-  return slug && slug !== 'human' ? slug : 'app';
+  return isAgentLabel(slug) ? slug : 'app';
 }
 
 /**

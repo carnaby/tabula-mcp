@@ -2,7 +2,7 @@ import { eq, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { projects } from '../db/schema.js';
 import { conflict, notFound } from './errors.js';
-import { validateProjectSlug } from './validation.js';
+import { rejectNul, validateProjectSlug } from './validation.js';
 
 export type Project = typeof projects.$inferSelect;
 export type ProjectSummary = {
@@ -33,6 +33,7 @@ export async function listProjects(db: Db): Promise<ProjectSummary[]> {
 }
 
 export async function requireProject(db: Db, id: string): Promise<Project> {
+  rejectNul(id, 'project');
   const [row] = await db.select().from(projects).where(eq(projects.id, id));
   if (row) return row;
   const known = (await listProjects(db)).map((p) => p.id).join(', ');

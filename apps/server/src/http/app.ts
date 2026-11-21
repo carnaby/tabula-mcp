@@ -10,7 +10,7 @@ import { RegistrationLinks, registerPasskeyRoutes } from '../auth/passkeys/route
 import { authSettings } from '../auth/settings.js';
 import type { Config } from '../config.js';
 import type { Db } from '../db/client.js';
-import { DomainError, loggableError } from '../domain/errors.js';
+import { DomainError, isNulRefusal, loggableError, NUL_REFUSED } from '../domain/errors.js';
 import { registerMcpRoutes } from '../mcp/routes.js';
 import { apiRoutes } from './api.js';
 import { registerCliRoutes } from './cli.js';
@@ -72,6 +72,7 @@ export async function buildApp(deps: {
       if (err.cause) app.log[err.status >= 500 ? 'error' : 'warn']({ err: loggableError(err.cause) }, err.message);
       return reply.code(err.status).send({ error: err.code, message: err.message });
     }
+    if (isNulRefusal(err)) return reply.code(400).send({ error: 'bad_request', message: NUL_REFUSED });
     const status = (err as { statusCode?: number }).statusCode ?? 500;
     if (status >= 500) {
       // Never the query values (transcripts, file contents) that database errors carry.

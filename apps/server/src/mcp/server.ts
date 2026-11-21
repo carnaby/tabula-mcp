@@ -8,7 +8,7 @@ import {
 } from '../agent/operations.js';
 import { agentGetMessage, agentListMessages, agentSendMessage, agentUpdateMessage } from '../agent/messages.js';
 import { REPORT_STATUSES } from '../domain/reports.js';
-import { badRequest, DomainError, loggableError } from '../domain/errors.js';
+import { badRequest, DomainError, isNulRefusal, loggableError, NUL_REFUSED } from '../domain/errors.js';
 import { MESSAGE_STATUSES, MESSAGE_TYPES, UPDATE_STATUSES, WAITING_ON } from '../domain/messages.js';
 import { createProject } from '../domain/projects.js';
 import { MEMORY_KINDS, normalizeModel, validateProjectSlug } from '../domain/validation.js';
@@ -84,6 +84,7 @@ async function runTool(log: McpLogger | undefined, fn: () => Promise<unknown>) {
       if (e.cause) log?.error({ err: loggableError(e.cause), msg: e.message });
       return { content: [{ type: 'text' as const, text: `${e.status}: ${e.message}` }], isError: true };
     }
+    if (isNulRefusal(e)) return { content: [{ type: 'text' as const, text: `400: ${NUL_REFUSED}` }], isError: true };
     log?.error(loggableError(e));
     return { content: [{ type: 'text' as const, text: '500: internal error in Tabula; retry later' }], isError: true };
   }

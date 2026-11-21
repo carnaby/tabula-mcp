@@ -183,13 +183,13 @@ describe('/api/auth', () => {
     expect((await me({ cookie })).statusCode).toBe(401);
   });
 
-  it('signs out a session due for renewal: the last cookie sent clears it', async () => {
+  it('signs out a session due for renewal: the one cookie sent clears it', async () => {
     const { cookie } = await register();
     await db.update(uiSessions).set({ lastUsedAt: new Date(Date.now() - 2 * 3600_000) });
     const res = await app.inject({ method: 'POST', url: '/api/auth/logout', headers: { cookie, origin: TEST_PUBLIC_URL } });
     expect(res.statusCode).toBe(204);
     const sent = [res.headers['set-cookie'] ?? []].flat();
-    expect(sent.filter((c) => c.startsWith('tabula_session=')).at(-1)).toBe('tabula_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict');
+    expect(sent.filter((c) => c.startsWith('tabula_session='))).toEqual(['tabula_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict']);
     expect(await db.select().from(uiSessions)).toHaveLength(0);
   });
 

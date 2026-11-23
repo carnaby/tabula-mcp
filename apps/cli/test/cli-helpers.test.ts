@@ -15,7 +15,10 @@ type CliModule = {
   checkText(bytes: Uint8Array): { ok: true; text: string } | { ok: false; reason: string };
   parseArgs(argv: string[]): { cmd: string | undefined; args: string[]; flags: Set<string> };
   pullFailure(error: unknown, o: { hook: boolean; deadline?: number; now?: number }): 'deadline' | 'stop' | 'skip' | 'failed';
-  makeApi(conn: { url: string; token: string }, deadline?: number): (method: string, path: string) => Promise<unknown>;
+  makeApi(
+    conn: { url: string; oauth: { access_token: string; expires_at: number; refresh_token: string; client_id: string } },
+    deadline?: number,
+  ): (method: string, path: string) => Promise<unknown>;
 };
 
 const CLI_URL = new URL('../tabula.mjs', import.meta.url);
@@ -125,17 +128,18 @@ describe('pull failures', () => {
   };
 
   it('makeApi tags a timeout, a refused connection and a rejected token', async () => {
+    const oauth = { access_token: 't', expires_at: Date.now() + 3600_000, refresh_token: 'r', client_id: 'c' };
     const sockets = new Set<Socket>();
     const hang = createServer((s) => void sockets.add(s));
     const reject = createHttpServer((_, res) => res.writeHead(401, { 'content-type': 'application/json' }).end('{}'));
     try {
       const hangUrl = await listen(hang);
-      await expect(cli.makeApi({ url: hangUrl, token: 't' }, Date.now() + 100)('GET', '/x'))
+      await expect(cli.makeApi({ url: hangUrl, oauth }, Date.now() + 100)('GET', '/x'))
         .rejects.toMatchObject({ unreachable: true, timedOut: true });
       const rejectUrl = await listen(reject);
-      await expect(cli.makeApi({ url: rejectUrl, token: 't' })('GET', '/x')).rejects.toMatchObject({ rejected: true });
+      await expect(cli.makeApi({ url: rejectUrl, oauth })('GET', '/x')).rejects.toMatchObject({ rejected: true });
       await new Promise<void>((r) => reject.close(() => r()));
-      await expect(cli.makeApi({ url: rejectUrl, token: 't' })('GET', '/x')).rejects.toMatchObject({ unreachable: true, timedOut: false });
+      await expect(cli.makeApi({ url: rejectUrl, oauth })('GET', '/x')).rejects.toMatchObject({ unreachable: true, timedOut: false });
     } finally {
       for (const s of sockets) s.destroy();
       hang.close();

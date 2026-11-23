@@ -1,4 +1,4 @@
-import { statSync } from 'node:fs';
+import { statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { sql } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
@@ -22,8 +22,11 @@ async function lockWaiters(): Promise<number> {
 }
 
 describe('tabula login through the browser', { timeout: 60_000 }, () => {
-  it('saves the client and its tokens, never a shared token, and writes under the connection name', async () => {
+  it('saves the client and its tokens, never a shared token, keeps other sections and writes under the connection name', async () => {
     const { home, repo } = await setup();
+    // An old "worker" section (transcription moved to Fornax) stays as it is.
+    const worker = { token: 'w'.repeat(32), language: 'en', diarize: { python: 'x', script: 'y' } };
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ worker }));
     const r = await login(home, repo);
     expect(r.code, r.stderr).toBe(0);
     expect(r.stdout).toContain(`Logged in to ${server.url}`);
@@ -33,6 +36,7 @@ describe('tabula login through the browser', { timeout: 60_000 }, () => {
         client_id: expect.any(String), refresh_token: expect.any(String), access_token: expect.any(String), expires_at: expect.any(Number),
         token_endpoint: `${server.url}/oauth/token`,
       },
+      worker,
     });
     const { oauth } = configOf(home);
     for (const secret of [oauth.access_token, oauth.refresh_token]) expect(r.stdout + r.stderr).not.toContain(secret);
@@ -134,5 +138,21 @@ describe('tabula login through the browser', { timeout: 60_000 }, () => {
     const other = await runCli(['status'], { cwd: repo, env: { ...env(home), TABULA_URL: 'http://127.0.0.1:9' } });
     expect(other.code).toBe(1);
     expect(other.stderr).toMatch(/not logged in/);
+  });
+});
+
+describe('a login from the release with the shared token', { timeout: 60_000 }, () => {
+  it('asks to log in again; the SessionStart hook stays quiet', async () => {
+    const { home, repo } = await setup();
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ url: server.url, token: 'o'.repeat(32) }));
+    const status = await runCli(['status'], { cwd: repo, env: env(home) });
+    expect(status.code).toBe(1);
+    expect(status.stderr).toMatch(/run tabula login/);
+    const hook = await runCli(['pull', '--hook'], { cwd: repo, env: env(home) });
+    expect(hook.code).toBe(0);
+    expect(hook.stderr).toBe('');
+    const flag = await runCli(['login', server.url, '--token-stdin'], { cwd: repo, env: env(home) });
+    expect(flag.code).toBe(1);
+    expect(flag.stderr).toMatch(/does not take --token-stdin/);
   });
 });

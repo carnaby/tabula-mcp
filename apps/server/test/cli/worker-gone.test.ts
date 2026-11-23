@@ -1,13 +1,13 @@
-import { readFileSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { TEST_TOKEN, useTestDb, useTestTokens } from '../helpers.js';
+import { cliConfig, useTestDb, useTestTokens } from '../helpers.js';
 import { runCli, tempDir, useServer } from './harness.js';
 
 const db = useTestDb();
 useTestTokens(db);
 const server = useServer(db);
-const env = (home: string) => ({ TABULA_HOME: home, TABULA_URL: undefined, TABULA_TOKEN: undefined, TABULA_WORKER_TOKEN: undefined });
+const env = (home: string) => ({ TABULA_HOME: home, TABULA_URL: undefined, TABULA_WORKER_TOKEN: undefined });
 
 describe('the transcription worker moved to Fornax', { timeout: 60_000 }, () => {
   it.each([[[]], [['setup']], [['doctor']], [['queue', '--json']], [['--once']], [['bogus']]])(
@@ -32,22 +32,11 @@ describe('the transcription worker moved to Fornax', { timeout: 60_000 }, () => 
     expect(r.stdout).not.toMatch(/worker|whisper|diariz|transcri|ffmpeg|Python/i);
   });
 
-  it('ignores an old worker key in config.json and login keeps it as it is', async () => {
+  it('ignores an old worker key in config.json', async () => {
     const home = tempDir('tabula-home-');
     const worker = { token: 'w'.repeat(32), language: 'en', diarize: { python: 'x', script: 'y' } };
-    writeFileSync(join(home, 'config.json'), JSON.stringify({ url: server.url, token: TEST_TOKEN, worker }));
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ ...cliConfig(server.url), worker }));
     const v = await runCli(['status'], { cwd: home, env: env(home) });
     expect(v.stderr).not.toMatch(/worker/i);
-    const r = await runCli(['login', server.url, '--token-stdin'], { cwd: home, env: env(home), input: TEST_TOKEN });
-    expect(r.code).toBe(0);
-    expect(JSON.parse(readFileSync(join(home, 'config.json'), 'utf8'))).toEqual({ url: server.url, token: TEST_TOKEN, worker });
-  });
-
-  it('login replaces a config.json that is not valid JSON', async () => {
-    const home = tempDir('tabula-home-');
-    writeFileSync(join(home, 'config.json'), '{ broken');
-    const r = await runCli(['login', server.url, '--token-stdin'], { cwd: home, env: env(home), input: TEST_TOKEN });
-    expect(r.code).toBe(0);
-    expect(JSON.parse(readFileSync(join(home, 'config.json'), 'utf8'))).toEqual({ url: server.url, token: TEST_TOKEN });
   });
 });

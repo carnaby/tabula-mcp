@@ -13,7 +13,7 @@ let home: string;
 // the server it is pointed at (a saved login is used only for the URL it was made with), never with a shared token.
 const env = (url = server.url) => {
   writeFileSync(join(home, 'config.json'), JSON.stringify(cliConfig(url)));
-  return { TABULA_HOME: home, TABULA_URL: url, TABULA_TOKEN: undefined };
+  return { TABULA_HOME: home, TABULA_URL: url };
 };
 const cfg = { project: 'demo', sync: ['docs/**'] };
 
@@ -34,7 +34,7 @@ describe('tabula pull --hook', { timeout: 60_000 }, () => {
   it('exits 0 silently without credentials, without .tabula.json and outside a repository', async () => {
     const a = makeRepo(tempDir('tabula-h-'), cfg);
     const quiet = { code: 0, stdout: '', stderr: '' };
-    expect(await runCli(['pull', '--hook'], { cwd: a, env: { TABULA_HOME: home, TABULA_URL: undefined, TABULA_TOKEN: undefined } }))
+    expect(await runCli(['pull', '--hook'], { cwd: a, env: { TABULA_HOME: home, TABULA_URL: undefined } }))
       .toMatchObject(quiet);
     const bare = tempDir('tabula-h2-');
     git(bare, 'init', '-q');

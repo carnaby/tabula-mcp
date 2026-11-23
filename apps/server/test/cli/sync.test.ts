@@ -16,12 +16,12 @@ let home: string;
 // Logged in with OAuth to the server the CLI is pointed at: a saved login is used only for the URL it was made with.
 const env = (url = server.url) => {
   writeFile(home, 'config.json', JSON.stringify(cliConfig(url)));
-  return { TABULA_HOME: home, TABULA_URL: url, TABULA_TOKEN: undefined };
+  return { TABULA_HOME: home, TABULA_URL: url };
 };
 // Not logged in: no saved login (an earlier env() wrote one) and nothing in the environment.
 const noCreds = () => {
   rmSync(join(home, 'config.json'), { force: true });
-  return { TABULA_HOME: home, TABULA_URL: undefined, TABULA_TOKEN: undefined };
+  return { TABULA_HOME: home, TABULA_URL: undefined };
 };
 const cfg = { project: 'demo', sync: ['docs/**'], state: ['docs/handoff/*.md'] };
 const serverPaths = async (project = 'demo') => (await listFiles(db, project)).map((f) => f.path);

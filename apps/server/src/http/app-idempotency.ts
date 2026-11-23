@@ -53,7 +53,6 @@ export async function idempotent(
     const r = await run();
     return reply.code(r.status).send(r.body);
   }
-  const ref = { connectionId: request.connectionId, key };
   if (claim.kind !== 'claimed' && request.bodyUnread) reply.header('connection', 'close');
   if (claim.kind === 'replay') return reply.code(claim.status).header('idempotent-replayed', 'true').send(claim.body);
   if (claim.kind === 'mismatch') {
@@ -62,6 +61,7 @@ export async function idempotent(
   if (claim.kind === 'in_progress') {
     throw new AppApiError(409, 'request_in_progress', 'a request with this Idempotency-Key is still running; try again in a moment');
   }
+  const ref = { connectionId: request.connectionId, key, claimedAt: claim.claimedAt };
   let completed = false;
   try {
     const r = await run();

@@ -8,6 +8,7 @@ import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { sweepAuth } from '../../src/auth/sweep.js';
 import { appIdempotency, oauthConnections, reportAttachments, thoughts } from '../../src/db/schema.js';
+import { claimIdempotencyKey, completeIdempotencyKey, releaseIdempotencyKey } from '../../src/domain/idempotency.js';
 import { buildApp } from '../../src/http/app.js';
 import { fingerprintOf } from '../../src/http/app-idempotency.js';
 import { MediaStore } from '../../src/media/store.js';
@@ -116,6 +117,25 @@ describe('Idempotency-Key on JSON writes', () => {
     const res = await postThought(thought, 'key-1');
     expect(res.statusCode).toBe(201);
     expect(await rows()).toMatchObject([{ key: 'key-1', state: 'done', responseStatus: 201 }]);
+  });
+
+  it('lets only the claim that owns a row complete or release it, not a stale run whose row was taken over', async () => {
+    const connectionId = await klaraId();
+    const ref = { connectionId, key: 'key-1', fingerprint: 'f' };
+    const oldAt = new Date(Date.now() - 2 * 3600_000);
+    const old = await claimIdempotencyKey(db, { ...ref, now: oldAt });
+    expect(old).toEqual({ kind: 'claimed', claimedAt: oldAt });
+    // The old run is stuck for over an hour; a retry takes the stale row over.
+    const fresh = await claimIdempotencyKey(db, { ...ref, now: new Date() });
+    expect(fresh.kind).toBe('claimed');
+    // The old run wakes up: neither its answer nor its failure touches the retry's row.
+    await completeIdempotencyKey(db, { connectionId, key: 'key-1', claimedAt: oldAt, status: 201, body: { id: 'old' } });
+    await releaseIdempotencyKey(db, { connectionId, key: 'key-1', claimedAt: oldAt });
+    expect(await rows()).toMatchObject([{ key: 'key-1', state: 'pending', responseStatus: null }]);
+    // The owner completes it.
+    if (fresh.kind !== 'claimed') throw new Error('not claimed');
+    await completeIdempotencyKey(db, { connectionId, key: 'key-1', claimedAt: fresh.claimedAt, status: 201, body: { id: 'new' } });
+    expect(await rows()).toMatchObject([{ key: 'key-1', state: 'done', responseStatus: 201, responseBody: { id: 'new' } }]);
   });
 
   it('refuses a key over 200 characters with 400 validation_failed and writes nothing', async () => {

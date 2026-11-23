@@ -309,7 +309,7 @@ export function Attachments({
             <span className="t-subtle">{formatSize(d.size)}{d.purgedAt ? ' · deleted after the report was closed' : ''}</span>
           </div>
           {d.createdBy !== 'human' && <Author {...authorOf(d.createdBy, d.createdByModel)} compact />}
-          {d.url && <IconLink href={d.url} icon="download" label={`Download ${d.fileName}`} size="sm" />}
+          {d.url && <IconLink href={d.url} icon="download" label={`Download ${d.fileName}`} size="sm" download={d.fileName} />}
           <CopyRefButton id={d.id} size="sm" />
           <IconButton size="sm" icon="trash" label="Delete" onClick={() => void remove(d)} />
         </div>

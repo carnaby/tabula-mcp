@@ -104,7 +104,7 @@ describe('unknown paths', () => {
     writeFileSync(join(dir, 'index.html'), '<title>Tabula</title>');
     const served = await buildApp({ config: testConfig({ webDist: dir }), db });
     try {
-      for (const url of ['/app-api/v1/nope', '/app-api/v2/projects']) {
+      for (const url of ['/app-api', '/app-api/', '/app-api/v1/nope', '/app-api/v2/projects']) {
         const anonymous = await served.inject({ method: 'GET', url });
         expect(anonymous.statusCode, url).toBe(401);
         expect(anonymous.headers['www-authenticate'], url).toMatch(/oauth-protected-resource\/app-api/);

@@ -133,6 +133,10 @@ export const appApiRoutes: FastifyPluginAsync<AppApiDeps> = async (app, deps) =>
   app.get('/*', async () => {
     throw new AppApiError(404, 'not_found', 'no such endpoint in the App API');
   });
+  // The wildcard does not match the bare prefix: '/' here is both /app-api and /app-api/.
+  app.get('/', async () => {
+    throw new AppApiError(404, 'not_found', 'no such endpoint in the App API');
+  });
 
   app.get('/v1/projects', async () => ({
     items: (await listProjects(db)).filter((p) => p.id !== 'global').map((p) => ({ slug: p.id, name: p.name, description: p.description })),

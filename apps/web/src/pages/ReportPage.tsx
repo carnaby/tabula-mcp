@@ -242,13 +242,13 @@ function Editor({
   };
 
   // What closing deletes after the grace period: video, audio and documents.
-  const recordings = attachments.filter((a) => isRecording(a) || a.kind === 'document');
-  const mediaGone = recordings.length > 0 && recordings.every((a) => a.purgedAt);
+  const media = attachments.filter((a) => isRecording(a) || a.kind === 'document');
+  const mediaGone = media.length > 0 && media.every((a) => a.purgedAt);
 
   const setKeepMedia = async (keepMedia: boolean) => {
     if (!base) return;
     const graceOver = !!base.closedAt && Date.parse(base.closedAt) + purgeAfterHours * 3600_000 <= Date.now();
-    if (!keepMedia && base.status === 'done' && graceOver && recordings.some((a) => !a.purgedAt)) {
+    if (!keepMedia && base.status === 'done' && graceOver && media.some((a) => !a.purgedAt)) {
       const ok = await confirm({
         title: 'Stop keeping the media?',
         message: 'Video, audio and documents will be deleted within 15 minutes.',
@@ -269,10 +269,10 @@ function Editor({
   const setStatus = async (status: ReportStatus) => {
     if (!base || status === base.status) return;
     if (status === 'done') {
-      const media = recordings.filter((a) => !a.purgedAt).length;
+      const onDisk = media.filter((a) => !a.purgedAt).length;
       const ok = await confirm({
         title: 'Close this report?',
-        message: closeReportMessage(media, base.keepMedia, purgeAfterHours),
+        message: closeReportMessage(onDisk, base.keepMedia, purgeAfterHours),
         confirmLabel: 'Close report',
       });
       if (!ok) return;

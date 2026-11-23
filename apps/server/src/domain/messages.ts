@@ -118,6 +118,10 @@ export async function updateMessage(db: Db, id: string, patch: MessagePatch, act
     if (!reply && !patch.status) throw badRequest('pass a reply, a status or both');
     if (patch.status === 'waiting' && !patch.waitingOn) throw badRequest('status waiting needs waiting_on: author or sender');
     if (patch.waitingOn && patch.status !== 'waiting') throw badRequest('waiting_on goes only with status waiting');
+    // A message from the author has no sender project: waiting on the sender is waiting on the author.
+    if (cur.fromProject === null && patch.waitingOn === 'sender') {
+      throw badRequest('the sender of this message is the author; use waiting_on "author"');
+    }
     if (patch.status === 'rejected' && !reply) throw badRequest('status rejected needs a reply with the reason');
     if (!patch.status && wasClosed) throw conflict('the message is closed; reopen it before replying');
     if (patch.status) {

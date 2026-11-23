@@ -66,6 +66,16 @@ describe('createMessage', () => {
       db.insert(messages).values({ toProject: 'beta', fromProject: null, type: 'request', title: 'T', body: 'B', source: 'agent', createdBy: 'x' }),
     ).rejects.toMatchObject({ cause: { code: '23514' } });
   });
+
+  it('refuses to let a message of the author wait on the sender, for every actor, and lets it wait on the author', async () => {
+    const m = await createMessage(db, { to: 'beta', from: null, type: 'request', title: 'Renew it', body: 'By Friday.' }, { source: 'human', label: 'klara' });
+    for (const actor of [full, narrow, { source: 'human', label: 'human', access: 'full' } as const]) {
+      await expect(move(m, { status: 'waiting', waitingOn: 'sender' }, actor)).rejects.toMatchObject({ code: 'bad_request', message: expect.stringContaining('waiting_on "author"') });
+    }
+    expect((await getMessage(db, m.id))!.version).toBe(1);
+    expect(await move(m, { status: 'waiting', waitingOn: 'author' })).toMatchObject({ status: 'waiting', waitingOn: 'author', version: 2 });
+    expect(await messageCounts(db)).toEqual({ open: 1, waiting_author: 1 });
+  });
 });
 
 describe('updateMessage', () => {

@@ -31,8 +31,6 @@ export type WaitingItem = {
   /** The report's version, for Mark done (expected_version). */
   version: number;
   keep_media: boolean;
-  /** Video and audio of the report still on disk. */
-  recordings: number;
   /** Video, audio and documents of the report still on disk: what closing deletes, so the close confirmation names them. */
   media: number;
   transcript: WaitingTranscript | null;
@@ -148,7 +146,7 @@ export async function dashboard(db: Db, now = new Date(), { transcriptionEnabled
     const onDisk = recs.filter((a) => !a.purgedAt).length;
     const base = {
       id: r.id, ref: refOf(r.id), title: r.title, project: r.projectId, version: r.version, keep_media: r.keepMedia,
-      recordings: onDisk, media: onDisk + (documentsOf.get(r.id) ?? 0), transcript,
+      media: onDisk + (documentsOf.get(r.id) ?? 0), transcript,
     };
     waiting.push({ ...base, type: r.status === 'new' ? 'new_report' : 'triaged', since: (r.status === 'new' ? r.createdAt : r.updatedAt).toISOString() });
     for (const a of recs) {
@@ -163,7 +161,7 @@ export async function dashboard(db: Db, now = new Date(), { transcriptionEnabled
   for (const m of waitingMessages) {
     waiting.push({
       type: 'message_waiting', id: m.id, ref: refOf(m.id), title: m.title, project: m.toProject, ...senderView(m),
-      since: m.updatedAt.toISOString(), version: m.version, keep_media: false, recordings: 0, media: 0, transcript: null,
+      since: m.updatedAt.toISOString(), version: m.version, keep_media: false, media: 0, transcript: null,
     });
   }
   waiting.sort((a, b) => a.since.localeCompare(b.since) || a.id.localeCompare(b.id));

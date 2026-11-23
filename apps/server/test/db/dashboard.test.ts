@@ -66,7 +66,7 @@ describe('dashboard: waiting for you', () => {
     ]);
     expect(d.waiting[0]).toMatchObject({ id: meeting.id, ref: refOf(meeting.id), project: null, since: meetingAt.toISOString(), version: 1, transcript: null });
     expect(d.waiting[1]).toMatchObject({ id: triaged.id, project: 'demo', since: triagedAt.toISOString(), version: 2 });
-    expect(d.waiting[2]).toMatchObject({ id: fresh.id, since: freshAt.toISOString(), transcript: 'failed', recordings: 1 });
+    expect(d.waiting[2]).toMatchObject({ id: fresh.id, since: freshAt.toISOString(), transcript: 'failed', media: 1 });
     expect(d.waiting[3]).toMatchObject({
       id: fresh.id, ref: refOf(fresh.id), attachment_id: failed, file_name: 'voice.wav', error: 'ffmpeg exited with 1', since: failedAt.toISOString(),
     });
@@ -85,9 +85,9 @@ describe('dashboard: waiting for you', () => {
     await recording(queuedFailed.id, { job: { status: 'queued' } });
 
     const by = Object.fromEntries((await dashboard(db)).waiting.filter((w) => w.type === 'new_report').map((w) => [w.title, w]));
-    expect(by['Running and queued']).toMatchObject({ transcript: 'running', recordings: 2 });
-    expect(by['Failed and done']).toMatchObject({ transcript: 'failed', recordings: 2 });
-    expect(by['Queued and failed']).toMatchObject({ transcript: 'queued', recordings: 2 });
+    expect(by['Running and queued']).toMatchObject({ transcript: 'running', media: 2 });
+    expect(by['Failed and done']).toMatchObject({ transcript: 'failed', media: 2 });
+    expect(by['Queued and failed']).toMatchObject({ transcript: 'queued', media: 2 });
   });
 
   it('leaves out closed reports, and failed transcriptions of closed reports or deleted recordings', async () => {
@@ -113,10 +113,10 @@ describe('dashboard: waiting for you', () => {
     await report({ title: 'Text only', created: ago(6) });
 
     const by = Object.fromEntries((await dashboard(db)).waiting.map((w) => [w.title, w]));
-    expect(by.Done).toMatchObject({ transcript: 'done', recordings: 1, keep_media: false });
-    expect(by.Waiting).toMatchObject({ transcript: 'queued', recordings: 2, keep_media: true });
-    expect(by.Running).toMatchObject({ transcript: 'running', recordings: 1 });
-    expect(by['Text only']).toMatchObject({ transcript: null, recordings: 0 });
+    expect(by.Done).toMatchObject({ transcript: 'done', media: 1, keep_media: false });
+    expect(by.Waiting).toMatchObject({ transcript: 'queued', media: 2, keep_media: true });
+    expect(by.Running).toMatchObject({ transcript: 'running', media: 1 });
+    expect(by['Text only']).toMatchObject({ transcript: null, media: 0 });
   });
 
   it('does not count a purged recording in a report', async () => {
@@ -124,7 +124,7 @@ describe('dashboard: waiting for you', () => {
     const r = await report({ title: 'Reopened', created: ago(60) });
     await recording(r.id, { job: { status: 'done' }, transcribed: true, purged: true });
     await recording(r.id, { job: { status: 'done' }, transcribed: true });
-    expect((await dashboard(db)).waiting).toEqual([expect.objectContaining({ title: 'Reopened', recordings: 1 })]);
+    expect((await dashboard(db)).waiting).toEqual([expect.objectContaining({ title: 'Reopened', media: 1 })]);
   });
 
   it('counts documents on disk with the recordings as the media that closing deletes', async () => {
@@ -147,9 +147,9 @@ describe('dashboard: waiting for you', () => {
     await report({ title: 'Text only', created: ago(3) });
 
     const by = Object.fromEntries((await dashboard(db)).waiting.map((w) => [w.title, w]));
-    expect(by.Contract).toMatchObject({ transcript: 'done', recordings: 1, media: 3 });
-    expect(by['Documents only']).toMatchObject({ transcript: null, recordings: 0, media: 1 });
-    expect(by['Text only']).toMatchObject({ recordings: 0, media: 0 });
+    expect(by.Contract).toMatchObject({ transcript: 'done', media: 3 });
+    expect(by['Documents only']).toMatchObject({ transcript: null, media: 1 });
+    expect(by['Text only']).toMatchObject({ media: 0 });
   });
 
   it('does not call a report failed because of a purged recording', async () => {

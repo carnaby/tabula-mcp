@@ -173,4 +173,16 @@ describe('references and Home', () => {
       { type: 'message_waiting', id: message.id, ref: refOf(message.id), title: 'Open a port', project: 'beta', from: 'alpha', version: 3 },
     ]);
   });
+
+  it('refuses to let a message of the author wait on the sender, and shows it on Home when it waits on the author', async () => {
+    const own = await createMessage(db, { to: 'beta', from: null, type: 'request', title: 'Renew it', body: 'By Friday.' }, { source: 'human', label: 'klara' });
+    const refused = await call('PATCH', `/api/messages/${own.id}`, { expected_version: 1, status: 'waiting', waiting_on: 'sender' });
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json().message).toContain('waiting_on "author"');
+    const waits = await call('PATCH', `/api/messages/${own.id}`, { expected_version: 1, status: 'waiting', waiting_on: 'author' });
+    expect(waits.json()).toMatchObject({ status: 'waiting', waiting_on: 'author', version: 2 });
+    const waiting = (await call('GET', '/api/dashboard')).json().waiting;
+    expect(waiting).toMatchObject([{ type: 'message_waiting', id: own.id, title: 'Renew it', project: 'beta', from: 'author', via: 'klara', version: 2 }]);
+    expect((await call('GET', '/api/messages/counts')).json()).toMatchObject({ waiting_author: 1 });
+  });
 });

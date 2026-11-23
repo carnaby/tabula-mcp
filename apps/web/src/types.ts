@@ -207,8 +207,6 @@ export type WaitingItem = {
   /** For Mark done (expectedVersion). */
   version: number;
   keep_media: boolean;
-  /** Video and audio still on disk. */
-  recordings: number;
   /** Video, audio and documents still on disk: what closing deletes, so the close confirmation names them. */
   media: number;
   transcript: WaitingTranscript | null;

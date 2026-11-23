@@ -8,7 +8,8 @@ export const IDEMPOTENCY_TTL_MS = 7 * 24 * 3600_000;
 export const STALE_PENDING_MS = 3600_000;
 
 export type Claim =
-  | { kind: 'claimed' }
+  /** `claimedAt` marks this claim: only its owner completes or releases the row, not a run it took over from. */
+  | { kind: 'claimed'; claimedAt: Date }
   | { kind: 'replay'; status: number; body: unknown }
   | { kind: 'mismatch' }
   | { kind: 'in_progress' };
@@ -34,7 +35,7 @@ export async function claimIdempotencyKey(db: Db, k: KeyRef & { fingerprint: str
         setWhere: and(eq(appIdempotency.state, 'pending'), lt(appIdempotency.createdAt, stale)),
       })
       .returning({ key: appIdempotency.key });
-    if (taken.length > 0) return { kind: 'claimed' };
+    if (taken.length > 0) return { kind: 'claimed', claimedAt: k.now };
     const [row] = await db.select().from(appIdempotency).where(byKey(k));
     if (!row) continue;
     if (row.fingerprint !== k.fingerprint) return { kind: 'mismatch' };
@@ -44,15 +45,16 @@ export async function claimIdempotencyKey(db: Db, k: KeyRef & { fingerprint: str
   return { kind: 'in_progress' };
 }
 
+/** The claim that owns a pending row: a stale run whose row a retry took over matches no longer. */
+type OwnedKey = KeyRef & { claimedAt: Date };
+const owned = (k: OwnedKey) => and(byKey(k), eq(appIdempotency.state, 'pending'), eq(appIdempotency.createdAt, k.claimedAt));
+
 /** The request succeeded: its answer is what a repeat gets. */
-export async function completeIdempotencyKey(db: Db, k: KeyRef & { status: number; body: unknown }): Promise<void> {
-  await db
-    .update(appIdempotency)
-    .set({ state: 'done', responseStatus: k.status, responseBody: k.body })
-    .where(and(byKey(k), eq(appIdempotency.state, 'pending')));
+export async function completeIdempotencyKey(db: Db, k: OwnedKey & { status: number; body: unknown }): Promise<void> {
+  await db.update(appIdempotency).set({ state: 'done', responseStatus: k.status, responseBody: k.body }).where(owned(k));
 }
 
 /** The request failed or broke off: the key is free for a retry. */
-export async function releaseIdempotencyKey(db: Db, k: KeyRef): Promise<void> {
-  await db.delete(appIdempotency).where(and(byKey(k), eq(appIdempotency.state, 'pending')));
+export async function releaseIdempotencyKey(db: Db, k: OwnedKey): Promise<void> {
+  await db.delete(appIdempotency).where(owned(k));
 }

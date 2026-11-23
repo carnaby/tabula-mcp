@@ -129,6 +129,15 @@ describe('message tools', () => {
     expect(fromProject.from).toBe('alpha');
     expect(fromProject).not.toHaveProperty('via');
   });
+
+  it('refuses to let a message of the author wait on the sender', async () => {
+    const m = await createMessage(db, { to: 'beta', from: null, type: 'request', title: 'Renew the certificate', body: 'By Friday.' }, { source: 'human', label: 'klara' });
+    const r = await tool('update_message', { id: refOf(m.id), as_project: 'beta', expected_version: 1, status: 'waiting', waiting_on: 'sender' });
+    expect(r.isError).toBe(true);
+    expect(r.all).toContain('waiting_on "author"');
+    expect((await getMessage(db, m.id))!.version).toBe(1);
+    expect((await tool('update_message', { id: refOf(m.id), as_project: 'beta', expected_version: 1, status: 'waiting', waiting_on: 'author' })).isError).toBe(false);
+  });
 });
 
 describe('separation from memory', () => {

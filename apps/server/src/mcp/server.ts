@@ -25,8 +25,13 @@ const kindParam = z.enum(MEMORY_KINDS);
 
 const modelParam = z
   .string()
+  .min(1)
+  .describe('Required. The exact identifier of the model generating this call, e.g. "claude-opus-5-5"; "unknown" if you do not know it. Stored with what you write, as stated by you.');
+/** get_frame mostly reads; a frame it saves keeps the model when given. */
+const optionalModelParam = z
+  .string()
   .optional()
-  .describe('The exact identifier of the model generating this call, e.g. "claude-opus-5-5"; "unknown" if you do not know it. Stored with what you write, as stated by you.');
+  .describe('The exact identifier of the model generating this call, e.g. "claude-opus-5-5"; optional here: stored only when a frame is saved.');
 
 /** Logger is optional only for places where the server is built without a request (e.g. tests). */
 export type McpLogger = { error(obj: unknown): void; warn(obj: unknown): void };
@@ -369,7 +374,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
       inputSchema: z.object({
         video_id: attachmentId,
         at: z.union([z.string(), z.number()]).describe('"2:41", "1:02:03" or seconds (161.5).'),
-        model: modelParam,
+        model: optionalModelParam,
       }),
     },
     (a) => runImageTool(ctx.log, () => agentGetFrame(writing(a.model), a)),

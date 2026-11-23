@@ -28,13 +28,14 @@ beforeEach(async () => {
 });
 
 type Content = Array<{ type: string; text: string }>;
+const WRITE_TOOLS = new Set(['remember', 'deprecate', 'setup_project', 'write_file', 'delete_file', 'save_thought', 'update_thought', 'create_report', 'update_report', 'name_speakers', 'edit_transcript', 'send_message', 'update_message']);
 async function tool(name: string, args: Record<string, unknown>) {
   const client = new Client({ name: 'tabula-test', version: '0.0.0' });
   await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), {
     requestInit: { headers: { Authorization: `Bearer ${agentToken}` } },
   }));
   try {
-    const r = await client.callTool({ name, arguments: args });
+    const r = await client.callTool({ name, arguments: WRITE_TOOLS.has(name) ? { ...args, model: 'claude-opus-5-5' } : args });
     const content = r.content as Content;
     return { blocks: content.map((c) => c.text), all: content.map((c) => c.text).join('\n'), isError: r.isError === true };
   } finally {

@@ -245,10 +245,20 @@ export async function requireAttachment(db: Db, id: string): Promise<Attachment>
   return a;
 }
 
-const safeFileName = (raw: string | undefined, ext: string): string => {
+/** Extensions a document's name may end with besides its verified one (any letter case). */
+const DOCUMENT_NAME_ALIASES: Record<string, string[]> = { md: ['markdown'] };
+
+const safeFileName = (raw: string | undefined, type: StoredFile['type']): string => {
   const base = (raw ?? '').replace(/[\x00-\x1f\x7f/\\]/g, '').trim();
   const name = [...base].slice(0, REPORT_LIMITS.fileName).join('');
-  return name || `attachment.${ext}`;
+  if (!name) return `attachment.${type.ext}`;
+  if (type.kind !== 'document') return name;
+  // A document is saved to disk under this name when downloaded: it must end with the verified type's extension, so
+  // a text file named "run.bat" or a ZIP named "tool.jar" never lands on the user's disk as a script or a program.
+  const named = /\.([^.]+)$/.exec(name)?.[1]?.toLowerCase();
+  if (named === type.ext || (named !== undefined && DOCUMENT_NAME_ALIASES[type.ext]?.includes(named))) return name;
+  const suffix = `.${type.ext}`;
+  return [...name].slice(0, REPORT_LIMITS.fileName - suffix.length).join('') + suffix;
 };
 
 export const CLOSED_REPORT = 'the report is closed; reopen it before adding files';
@@ -307,7 +317,7 @@ export async function addAttachment(
         .insert(reportAttachments)
         .values({
           id, reportId, kind: file.type.kind, mime: file.type.mime, size: file.size, sha256: file.sha256,
-          fileName: safeFileName(fileName, file.type.ext), storageKey: key, durationMs, createdBy: editor.label,
+          fileName: safeFileName(fileName, file.type), storageKey: key, durationMs, createdBy: editor.label,
           createdByModel: editor.model ?? null,
         })
         .returning();

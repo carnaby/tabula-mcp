@@ -71,6 +71,25 @@ describe('documents as report attachments', () => {
     expect((await app.inject({ method: 'GET', url: photo.url })).headers['content-disposition']).toMatch(/^inline;/);
   });
 
+  it('names a document after its verified type, so a download never saves a page, a script or a program', async () => {
+    const r = await newReport();
+    const html = await viaApi(r, Buffer.from('<script>alert(1)</script>', 'utf8'), 'text/plain', 'evil.html');
+    expect(html.json()).toMatchObject({ kind: 'document', fileName: 'evil.html.txt' });
+    const download = await app.inject({ method: 'GET', url: html.json().url });
+    expect(download.headers['content-disposition']).toBe(`attachment; filename*=UTF-8''evil.html.txt`);
+    expect(download.headers['content-type']).toBe('text/plain; charset=utf-8');
+    const jar = (await viaApp(r, DOCX, DOCX_TYPE, 'tool.jar')).json();
+    const kept = (await viaApp(r, PDF, 'application/pdf', 'report.pdf')).json();
+    const upper = (await viaApi(r, MD, 'text/markdown', 'Notes.MD')).json();
+    const long = (await viaApi(r, MD, 'text/markdown', 'notes.markdown')).json();
+    const bare = (await viaApi(r, PDF, 'application/pdf', 'Zmluva')).json();
+    const names = new Map((await db.select().from(reportAttachments)).map((a) => [a.id, a.fileName]));
+    expect([jar.id, kept.id, upper.id, long.id, bare.id].map((id) => names.get(id))).toEqual(['tool.jar.docx', 'report.pdf', 'Notes.MD', 'notes.markdown', 'Zmluva.pdf']);
+    // At the length limit the extension still fits.
+    const longName = `${'a'.repeat(199)}.html`;
+    expect((await viaApi(r, MD, 'text/plain', longName)).json().fileName).toBe(`${'a'.repeat(196)}.txt`);
+  });
+
   it.each([
     ['a PDF without its signature', Buffer.concat([Buffer.from('<html>', 'latin1'), Buffer.alloc(200, 0x20)]), 'application/pdf'],
     ['a DOCX that is no ZIP', Buffer.alloc(200, 0x41), DOCX_TYPE],

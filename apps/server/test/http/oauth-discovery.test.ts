@@ -19,12 +19,17 @@ const register = (payload: unknown, headers: Record<string, string> = {}) =>
   app.inject({ method: 'POST', url: '/oauth/register', payload: payload as object, headers: { 'x-forwarded-for': `198.51.100.${++address % 250}`, ...headers } });
 
 describe('discovery', () => {
-  it('describes both protected resources, /mcp also at the bare path', async () => {
-    for (const [path, kind] of [['/.well-known/oauth-protected-resource/mcp', 'mcp'], ['/.well-known/oauth-protected-resource', 'mcp'], ['/.well-known/oauth-protected-resource/api', 'api']]) {
+  it('describes every protected resource, /mcp also at the bare path', async () => {
+    for (const [path, resource, scope] of [
+      ['/.well-known/oauth-protected-resource/mcp', 'mcp', 'mcp'],
+      ['/.well-known/oauth-protected-resource', 'mcp', 'mcp'],
+      ['/.well-known/oauth-protected-resource/api', 'api', 'api'],
+      ['/.well-known/oauth-protected-resource/app-api', 'app-api', 'app'],
+    ]) {
       const res = await app.inject({ method: 'GET', url: path });
       expect(res.statusCode, path).toBe(200);
       expect(res.headers['cache-control']).toBe('public, max-age=300');
-      expect(res.json()).toEqual({ resource: `${U}/${kind}`, authorization_servers: [U], scopes_supported: [kind], bearer_methods_supported: ['header'] });
+      expect(res.json()).toEqual({ resource: `${U}/${resource}`, authorization_servers: [U], scopes_supported: [scope], bearer_methods_supported: ['header'] });
     }
   });
 
@@ -43,7 +48,7 @@ describe('discovery', () => {
       code_challenge_methods_supported: ['S256'],
       token_endpoint_auth_methods_supported: ['none'],
       revocation_endpoint_auth_methods_supported: ['none'],
-      scopes_supported: ['mcp', 'api', 'offline_access'],
+      scopes_supported: ['mcp', 'api', 'app', 'offline_access'],
       authorization_response_iss_parameter_supported: true,
     });
   });

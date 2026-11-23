@@ -2,6 +2,7 @@ import { asc, inArray, sql } from 'drizzle-orm';
 import { afterAll, beforeEach, inject } from 'vitest';
 import { createClient, createConnection } from '../src/auth/oauth/store.js';
 import { hashSecret, newSecret } from '../src/auth/secrets.js';
+import type { ResourceKind } from '../src/auth/settings.js';
 import type { Config } from '../src/config.js';
 import { createDb, type Db } from '../src/db/client.js';
 import { oauthAccessTokens, projects, reportJobs } from '../src/db/schema.js';
@@ -59,7 +60,7 @@ export async function finishNextJob(db: Db, input: TranscriptInput): Promise<voi
 
 /** A live connection with an access token of a known value, made directly in the database (no consent page). */
 export async function issueTestAccessToken(
-  db: Db, opts: { resource: 'mcp' | 'api'; name?: string; value?: string },
+  db: Db, opts: { resource: ResourceKind; name?: string; value?: string },
 ): Promise<{ value: string; connectionId: string }> {
   const redirectUri = 'https://client.example.com/callback';
   const client = await createClient(db, { clientName: 'Test client', redirectUris: [redirectUri] });

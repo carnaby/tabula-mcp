@@ -5,7 +5,7 @@ import { bearerToken } from '../http/auth.js';
 import { readCookie, sessionCookie } from './cookie.js';
 import { authenticateAccessToken } from './oauth/store.js';
 import { authenticateSession, SESSION_TTL_MS, type UiSession } from './sessions.js';
-import type { AuthSettings, ResourceKind } from './settings.js';
+import { type AuthSettings, RESOURCE_PATHS, type ResourceKind } from './settings.js';
 
 /** Who a request authenticated as. */
 export type Principal =
@@ -28,7 +28,7 @@ const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
  * needs; `invalid_token` when a token was sent and refused.
  */
 export function challenge(auth: AuthSettings, kind: ResourceKind, invalidToken: boolean): string {
-  const params = [`resource_metadata="${auth.issuer}/.well-known/oauth-protected-resource/${kind}"`, `scope="${kind}"`];
+  const params = [`resource_metadata="${auth.issuer}/.well-known/oauth-protected-resource/${RESOURCE_PATHS[kind]}"`, `scope="${kind}"`];
   if (invalidToken) params.push('error="invalid_token"');
   return `Bearer ${params.join(', ')}`;
 }

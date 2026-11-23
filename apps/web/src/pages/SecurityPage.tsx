@@ -8,6 +8,7 @@ import { Alert, Badge, Button, Skeleton, useConfirm, useToast } from '../ui';
 const FRESH_SIGN_IN = `/signin?next=${encodeURIComponent('/#/security')}&reason=fresh`;
 
 const needsFreshAuth = (e: unknown) => e instanceof ApiError && e.data.error === 'fresh_auth_required';
+const RESOURCE_LABEL: Record<'mcp' | 'api' | 'app', string> = { mcp: 'MCP', api: 'REST API', app: 'App API' };
 
 function Used({ iso, never }: { iso: string | null; never: string }) {
   return iso ? <>used <TimeAgo iso={iso} /></> : <>{never}</>;
@@ -115,7 +116,7 @@ export function SecurityPage() {
         {data.connections.map((c) => (
           <div key={c.id} className="security-row">
             <strong className="t-mono">{c.name}</strong>
-            <Badge tone="outline">{c.resource === 'mcp' ? 'MCP' : 'REST API'}</Badge>
+            <Badge tone="outline">{RESOURCE_LABEL[c.resource]}</Badge>
             <span className="t-subtle" title="The app chose its name itself; it is not verified.">{c.app} · {c.target}</span>
             <span className="t-subtle">connected <TimeAgo iso={c.createdAt} /> · <Used iso={c.lastUsedAt} never="never used" /></span>
             <span className="security-row__actions">

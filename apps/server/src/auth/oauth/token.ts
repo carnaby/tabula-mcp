@@ -10,7 +10,7 @@ const DESCRIPTIONS: Record<TokenError, string> = {
   invalid_grant: 'the code or refresh token is invalid, expired or revoked, or was issued to another client; authorize again',
   invalid_client: 'unknown client_id; register the client again',
   invalid_scope: 'scope may only narrow the scope already granted',
-  invalid_target: "resource must be this server's /mcp or /api, the one the grant was made for",
+  invalid_target: "resource must be this server's /mcp, /api or /app-api, the one the grant was made for",
 };
 
 /** Every listed parameter, present and non-empty, or undefined. */

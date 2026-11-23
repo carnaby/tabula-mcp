@@ -1,0 +1,1 @@
+ALTER TYPE "public"."oauth_resource" ADD VALUE 'app';

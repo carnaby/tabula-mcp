@@ -451,7 +451,7 @@ export const messageTokens = pgTable(
   (t) => [uniqueIndex('message_tokens_sha256_idx').on(t.tokenSha256)],
 );
 
-export const oauthResource = pgEnum('oauth_resource', ['mcp', 'api']);
+export const oauthResource = pgEnum('oauth_resource', ['mcp', 'api', 'app']);
 
 /** Clients that registered themselves (RFC 7591). Public clients: no secret. Unapproved ones are swept after 24 h. */
 export const oauthClients = pgTable('oauth_clients', {
@@ -529,7 +529,7 @@ export const oauthAccessTokens = pgTable(
   {
     hash: text('hash').primaryKey(),
     connectionId: uuid('connection_id').notNull().references(() => oauthConnections.id, { onDelete: 'cascade' }),
-    /** The audience: a token for /mcp opens only /mcp, a token for /api only /api. */
+    /** The audience: a token opens only the resource it was issued for (/mcp, /api or /app-api). */
     resource: oauthResource('resource').notNull(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     revokedAt: timestamp('revoked_at', { withTimezone: true }),

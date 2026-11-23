@@ -6,6 +6,7 @@ import { invalidate, useQuery } from '../../hooks/data';
 import { href } from '../../router';
 import type { Dashboard, Project, WaitingItem, WaitingTranscript } from '../../types';
 import { Badge, type BadgeTone, Button, ButtonLink, Icon, IconButton, type IconName, Skeleton, useConfirm, useToast } from '../../ui';
+import { isDeclared, senderText, senderTitle } from '../inbox/sender';
 import { closeReportMessage } from '../reports/closeReport';
 import { ProjectTag } from './ProjectTag';
 import { PromptDialog } from './PromptDialog';
@@ -101,7 +102,7 @@ function WaitingRow({
 
   const markDone = async () => {
     const ok = await confirm({
-      title: 'Close this report?', message: closeReportMessage(w.recordings, w.keep_media, purgeAfterHours), confirmLabel: 'Close report',
+      title: 'Close this report?', message: closeReportMessage(w.media, w.keep_media, purgeAfterHours), confirmLabel: 'Close report',
     });
     if (!ok) return;
     setBusy(true);
@@ -148,8 +149,9 @@ function WaitingRow({
           )}
           {w.type === 'transcription_failed' && <span className="t-subtle t-truncate" title={w.error ?? undefined}>{w.file_name}</span>}
           {w.type === 'message_waiting' && w.from && (
-            <span className="waiting-row__from t-subtle" title="Declared by the sender, not verified">
-              <span className="t-truncate">from {w.from}</span> <span className="t-nowrap">(declared)</span>
+            <span className="waiting-row__from t-subtle" title={senderTitle(w)}>
+              <span className="t-truncate">from {senderText({ from: w.from, via: w.via })}</span>
+              {isDeclared(w) && <> <span className="t-nowrap">(declared)</span></>}
             </span>
           )}
           <time className="t-subtle t-nowrap" dateTime={w.since} title={fullDate(w.since)}>{age(w.since)}</time>

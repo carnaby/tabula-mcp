@@ -86,6 +86,7 @@ function Editor({
   const notify = useToast();
   const camera = useRef<HTMLInputElement>(null);
   const gallery = useRef<HTMLInputElement>(null);
+  const docs = useRef<HTMLInputElement>(null);
 
   // Once the projects are known, a remembered project that no longer exists is dropped.
   useEffect(() => {
@@ -240,16 +241,17 @@ function Editor({
     }
   };
 
-  const recordings = attachments.filter(isRecording);
-  const mediaGone = recordings.length > 0 && recordings.every((a) => a.purgedAt);
+  // What closing deletes after the grace period: video, audio and documents.
+  const media = attachments.filter((a) => isRecording(a) || a.kind === 'document');
+  const mediaGone = media.length > 0 && media.every((a) => a.purgedAt);
 
   const setKeepMedia = async (keepMedia: boolean) => {
     if (!base) return;
     const graceOver = !!base.closedAt && Date.parse(base.closedAt) + purgeAfterHours * 3600_000 <= Date.now();
-    if (!keepMedia && base.status === 'done' && graceOver && recordings.some((a) => !a.purgedAt)) {
+    if (!keepMedia && base.status === 'done' && graceOver && media.some((a) => !a.purgedAt)) {
       const ok = await confirm({
         title: 'Stop keeping the media?',
-        message: 'Video and audio will be deleted within 15 minutes.',
+        message: 'Video, audio and documents will be deleted within 15 minutes.',
         confirmLabel: 'Stop keeping',
         danger: true,
       });
@@ -267,10 +269,10 @@ function Editor({
   const setStatus = async (status: ReportStatus) => {
     if (!base || status === base.status) return;
     if (status === 'done') {
-      const media = recordings.filter((a) => !a.purgedAt).length;
+      const onDisk = media.filter((a) => !a.purgedAt).length;
       const ok = await confirm({
         title: 'Close this report?',
-        message: closeReportMessage(media, base.keepMedia, purgeAfterHours),
+        message: closeReportMessage(onDisk, base.keepMedia, purgeAfterHours),
         confirmLabel: 'Close report',
       });
       if (!ok) return;
@@ -373,7 +375,7 @@ function Editor({
             </Field>
           )}
           {base && (
-            <Field label="Media" hint={mediaGone ? 'Media already deleted' : 'Video and audio stay after the report is closed'}>
+            <Field label="Media" hint={mediaGone ? 'Media already deleted' : 'Video, audio and documents stay after the report is closed'}>
               {() => <Switch checked={base.keepMedia} disabled={mediaGone} onChange={(v) => void setKeepMedia(v)} label="Keep media" />}
             </Field>
           )}
@@ -382,7 +384,7 @@ function Editor({
         <section className="t-stack">
           <div className="section-head">
             <h3>Files</h3>
-            <span className="t-subtle">Photos, screen recordings, voice — show it instead of describing it.</span>
+            <span className="t-subtle">Photos, screen recordings, voice, documents — show it instead of describing it.</span>
           </div>
           {closed ? (
             <Alert>The report is closed; reopen it to add files.</Alert>
@@ -399,12 +401,21 @@ function Editor({
             <div className="capture-bar">
               <Button icon="camera" onClick={() => camera.current?.click()}>Camera</Button>
               <Button icon="image" onClick={() => gallery.current?.click()}>Photo / video</Button>
+              <Button icon="paperclip" onClick={() => docs.current?.click()}>Document</Button>
               {canRecordVoice() && <Button icon="mic" onClick={() => setRecording('voice')}>Voice</Button>}
               {canRecordScreen() && <Button icon="screen" onClick={() => setRecording('screen')}>Record screen</Button>}
             </div>
           )}
           <input ref={camera} type="file" accept="image/*,video/*" capture="environment" hidden onChange={(e) => { void addFiles([...(e.target.files ?? [])]); e.target.value = ''; }} />
           <input ref={gallery} type="file" accept="image/*,video/*,audio/*" multiple hidden onChange={(e) => { void addFiles([...(e.target.files ?? [])]); e.target.value = ''; }} />
+          <input
+            ref={docs}
+            type="file"
+            accept=".pdf,.docx,.xlsx,.pptx,.odt,.txt,.md,.markdown,application/pdf,text/plain,text/markdown"
+            multiple
+            hidden
+            onChange={(e) => { void addFiles([...(e.target.files ?? [])]); e.target.value = ''; }}
+          />
           <Attachments attachments={attachments} uploads={up.uploads} worker={worker.data} onChanged={setAttachments} onDismissUpload={up.dismiss} focus={focus} closed={closed} />
         </section>
 

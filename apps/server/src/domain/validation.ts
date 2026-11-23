@@ -88,9 +88,13 @@ const SLUG = /^[a-z0-9][a-z0-9-]{0,39}$/;
 /** The list filter and the open-report counts use this word for reports without a project. */
 export const NO_PROJECT = 'none';
 
+/** The sender of a message the owner sent through an app (App API): never a project's slug. */
+export const AUTHOR_SENDER = 'author';
+
 export function validateProjectSlug(id: string): string {
   const v = id.trim();
   if (!SLUG.test(v)) throw badRequest(`project slug "${id}" is invalid: use lowercase letters, digits and dashes (max 40)`);
   if (v === NO_PROJECT) throw badRequest(`project slug "${NO_PROJECT}" is reserved: it means "no project" in report filters`);
+  if (v === AUTHOR_SENDER) throw badRequest(`project slug "${AUTHOR_SENDER}" is reserved: it names you, the owner, as the sender of a message`);
   return v;
 }

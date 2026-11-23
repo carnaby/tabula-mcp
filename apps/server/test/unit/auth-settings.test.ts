@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { authSettings, resourceKindOf } from '../../src/auth/settings.js';
 
 describe('authSettings', () => {
-  it('derives the issuer, both resources, the RP ID and a __Host- cookie for https', () => {
+  it('derives the issuer, all three resources, the RP ID and a __Host- cookie for https', () => {
     expect(authSettings({ publicUrl: 'https://tabula.example.com' })).toEqual({
       issuer: 'https://tabula.example.com',
-      resources: { mcp: 'https://tabula.example.com/mcp', api: 'https://tabula.example.com/api' },
+      resources: { mcp: 'https://tabula.example.com/mcp', api: 'https://tabula.example.com/api', app: 'https://tabula.example.com/app-api' },
       rpId: 'tabula.example.com',
       cookie: { name: '__Host-tabula_session', secure: true },
     });
@@ -20,6 +20,8 @@ describe('authSettings', () => {
     const auth = authSettings({ publicUrl: 'https://tabula.example.com' });
     expect(resourceKindOf(auth, 'https://tabula.example.com/mcp')).toBe('mcp');
     expect(resourceKindOf(auth, 'https://tabula.example.com/api')).toBe('api');
+    expect(resourceKindOf(auth, 'https://tabula.example.com/app-api')).toBe('app');
+    expect(resourceKindOf(auth, 'https://tabula.example.com/app')).toBeNull();
     expect(resourceKindOf(auth, 'https://tabula.example.com/mcp/')).toBeNull();
     expect(resourceKindOf(auth, 'https://other.example.com/mcp')).toBeNull();
   });

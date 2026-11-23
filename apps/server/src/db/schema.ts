@@ -10,6 +10,7 @@ import {
   jsonb,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -34,12 +35,17 @@ const timestamps = {
     .$onUpdate(() => new Date()),
 };
 
-export const projects = pgTable('projects', {
-  id: text('id').primaryKey(),
-  name: text('name').notNull(),
-  description: text('description').notNull().default(''),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-});
+export const projects = pgTable(
+  'projects',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    description: text('description').notNull().default(''),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  // "author" names the owner as the sender of a message (App API); migration 0021 explains a conflict before this check.
+  (t) => [check('projects_id_not_reserved', sql`${t.id} <> 'author'`)],
+);
 
 export const memories = pgTable(
   'memories',
@@ -216,7 +222,7 @@ export const projectSyncConfigs = pgTable('project_sync_configs', {
 });
 
 export const reportStatus = pgEnum('report_status', ['new', 'triaged', 'done']);
-export const attachmentKind = pgEnum('attachment_kind', ['image', 'video', 'audio', 'frame']);
+export const attachmentKind = pgEnum('attachment_kind', ['image', 'video', 'audio', 'frame', 'document']);
 
 /**
  * Reports: bugs captured on the phone (text, photos, screen recordings, voice) and recordings of meetings and
@@ -240,7 +246,7 @@ export const reports = pgTable(
     editedByModel: text('edited_by_model'),
     version: integer('version').notNull().default(1),
     closedAt: timestamp('closed_at', { withTimezone: true }),
-    /** The user keeps the video and audio after closing: the purge skips the report while this is on. */
+    /** The user keeps the video, audio and documents after closing: the purge skips the report while this is on. */
     keepMedia: boolean('keep_media').notNull().default(false),
     ...timestamps,
     search: tsvector('search').generatedAlwaysAs(
@@ -279,7 +285,7 @@ export const reportAttachments = pgTable(
     note: text('note'),
     createdBy: text('created_by').notNull(),
     createdByModel: text('created_by_model'),
-    /** Set when the bytes were deleted (video and audio after the report is closed); the row stays as a record. */
+    /** Set when the bytes were deleted (video, audio and documents after the report is closed); the row stays as a record. */
     purgedAt: timestamp('purged_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -389,8 +395,8 @@ export const messages = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     toProject: text('to_project').notNull().references(() => projects.id, { onDelete: 'restrict' }),
-    /** Declared by the sender; nothing verifies it. */
-    fromProject: text('from_project').notNull().references(() => projects.id, { onDelete: 'restrict' }),
+    /** Declared by the sender; nothing verifies it. Null: the owner sent it through an app (shown as "author"). */
+    fromProject: text('from_project').references(() => projects.id, { onDelete: 'restrict' }),
     type: messageType('type').notNull(),
     title: text('title').notNull(),
     body: text('body').notNull(),
@@ -411,6 +417,7 @@ export const messages = pgTable(
     check('messages_title_len', sql`char_length(${t.title}) between 1 and 200`),
     check('messages_body_len', sql`char_length(${t.body}) between 1 and 50000`),
     check('messages_waiting_on', sql`(${t.status} = 'waiting') = (${t.waitingOn} IS NOT NULL)`),
+    check('messages_sender', sql`${t.fromProject} IS NOT NULL OR ${t.source} = 'human'`),
   ],
 );
 
@@ -451,7 +458,7 @@ export const messageTokens = pgTable(
   (t) => [uniqueIndex('message_tokens_sha256_idx').on(t.tokenSha256)],
 );
 
-export const oauthResource = pgEnum('oauth_resource', ['mcp', 'api']);
+export const oauthResource = pgEnum('oauth_resource', ['mcp', 'api', 'app']);
 
 /** Clients that registered themselves (RFC 7591). Public clients: no secret. Unapproved ones are swept after 24 h. */
 export const oauthClients = pgTable('oauth_clients', {
@@ -529,13 +536,38 @@ export const oauthAccessTokens = pgTable(
   {
     hash: text('hash').primaryKey(),
     connectionId: uuid('connection_id').notNull().references(() => oauthConnections.id, { onDelete: 'cascade' }),
-    /** The audience: a token for /mcp opens only /mcp, a token for /api only /api. */
+    /** The audience: a token opens only the resource it was issued for (/mcp, /api or /app-api). */
     resource: oauthResource('resource').notNull(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index('oauth_access_tokens_connection_idx').on(t.connectionId)],
+);
+
+export const idempotencyState = pgEnum('idempotency_state', ['pending', 'done']);
+
+/**
+ * App API (spec §5): the answer to a POST sent with an Idempotency-Key, per connection, for 7 days. `pending` while
+ * the request runs; a failed request deletes its row, so a retry runs again.
+ */
+export const appIdempotency = pgTable(
+  'app_idempotency',
+  {
+    connectionId: uuid('connection_id').notNull().references(() => oauthConnections.id, { onDelete: 'cascade' }),
+    key: text('key').notNull(),
+    /** SHA-256 of the method, the path and the raw body (an upload: its length, type and file name). */
+    fingerprint: text('fingerprint').notNull(),
+    state: idempotencyState('state').notNull(),
+    responseStatus: integer('response_status'),
+    responseBody: jsonb('response_body').$type<unknown>(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.connectionId, t.key] }),
+    index('app_idempotency_created_idx').on(t.createdAt),
+    check('app_idempotency_done', sql`(${t.state} = 'done') = (${t.responseStatus} IS NOT NULL)`),
+  ],
 );
 
 /** The owner's passkeys (one user, any number of devices). The last one cannot be deleted. */

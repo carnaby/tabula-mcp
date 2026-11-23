@@ -374,6 +374,26 @@ describe('reports over MCP', () => {
     });
   });
 
+  it('lists a document in get_report and says view_attachment cannot read it yet', async () => {
+    const { id } = json((await tool('create_report', { project: 'demo', title: 'Contract' })).content);
+    const pdf = Buffer.concat([Buffer.from('%PDF-1.7\n', 'latin1'), Buffer.alloc(200, 0x20)]);
+    const doc = await uploadFile(id, pdf, 'application/pdf', 'Zmluva.pdf');
+    const report = json((await tool('get_report', { id })).content);
+    expect(report.attachments).toMatchObject([{ id: doc.id, kind: 'document', mime: 'application/pdf', file_name: 'Zmluva.pdf', size: pdf.length }]);
+    expect(report.attachments[0]).not.toHaveProperty('transcript');
+    const viewed = await tool('view_attachment', { id: doc.id });
+    expect(viewed.isError).toBe(true);
+    expect(text(viewed.content)).toMatch(/is a document .*its content cannot be read yet/);
+    const got = await tool('get', { id: doc.id });
+    expect(got.isError).toBe(false);
+    expect(text(got.content)).toMatch(/· document of report /);
+    expect(JSON.parse(got.content[1]!.text!)).toMatchObject({ kind: 'document', note: expect.stringMatching(/cannot be read yet/) });
+    expect(text((await tool('get_transcript', { attachment_id: doc.id })).content)).toMatch(/^400: .*is a document; only video and audio/);
+    expect(text((await tool('get_frame', { video_id: doc.id, at: '0:01' })).content)).toMatch(/is a document, not a video/);
+    await db.update(reportAttachments).set({ purgedAt: new Date() }).where(eq(reportAttachments.id, doc.id));
+    expect(text((await tool('get', { id: doc.id })).content)).toMatch(/· file deleted · Zmluva\.pdf$/);
+  });
+
   it('get_transcript explains why there is no transcript', async () => {
     const created = json((await tool('create_report', { project: 'demo', title: 'Silent' })).content);
     const audio = await uploadFile(created.id, silentWav(1), 'audio/wav', 'voice.wav');

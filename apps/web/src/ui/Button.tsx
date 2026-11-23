@@ -72,10 +72,10 @@ export function TextButton({ className, type = 'button', ...rest }: ButtonHTMLAt
 
 /** An IconButton that is a link (e.g. "back"): opens in a new tab on long press / middle click like any link. */
 export function IconLink({
-  href, icon, label, variant = 'ghost', size = 'md', className,
-}: { href: string; icon: IconName; label: string; variant?: ButtonVariant; size?: 'md' | 'sm'; className?: string }) {
+  href, icon, label, variant = 'ghost', size = 'md', className, download,
+}: { href: string; icon: IconName; label: string; variant?: ButtonVariant; size?: 'md' | 'sm'; className?: string; download?: boolean | string }) {
   return (
-    <a href={href} className={classes(variant, size, cx('t-icon-btn', className))} aria-label={label} title={label}>
+    <a href={href} download={download} className={classes(variant, size, cx('t-icon-btn', className))} aria-label={label} title={label}>
       <Icon name={icon} />
     </a>
   );

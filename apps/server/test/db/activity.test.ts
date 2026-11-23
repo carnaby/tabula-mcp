@@ -143,6 +143,16 @@ describe('activity', () => {
     ]);
   });
 
+  it("names the app that created a report on the owner's behalf", async () => {
+    await seedProject(db, 'demo');
+    await report({ title: 'From Klara', created: '2026-11-09T09:00:00Z', editedBy: 'klara', editedByModel: 'claude-opus-5-5' });
+    await report({ title: 'From the web', created: '2026-11-09T08:00:00Z' });
+    expect((await items()).map((i) => [i.title, i.action, i.by])).toEqual([
+      ['From Klara', 'New report', 'klara'],
+      ['From the web', 'New report', 'human'],
+    ]);
+  });
+
   it('shows today and yesterday on the first page, in the zone it is given', async () => {
     await note({ title: 'Today', created: '2026-11-10T08:00:00Z' });
     await note({ title: 'Yesterday', created: '2026-11-09T12:00:00Z' });

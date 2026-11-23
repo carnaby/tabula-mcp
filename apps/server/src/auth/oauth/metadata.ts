@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { type AuthSettings, RESOURCE_KINDS, type ResourceKind } from '../settings.js';
+import { type AuthSettings, RESOURCE_KINDS, RESOURCE_PATHS, type ResourceKind } from '../settings.js';
 
 /*
  * The discovery documents (spec §3.1, Limen §2 points 2–3). Every value comes from TABULA_PUBLIC_URL, never from Host
@@ -35,7 +35,7 @@ export function authorizationServerMetadata(auth: AuthSettings) {
 
 export function registerMetadata(app: FastifyInstance, auth: AuthSettings): void {
   const serve = (path: string, doc: object) => app.get(path, (_req, reply) => reply.header('cache-control', CACHE).send(doc));
-  for (const kind of RESOURCE_KINDS) serve(`/.well-known/oauth-protected-resource/${kind}`, protectedResourceMetadata(auth, kind));
+  for (const kind of RESOURCE_KINDS) serve(`/.well-known/oauth-protected-resource/${RESOURCE_PATHS[kind]}`, protectedResourceMetadata(auth, kind));
   // RFC 9728 §3: also without the resource's path, for clients that look there first; /mcp is the main resource.
   serve('/.well-known/oauth-protected-resource', protectedResourceMetadata(auth, 'mcp'));
   serve('/.well-known/oauth-authorization-server', authorizationServerMetadata(auth));

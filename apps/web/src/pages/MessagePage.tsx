@@ -5,6 +5,7 @@ import { CopyRefButton } from '../features/CopyRefButton';
 import { EditorBar } from '../features/EditorBar';
 import { MESSAGE_TONE, statusText } from '../features/inbox/InboxList';
 import { MessageText } from '../features/inbox/MessageText';
+import { isDeclared, senderText, senderTitle } from '../features/inbox/sender';
 import { PageHeader } from '../features/PageHeader';
 import { invalidate, useQuery, useUnsavedGuard } from '../hooks/data';
 import { backTarget, href, navigate } from '../router';
@@ -29,19 +30,21 @@ const PATCH: Record<Action, Pick<MessagePatch, 'status' | 'waiting_on'>> = {
 const isClosed = (m: MessageDetail) => m.status === 'done' || m.status === 'rejected';
 
 function actionsFor(m: MessageDetail): { value: Action | ''; label: string }[] {
+  // The author sent it (through an app): there is no sender project to wait on.
+  const fromAuthor = m.via !== undefined;
   if (isClosed(m)) {
     return [
       { value: '', label: 'Choose how to reopen' },
       { value: 'in_progress', label: 'Reopen: in progress' },
       { value: 'wait_author', label: 'Reopen: waiting for you' },
-      { value: 'wait_sender', label: 'Reopen: waiting for the sender' },
+      ...(!fromAuthor ? [{ value: 'wait_sender' as const, label: 'Reopen: waiting for the sender' }] : []),
     ];
   }
   return [
     { value: 'reply', label: 'Keep the status' },
     ...(m.status !== 'in_progress' ? [{ value: 'in_progress' as const, label: 'In progress' }] : []),
     ...(m.waiting_on !== 'author' ? [{ value: 'wait_author' as const, label: 'Waiting for you' }] : []),
-    ...(m.waiting_on !== 'sender' ? [{ value: 'wait_sender' as const, label: 'Waiting for the sender' }] : []),
+    ...(m.waiting_on !== 'sender' && !fromAuthor ? [{ value: 'wait_sender' as const, label: 'Waiting for the sender' }] : []),
     { value: 'done', label: 'Done' },
     { value: 'rejected', label: 'Rejected (needs a reason)' },
   ];
@@ -133,8 +136,8 @@ export function MessagePage({ id, from, projects }: { id: string; from?: string;
         {error && <Alert tone="danger">Could not refresh this message, so it may be out of date: {error.message}</Alert>}
         <PageHeader title={m.title} chip={<Badge tone={MESSAGE_TONE[m.status]}>{statusText(m)}</Badge>} />
         <div className="report-card__meta">
-          <span className="t-subtle">From (declared)</span>
-          <Badge tone="outline" title="Declared by the sender, not verified">{m.from}</Badge>
+          <span className="t-subtle">{isDeclared(m) ? 'From (declared)' : 'From'}</span>
+          <Badge tone="outline" title={senderTitle(m)}>{senderText(m)}</Badge>
           <span className="t-subtle">to</span>
           <Badge tone="outline" icon="folder">{m.to}</Badge>
           <Badge>{m.type === 'request' ? 'Request' : 'Report'}</Badge>

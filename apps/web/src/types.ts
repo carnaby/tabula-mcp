@@ -117,7 +117,7 @@ export const REPORT_STATUS_INFO: Record<ReportStatus, { label: string; hint: str
   triaged: { label: 'Triaged', hint: 'An agent wrote the tasks' },
   done: { label: 'Done', hint: 'Fixed and closed' },
 };
-export type AttachmentKind = 'image' | 'video' | 'audio' | 'frame';
+export type AttachmentKind = 'image' | 'video' | 'audio' | 'frame' | 'document';
 /** A line changed after the worker wrote it: who changed it last, when, and the worker's own text and speaker. */
 export type SegmentEdit = { by: 'user' | 'agent'; at: string; original: { text: string; speaker?: string } };
 export type TranscriptSegment = { start_ms: number; end_ms: number; text: string; speaker?: string; edit?: SegmentEdit };
@@ -207,8 +207,8 @@ export type WaitingItem = {
   /** For Mark done (expectedVersion). */
   version: number;
   keep_media: boolean;
-  /** Video and audio still on disk: the close confirmation names them. */
-  recordings: number;
+  /** Video, audio and documents still on disk: what closing deletes, so the close confirmation names them. */
+  media: number;
   transcript: WaitingTranscript | null;
   /** transcription_failed: the recording, its file name and the error. */
   attachment_id?: string;
@@ -216,6 +216,8 @@ export type WaitingItem = {
   error?: string | null;
   /** message_waiting: the project that declares it sent the message. */
   from?: string;
+  /** message_waiting from you: the app connection it was sent through ("from" is then "author"). */
+  via?: string;
 };
 export type TrimStep = 'files-collapsed' | 'facts-omitted' | 'gotchas-first-sentence' | 'rules-first-sentence' | 'state-truncated';
 export type DashboardWarning =
@@ -275,7 +277,7 @@ export const MESSAGE_STATUS_LABEL: Record<MessageStatus, string> = {
 };
 export const MESSAGE_WAITING_LABEL: Record<MessageWaitingOn, string> = { author: 'you', sender: 'the sender' };
 export type MessageSummary = {
-  id: string; ref: string; to: string; from: string; type: MessageType; title: string; status: MessageStatus;
+  id: string; ref: string; to: string; from: string; via?: string; type: MessageType; title: string; status: MessageStatus;
   waiting_on: MessageWaitingOn | null; related_to: string | null; version: number; created_at: string; updated_at: string;
 };
 export type MessageEvent = {
@@ -292,6 +294,6 @@ export type SecurityOverview = {
   fresh: boolean;
   publicUrl: string;
   passkeys: Array<{ id: string; name: string; createdAt: string; lastUsedAt: string | null }>;
-  connections: Array<{ id: string; name: string; app: string; target: string; resource: 'mcp' | 'api'; createdAt: string; lastUsedAt: string | null }>;
+  connections: Array<{ id: string; name: string; app: string; target: string; resource: 'mcp' | 'api' | 'app'; createdAt: string; lastUsedAt: string | null }>;
   sessions: Array<{ id: string; device: string; createdAt: string; lastUsedAt: string; current: boolean }>;
 };

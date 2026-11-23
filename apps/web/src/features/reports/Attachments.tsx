@@ -2,7 +2,7 @@ import { type Dispatch, type SetStateAction, useCallback, useEffect, useRef, use
 import { api } from '../../api';
 import { formatSize } from '../../format';
 import type { Attachment, TranscriptState, WorkerStatus } from '../../types';
-import { Badge, Button, Icon, IconButton, Textarea, useConfirm, useToast } from '../../ui';
+import { Badge, Button, Icon, IconButton, IconLink, Textarea, useConfirm, useToast } from '../../ui';
 import { Author, authorOf } from '../common';
 import { CopyRefButton } from '../CopyRefButton';
 import { clock } from './Recorder';
@@ -264,9 +264,10 @@ export function Attachments({
     onChanged((list) => list.map((x) => (x.id === id ? { ...x, transcript } : x)));
   const videos = attachments.filter((a) => a.kind === 'video');
   const audios = attachments.filter((a) => a.kind === 'audio');
+  const documents = attachments.filter((a) => a.kind === 'document');
   const videoIds = new Set(videos.map((v) => v.id));
   const loose = attachments.filter(
-    (a) => a.kind !== 'video' && a.kind !== 'audio' && !(a.kind === 'frame' && a.sourceId && videoIds.has(a.sourceId)),
+    (a) => a.kind !== 'document' && a.kind !== 'video' && a.kind !== 'audio' && !(a.kind === 'frame' && a.sourceId && videoIds.has(a.sourceId)),
   );
 
   return (
@@ -299,6 +300,19 @@ export function Attachments({
       ))}
       {audios.map((x) => (
         <AudioCard key={x.id} a={x} worker={worker} focus={focus} closed={closed} onTranscript={(t) => setTranscript(x.id, t)} onDelete={() => void remove(x)} />
+      ))}
+      {documents.map((d) => (
+        <div key={d.id} id={attachmentDomId(d.id)} className="att-doc" data-focused={focus === d.id || undefined}>
+          <Icon name="paperclip" />
+          <div className="att-doc__text">
+            <span className="t-truncate">{d.fileName}</span>
+            <span className="t-subtle">{formatSize(d.size)}{d.purgedAt ? ' · deleted after the report was closed' : ''}</span>
+          </div>
+          {d.createdBy !== 'human' && <Author {...authorOf(d.createdBy, d.createdByModel)} compact />}
+          {d.url && <IconLink href={d.url} icon="download" label={`Download ${d.fileName}`} size="sm" download={d.fileName} />}
+          <CopyRefButton id={d.id} size="sm" />
+          <IconButton size="sm" icon="trash" label="Delete" onClick={() => void remove(d)} />
+        </div>
       ))}
       {loose.length > 0 && (
         <div className="att-grid">

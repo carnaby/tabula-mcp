@@ -4,7 +4,7 @@ import { refOf } from '@tabula/shared/refs';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { memories } from '../../src/db/schema.js';
-import { getMessage } from '../../src/domain/messages.js';
+import { createMessage, getMessage } from '../../src/domain/messages.js';
 import { buildApp } from '../../src/http/app.js';
 import { issueTestAccessToken, seedProject, TEST_MCP_TOKEN, testConfig, useTestDb, useTestTokens } from '../helpers.js';
 
@@ -117,6 +117,26 @@ describe('message tools', () => {
     const m = await send();
     const next = await send({ related_to: m.ref, title: 'More details' });
     expect((await getMessage(db, next.id))!.relatedTo).toBe(m.id);
+  });
+
+  it('shows a message the author sent through an app as from "author" via the connection', async () => {
+    const m = await createMessage(db, { to: 'beta', from: null, type: 'request', title: 'Renew the certificate', body: 'By Friday.' }, { source: 'human', label: 'klara' });
+    const listed = JSON.parse((await tool('list_messages', { project: 'beta', box: 'received' })).blocks[1]!);
+    expect(listed.items[0]).toMatchObject({ id: m.id, from: 'author', via: 'klara' });
+    expect(JSON.parse((await tool('get_message', { id: refOf(m.id) })).blocks[1]!)).toMatchObject({ from: 'author', via: 'klara', source: 'human', created_by: 'klara' });
+    expect(JSON.parse((await tool('list_messages', { project: 'alpha', box: 'sent' })).blocks[1]!).total).toBe(0);
+    const fromProject = JSON.parse((await tool('get_message', { id: (await send()).ref })).blocks[1]!);
+    expect(fromProject.from).toBe('alpha');
+    expect(fromProject).not.toHaveProperty('via');
+  });
+
+  it('refuses to let a message of the author wait on the sender', async () => {
+    const m = await createMessage(db, { to: 'beta', from: null, type: 'request', title: 'Renew the certificate', body: 'By Friday.' }, { source: 'human', label: 'klara' });
+    const r = await tool('update_message', { id: refOf(m.id), as_project: 'beta', expected_version: 1, status: 'waiting', waiting_on: 'sender' });
+    expect(r.isError).toBe(true);
+    expect(r.all).toContain('waiting_on "author"');
+    expect((await getMessage(db, m.id))!.version).toBe(1);
+    expect((await tool('update_message', { id: refOf(m.id), as_project: 'beta', expected_version: 1, status: 'waiting', waiting_on: 'author' })).isError).toBe(false);
   });
 });
 

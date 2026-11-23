@@ -1,0 +1,1 @@
+ALTER TYPE "public"."attachment_kind" ADD VALUE 'document';

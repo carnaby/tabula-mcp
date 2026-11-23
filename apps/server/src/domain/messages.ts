@@ -6,7 +6,7 @@ import { badRequest, conflict, forbidden, notFound } from './errors.js';
 import { parseIdRef } from './ids.js';
 import { type Page, type PageQuery, pageWindow } from './paging.js';
 import { requireProject } from './projects.js';
-import { charCount, rejectNul } from './validation.js';
+import { AUTHOR_SENDER, charCount, rejectNul } from './validation.js';
 
 export const MESSAGE_TYPES = ['request', 'report'] as const;
 export const MESSAGE_STATUSES = ['new', 'in_progress', 'waiting', 'done', 'rejected'] as const;
@@ -66,7 +66,7 @@ async function checkProject(db: Db, id: string, field: 'to' | 'from'): Promise<v
 
 export async function createMessage(
   db: Db,
-  input: { to: string; from: string; type: MessageType; title: string; body: string; relatedTo?: string },
+  input: { to: string; from: string | null; type: MessageType; title: string; body: string; relatedTo?: string },
   editor: { source: 'agent' | 'human'; label: string; model?: string | null },
 ): Promise<Message> {
   const title = input.title.replace(/\s+/g, ' ').trim();
@@ -76,7 +76,10 @@ export async function createMessage(
   checkLimit(title, 'title');
   checkLimit(body, 'body');
   await checkProject(db, input.to, 'to');
-  await checkProject(db, input.from, 'from');
+  // Only the owner sends without a sender project (App API); the database refuses it for anyone else too.
+  if (input.from === null) {
+    if (editor.source !== 'human') throw badRequest('a message without a sender project can only come from the author');
+  } else await checkProject(db, input.from, 'from');
   const relatedTo = input.relatedTo ? (await requireMessageByRef(db, input.relatedTo)).id : null;
   return db.transaction(async (tx) => {
     const [row] = await tx
@@ -115,6 +118,10 @@ export async function updateMessage(db: Db, id: string, patch: MessagePatch, act
     if (!reply && !patch.status) throw badRequest('pass a reply, a status or both');
     if (patch.status === 'waiting' && !patch.waitingOn) throw badRequest('status waiting needs waiting_on: author or sender');
     if (patch.waitingOn && patch.status !== 'waiting') throw badRequest('waiting_on goes only with status waiting');
+    // A message from the author has no sender project: waiting on the sender is waiting on the author.
+    if (cur.fromProject === null && patch.waitingOn === 'sender') {
+      throw badRequest('the sender of this message is the author; use waiting_on "author"');
+    }
     if (patch.status === 'rejected' && !reply) throw badRequest('status rejected needs a reply with the reason');
     if (!patch.status && wasClosed) throw conflict('the message is closed; reopen it before replying');
     if (patch.status) {
@@ -230,12 +237,16 @@ export async function deleteMessage(db: Db, id: string): Promise<void> {
   if (gone.length === 0) throw notFound(`message ${id} does not exist`);
 }
 
+/** The sender as every reader gets it: a project, or "author" (the owner, through an app) with the app's connection name. */
+export const senderView = (m: Pick<Message, 'fromProject' | 'createdBy'>): { from: string; via?: string } =>
+  m.fromProject === null ? { from: AUTHOR_SENDER, via: m.createdBy } : { from: m.fromProject };
+
 /** A message in a list: never its text. The narrow API promises exactly these fields. */
 export const messageSummaryView = (m: Message) => ({
   id: m.id,
   ref: refOf(m.id),
   to: m.toProject,
-  from: m.fromProject,
+  ...senderView(m),
   type: m.type,
   title: m.title,
   status: m.status,

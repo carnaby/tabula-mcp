@@ -6,7 +6,7 @@ import { registerClientRegistration } from './register.js';
 import { registerRevoke } from './revoke.js';
 import { registerToken } from './token.js';
 
-/** Tabula as its own OAuth 2.1 authorization server for /mcp and /api (spec §3). */
+/** Tabula as its own OAuth 2.1 authorization server for /mcp, /api and /app-api (spec §3). */
 export async function registerOAuth(app: FastifyInstance, ctx: AuthContext): Promise<void> {
   registerMetadata(app, ctx.auth);
   registerClientRegistration(app, ctx.db);

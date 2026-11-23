@@ -4,7 +4,7 @@ import { apiEditor } from '../auth/authenticate.js';
 import type { Config } from '../config.js';
 import type { Db } from '../db/client.js';
 import {
-  addAttachment, type Attachment, CLOSED_REPORT, createReport, deleteAttachment, deleteReport, frameAt, listAttachments, openReportCounts,
+  type Attachment, createReport, deleteAttachment, deleteReport, frameAt, listAttachments, openReportCounts,
   pageReports, parseTimestamp, REPORT_SORTS, REPORT_STATUSES, requireAttachment, requireReport, setFrameNote, updateReport,
 } from '../domain/reports.js';
 import { editSegmentAsUser, restoreSegment, SegmentChangedError } from '../domain/transcript-edits.js';
@@ -13,9 +13,10 @@ import { fornaxClient } from '../fornax/client.js';
 import { createStatusCache } from '../fornax/status.js';
 import { setSpeakerNames, speakerNameSuggestions } from '../domain/speakers.js';
 import { MAX_PAGE_SIZE } from '../domain/paging.js';
-import { badRequest, conflict, notFound } from '../domain/errors.js';
+import { notFound } from '../domain/errors.js';
 import { signMediaPath, verifyMediaSignature } from '../media/sign.js';
 import type { MediaStore } from '../media/store.js';
+import { receiveAttachment } from './attachment-upload.js';
 import { parse } from './parse.js';
 
 /** Links handed to the UI stay valid for half a day. */
@@ -202,32 +203,7 @@ export const reportRoutes: FastifyPluginAsync<MediaDeps> = async (app, { db, con
     upload.addContentTypeParser('*', (_req, _payload, done) => done(null));
     upload.post('/reports/:id/attachments', async (req, reply) => {
       const { id } = parse(idParams, req.params);
-      // Refusals that don't need the body come before it is read (it may be a gigabyte); the body is then left
-      // unread, so the connection is closed after the reply.
-      try {
-        if ((await requireReport(db, id)).status === 'done') throw conflict(CLOSED_REPORT);
-        await store.ensureWritable();
-      } catch (e) {
-        reply.header('connection', 'close');
-        throw e;
-      }
-      const declared = typeof req.headers['content-type'] === 'string' ? req.headers['content-type'] : undefined;
-      const rawName = req.headers['x-file-name'];
-      let fileName: string | undefined;
-      try {
-        fileName = typeof rawName === 'string' ? decodeURIComponent(rawName) : undefined;
-      } catch {
-        throw badRequest('X-File-Name must be URI-encoded');
-      }
-      let file;
-      try {
-        file = await store.receive(req.raw, declared);
-      } catch (e) {
-        // The rest of a refused upload is not worth reading; close the connection after the error reply.
-        reply.header('connection', 'close');
-        throw e;
-      }
-      const a = await addAttachment(db, store, paths, id, file, fileName, apiEditor(req));
+      const a = await receiveAttachment({ db, config, store }, req, reply, id, { header: 'X-File-Name', value: req.headers['x-file-name'] }, apiEditor(req));
       const [view] = await withTranscripts(db, [a], mediaKey);
       return reply.code(201).send(view);
     });
@@ -247,13 +223,15 @@ export function registerMediaRoute(app: FastifyInstance, { db, store, mediaKey }
     const size = await store.size(a.storageKey);
     if (size === null) throw notFound('the file is missing from the media directory');
 
+    // A document is only ever downloaded, never shown in a page (spec §3.1); photos and recordings play inline.
+    const disposition = a.kind === 'document' ? 'attachment' : 'inline';
     reply
       .header('Content-Type', a.mime)
       .header('X-Content-Type-Options', 'nosniff')
       .header('Content-Security-Policy', "default-src 'none'; sandbox")
       .header('Cache-Control', 'private, max-age=3600')
       .header('Accept-Ranges', 'bytes')
-      .header('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(a.fileName)}`);
+      .header('Content-Disposition', `${disposition}; filename*=UTF-8''${encodeURIComponent(a.fileName)}`);
 
     const range = /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range ?? ''));
     if (range && (range[1] || range[2])) {

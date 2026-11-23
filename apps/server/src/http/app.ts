@@ -12,6 +12,7 @@ import type { Db } from '../db/client.js';
 import { DomainError, isNulRefusal, loggableError, NUL_REFUSED } from '../domain/errors.js';
 import { registerMcpRoutes } from '../mcp/routes.js';
 import { apiRoutes } from './api.js';
+import { appApiRoutes } from './app-api.js';
 import { registerCliRoutes } from './cli.js';
 import { inboxApiRoutes } from './inbox-api.js';
 import { mediaSigningKey } from '../media/key.js';
@@ -89,6 +90,7 @@ export async function buildApp(deps: {
   await registerOAuth(app, authCtx);
   await app.register(apiRoutes, { prefix: '/api', db: deps.db, config: deps.config, store, mediaKey, authCtx });
   await app.register(inboxApiRoutes, { prefix: '/inbox-api/v1', db: deps.db });
+  await app.register(appApiRoutes, { prefix: '/app-api', db: deps.db, config: deps.config, store, authCtx });
 
   if (deps.config.webDist !== null) {
     const webRoot = resolve(deps.config.webDist);

@@ -20,13 +20,20 @@ export type ConsentView = {
   error: string | null;
 };
 
+/** What a connection to each resource can do, as the owner reads it before deciding. */
+const ACCESS: Record<ResourceKind, string> = {
+  mcp: 'MCP (all Tabula tools)',
+  api: 'REST API (tabula CLI)',
+  app: 'App API: send messages to projects, save thoughts, notes and reports',
+};
+
 export function renderConsent(v: ConsentView): string {
   const loopback = isLoopbackRedirect(v.redirectUri);
   const target = loopback ? 'an app on this computer (e.g. Claude Code, the tabula CLI)' : new URL(v.redirectUri).host;
   const warning = loopback
     ? '<p class="warn">An app running on this computer is asking for access. Approve only if you are starting it yourself right now.</p>'
     : '';
-  const access = v.resource === 'mcp' ? 'MCP (all Tabula tools)' : 'REST API (tabula CLI)';
+  const access = ACCESS[v.resource];
   const replace = v.nameTaken
     // The box carries the name it offers to replace: a ticked box replaces only the connection it named.
     ? `<label class="check"><input type="checkbox" name="replace" value="${esc(v.name)}"${v.replace ? ' checked' : ''}> Replace the connection “${esc(v.name)}” (it stops working at once)</label>`

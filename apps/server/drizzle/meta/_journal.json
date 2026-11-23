@@ -141,6 +141,41 @@
       "when": 1795422872977,
       "tag": "0019_drop_legacy_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1795437916302,
+      "tag": "0020_app_resource",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1795438970952,
+      "tag": "0021_reserve_author",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1795438980606,
+      "tag": "0022_author_messages",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1795441837119,
+      "tag": "0023_attachment_document",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1795442956746,
+      "tag": "0024_app_idempotency",
+      "breakpoints": true
     }
   ]
 }

@@ -1,9 +1,10 @@
 /**
- * The type of an uploaded file is decided from its first bytes, never from the client's Content-Type or file name:
- * Tabula serves attachments from its own origin, so an HTML or SVG file posing as an image could read the token
- * from the page. Only the formats below are accepted.
+ * The type of an uploaded file is never taken from its file name or from the client's word alone: Tabula serves
+ * attachments from its own origin, so an HTML or SVG file posing as an image could read the token from the page.
+ * Media (photos, videos, audio) are recognised from their first bytes; documents (below) by their declared
+ * Content-Type, checked against the first bytes. Only the formats below are accepted.
  */
-export type MediaKind = 'image' | 'video' | 'audio';
+export type MediaKind = 'image' | 'video' | 'audio' | 'document';
 export type Sniffed = { kind: MediaKind; mime: string; ext: string };
 
 /** How many leading bytes sniff() needs. */
@@ -11,7 +12,41 @@ export const SNIFF_BYTES = 64;
 
 const ascii = (b: Buffer, start: number, end: number) => b.subarray(start, end).toString('latin1');
 
+type DocumentType = { mime: string; ext: string; signature: 'pdf' | 'zip' | 'text' };
+
+const MARKDOWN: DocumentType = { mime: 'text/markdown; charset=utf-8', ext: 'md', signature: 'text' };
+
+/**
+ * Documents (App API spec §3.1). Here the declared Content-Type names the type and the first bytes must agree: a PDF
+ * starts with "%PDF-", OOXML and ODF files are ZIP archives, and text must be UTF-8 without NUL (MediaStore.receive
+ * checks every byte). They are only ever downloaded, never shown in a page. HTML, SVG and executables are not among them.
+ */
+const DOCUMENTS = new Map<string, DocumentType>([
+  ['application/pdf', { mime: 'application/pdf', ext: 'pdf', signature: 'pdf' }],
+  ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', { mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', ext: 'docx', signature: 'zip' }],
+  ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', { mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', ext: 'xlsx', signature: 'zip' }],
+  ['application/vnd.openxmlformats-officedocument.presentationml.presentation', { mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', ext: 'pptx', signature: 'zip' }],
+  ['application/vnd.oasis.opendocument.text', { mime: 'application/vnd.oasis.opendocument.text', ext: 'odt', signature: 'zip' }],
+  ['text/plain', { mime: 'text/plain; charset=utf-8', ext: 'txt', signature: 'text' }],
+  ['text/markdown', MARKDOWN],
+  // Some systems name Markdown this way.
+  ['text/x-markdown', MARKDOWN],
+]);
+
+/** The document type a Content-Type declares (parameters such as charset ignored, any letter case), or undefined. */
+export const declaredDocument = (declared?: string): DocumentType | undefined =>
+  DOCUMENTS.get((declared ?? '').split(';')[0]!.trim().toLowerCase());
+
+function hasSignature(b: Buffer, signature: DocumentType['signature']): boolean {
+  if (signature === 'pdf') return ascii(b, 0, 5) === '%PDF-';
+  if (signature === 'zip') return b.length >= 4 && b[0] === 0x50 && b[1] === 0x4b && b[2] === 0x03 && b[3] === 0x04;
+  return b.length > 0 && !b.includes(0);
+}
+
 export function sniff(head: Buffer, declared?: string): Sniffed | null {
+  const doc = declaredDocument(declared);
+  // A declared document is that document or nothing: its bytes never make it a photo or a recording.
+  if (doc) return hasSignature(head, doc.signature) ? { kind: 'document', mime: doc.mime, ext: doc.ext } : null;
   const b = head;
   if (b.length < 4) return null;
   if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return { kind: 'image', mime: 'image/jpeg', ext: 'jpg' };

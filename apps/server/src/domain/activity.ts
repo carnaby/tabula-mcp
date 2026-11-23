@@ -371,9 +371,10 @@ export async function collect(db: Db, from: Date, to: Date, type: ActivityType |
   }
   for (const r of reportRows) {
     if (inside(r.createdAt)) {
-      // The creator's label survives only while nobody has changed the report.
-      const by = r.source === 'human' ? HUMAN : r.version === 1 ? r.editedBy : 'agent';
-      const model = r.source !== 'human' && r.version === 1 ? r.editedByModel : null;
+      // The creator's label survives only while nobody has changed the report; an app writing for the owner
+      // (source human, App API) keeps its connection name like an agent does.
+      const by = r.version === 1 ? r.editedBy : r.source === 'human' ? HUMAN : 'agent';
+      const model = r.version === 1 && r.editedBy !== HUMAN ? r.editedByModel : null;
       events.push({ kind: 'report', recordId: r.id, title: r.title, project: r.projectId, by, at: r.createdAt, create: true, action: 'New report', model });
     }
     if (r.updatedAt.getTime() > r.createdAt.getTime() && inside(r.updatedAt)) {

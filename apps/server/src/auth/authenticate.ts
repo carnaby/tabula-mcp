@@ -5,7 +5,7 @@ import { bearerToken } from '../http/auth.js';
 import { readCookie, sessionCookie } from './cookie.js';
 import { authenticateAccessToken } from './oauth/store.js';
 import { authenticateSession, SESSION_TTL_MS, type UiSession } from './sessions.js';
-import type { AuthSettings, ResourceKind } from './settings.js';
+import { type AuthSettings, RESOURCE_PATHS, type ResourceKind } from './settings.js';
 
 /** Who a request authenticated as. */
 export type Principal =
@@ -14,7 +14,7 @@ export type Principal =
 
 declare module 'fastify' {
   interface FastifyRequest {
-    /** Set by apiAuth / mcpAuth; null on routes that do not authenticate. */
+    /** Set by apiAuth / mcpAuth / appAuth; null on routes that do not authenticate. */
     principal: Principal | null;
   }
 }
@@ -28,7 +28,7 @@ const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
  * needs; `invalid_token` when a token was sent and refused.
  */
 export function challenge(auth: AuthSettings, kind: ResourceKind, invalidToken: boolean): string {
-  const params = [`resource_metadata="${auth.issuer}/.well-known/oauth-protected-resource/${kind}"`, `scope="${kind}"`];
+  const params = [`resource_metadata="${auth.issuer}/.well-known/oauth-protected-resource/${RESOURCE_PATHS[kind]}"`, `scope="${kind}"`];
   if (invalidToken) params.push('error="invalid_token"');
   return `Bearer ${params.join(', ')}`;
 }
@@ -83,6 +83,24 @@ export function mcpAuth(ctx: AuthContext) {
     const bearer = bearerToken(req);
     const p = bearer === undefined ? null : await fromBearer(ctx, bearer, 'mcp');
     if (!p) return unauthorized(reply, ctx, 'mcp', bearer !== undefined);
+    req.principal = p;
+  };
+}
+
+/**
+ * /app-api: an OAuth token issued for /app-api and nothing else — no session cookie, no token of another resource, no
+ * Inbox token (App API spec §2). Answers in the App API's error shape.
+ */
+export function appAuth(ctx: AuthContext) {
+  return async (req: FastifyRequest, reply: FastifyReply) => {
+    const bearer = bearerToken(req);
+    const p = bearer === undefined ? null : await fromBearer(ctx, bearer, 'app');
+    if (!p) {
+      return reply
+        .code(401)
+        .header('WWW-Authenticate', challenge(ctx.auth, 'app', bearer !== undefined))
+        .send({ error: 'unauthorized', message: "send an OAuth access token issued for this server's /app-api" });
+    }
     req.principal = p;
   };
 }

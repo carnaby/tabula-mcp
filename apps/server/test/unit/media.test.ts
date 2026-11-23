@@ -37,8 +37,24 @@ describe('sniff', () => {
   it('rejects what could run as a page on Tabula\'s origin, whatever the client claims', () => {
     expect(sniff(pad('<!doctype html><script>'), 'image/png')).toBeNull();
     expect(sniff(pad('<svg xmlns="http://www.w3.org/2000/svg">'), 'image/svg+xml')).toBeNull();
-    expect(sniff(pad('%PDF-1.7'), 'application/pdf')).toBeNull();
+    // A PDF or a ZIP is a document only when the client declares it as one (see 'sniff of documents').
+    expect(sniff(pad('%PDF-1.7'))).toBeNull();
     expect(sniff(pad('PK\x03\x04'))).toBeNull();
+  });
+});
+
+describe('sniff of documents', () => {
+  it('takes the declared type and checks the first bytes', () => {
+    expect(sniff(Buffer.from('%PDF-1.7\n', 'latin1'), 'application/pdf')).toEqual({ kind: 'document', mime: 'application/pdf', ext: 'pdf' });
+    expect(sniff(Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00]), 'application/vnd.oasis.opendocument.text')).toMatchObject({ kind: 'document', ext: 'odt' });
+    expect(sniff(Buffer.from('ok', 'utf8'), 'text/plain; charset=utf-8')).toEqual({ kind: 'document', mime: 'text/plain; charset=utf-8', ext: 'txt' });
+    expect(sniff(Buffer.from('# A', 'utf8'), 'TEXT/MARKDOWN')).toMatchObject({ kind: 'document', ext: 'md' });
+    // Some systems name Markdown text/x-markdown.
+    expect(sniff(Buffer.from('# A', 'utf8'), 'text/x-markdown')).toEqual({ kind: 'document', mime: 'text/markdown; charset=utf-8', ext: 'md' });
+    expect(sniff(PNG, 'application/pdf')).toBeNull();
+    expect(sniff(Buffer.from('%PDF-1.7\n', 'latin1'), 'image/png')).toBeNull();
+    expect(sniff(Buffer.from('%PDF-1.7\n', 'latin1'), 'application/octet-stream')).toBeNull();
+    expect(sniff(Buffer.from('%PDF-1.7\n', 'latin1'), 'constructor')).toBeNull();
   });
 });
 

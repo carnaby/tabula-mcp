@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { api, ApiError, clearToken, getToken } from '../api';
+import { api, ApiError } from '../api';
 import { WorkerIndicator } from '../features/reports/WorkerIndicator';
 import { useQuery } from '../hooks/data';
 import { promptInstall, useCanInstall } from '../pwa';
@@ -102,24 +102,18 @@ export function Sidebar({
           icon="logOut"
           label="Sign out"
           onClick={async () => {
-            // A stored legacy token means no passkey session: the sign-in gate drops the token once a session works.
-            const legacy = getToken() !== null;
-            const message = legacy
-              ? 'The legacy token is removed from this browser. You sign in again with the token.'
-              : 'This browser signs out of Tabula. You sign in again with your passkey.';
+            const message = 'This browser signs out of Tabula. You sign in again with your passkey.';
             if (!(await confirm({ title: 'Sign out?', message, confirmLabel: 'Sign out' }))) return;
             try {
               // Ends the session on the server too.
               await api.logout();
             } catch (e) {
-              clearToken();
               // 401: nothing left to end; the request has already reloaded into the sign-in screen.
               if (e instanceof ApiError && e.status === 401) return;
               // Otherwise the session may still be alive on the server: stay here and let the user retry.
               notify('Sign out failed — try again.', { tone: 'danger' });
               return;
             }
-            clearToken();
             window.location.reload();
           }}
         />

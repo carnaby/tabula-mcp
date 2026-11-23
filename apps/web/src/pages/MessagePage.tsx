@@ -5,6 +5,7 @@ import { CopyRefButton } from '../features/CopyRefButton';
 import { EditorBar } from '../features/EditorBar';
 import { MESSAGE_TONE, statusText } from '../features/inbox/InboxList';
 import { MessageText } from '../features/inbox/MessageText';
+import { isDeclared, senderText, senderTitle } from '../features/inbox/sender';
 import { PageHeader } from '../features/PageHeader';
 import { invalidate, useQuery, useUnsavedGuard } from '../hooks/data';
 import { backTarget, href, navigate } from '../router';
@@ -133,8 +134,8 @@ export function MessagePage({ id, from, projects }: { id: string; from?: string;
         {error && <Alert tone="danger">Could not refresh this message, so it may be out of date: {error.message}</Alert>}
         <PageHeader title={m.title} chip={<Badge tone={MESSAGE_TONE[m.status]}>{statusText(m)}</Badge>} />
         <div className="report-card__meta">
-          <span className="t-subtle">From (declared)</span>
-          <Badge tone="outline" title="Declared by the sender, not verified">{m.from}</Badge>
+          <span className="t-subtle">{isDeclared(m) ? 'From (declared)' : 'From'}</span>
+          <Badge tone="outline" title={senderTitle(m)}>{senderText(m)}</Badge>
           <span className="t-subtle">to</span>
           <Badge tone="outline" icon="folder">{m.to}</Badge>
           <Badge>{m.type === 'request' ? 'Request' : 'Report'}</Badge>

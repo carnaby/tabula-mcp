@@ -216,6 +216,8 @@ export type WaitingItem = {
   error?: string | null;
   /** message_waiting: the project that declares it sent the message. */
   from?: string;
+  /** message_waiting from you: the app connection it was sent through ("from" is then "author"). */
+  via?: string;
 };
 export type TrimStep = 'files-collapsed' | 'facts-omitted' | 'gotchas-first-sentence' | 'rules-first-sentence' | 'state-truncated';
 export type DashboardWarning =
@@ -275,7 +277,7 @@ export const MESSAGE_STATUS_LABEL: Record<MessageStatus, string> = {
 };
 export const MESSAGE_WAITING_LABEL: Record<MessageWaitingOn, string> = { author: 'you', sender: 'the sender' };
 export type MessageSummary = {
-  id: string; ref: string; to: string; from: string; type: MessageType; title: string; status: MessageStatus;
+  id: string; ref: string; to: string; from: string; via?: string; type: MessageType; title: string; status: MessageStatus;
   waiting_on: MessageWaitingOn | null; related_to: string | null; version: number; created_at: string; updated_at: string;
 };
 export type MessageEvent = {

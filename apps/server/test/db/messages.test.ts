@@ -55,6 +55,17 @@ describe('createMessage', () => {
     expect((await send({ relatedTo: `tabula:${first.id.slice(0, 8)}` })).relatedTo).toBe(first.id);
     await expect(send({ relatedTo: '00000000-0000-4000-8000-000000000000' })).rejects.toMatchObject({ code: 'not_found' });
   });
+
+  it('stores a message of the author without a sender project, and refuses it from an agent', async () => {
+    const m = await createMessage(db, { to: 'beta', from: null, type: 'request', title: 'Renew it', body: 'By Friday.' }, { source: 'human', label: 'klara' });
+    expect(m).toMatchObject({ fromProject: null, toProject: 'beta', source: 'human', createdBy: 'klara' });
+    expect(messageSummaryView(m)).toMatchObject({ from: 'author', via: 'klara' });
+    expect(messageSummaryView(await send())).not.toHaveProperty('via');
+    await expect(createMessage(db, { to: 'beta', from: null, type: 'request', title: 'T', body: 'B' }, editor)).rejects.toMatchObject({ code: 'bad_request' });
+    await expect(
+      db.insert(messages).values({ toProject: 'beta', fromProject: null, type: 'request', title: 'T', body: 'B', source: 'agent', createdBy: 'x' }),
+    ).rejects.toMatchObject({ cause: { code: '23514' } });
+  });
 });
 
 describe('updateMessage', () => {

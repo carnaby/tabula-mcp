@@ -1,15 +1,71 @@
-import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
+import { refOf } from '@tabula/shared/refs';
+import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
+import { z } from 'zod';
 import { appAuth, type AuthContext, type Principal } from '../auth/authenticate.js';
 import type { Config } from '../config.js';
 import type { Db } from '../db/client.js';
-import { listProjects } from '../domain/projects.js';
+import { DomainError } from '../domain/errors.js';
+import { createMessage, findMessageByRef, MESSAGE_TYPES, type Message } from '../domain/messages.js';
+import { listProjects, requireProject } from '../domain/projects.js';
+import { normalizeModel } from '../domain/validation.js';
 import type { MediaStore } from '../media/store.js';
-import { AppApiError, errorBody, logAppError, toAppError } from './app-api-errors.js';
+import { AppApiError, errorBody, logAppError, parseBody, toAppError, validationFailed } from './app-api-errors.js';
 
 export type AppApiDeps = { db: Db; config: Config; store: MediaStore; authCtx: AuthContext };
 
 /** The connection a request authenticated as: appAuth admits only OAuth tokens issued for /app-api. */
 export const connectionOf = (req: FastifyRequest) => req.principal as Extract<Principal, { kind: 'oauth' }>;
+
+/** What a POST answers: always 201 with the new record's identifiers (spec §3). */
+export type Created = { status: 201; body: Record<string, unknown> };
+
+/** The owner writes through the app (spec §4): source human, signed with the connection's name; a model only when given. */
+export const editorOf = (req: FastifyRequest, model?: string) => ({
+  source: 'human' as const,
+  label: connectionOf(req).name,
+  model: model === undefined ? null : normalizeModel(model),
+});
+
+/** A project an app may write to: an existing one, never "global". The API creates no projects. */
+export async function requireAppProject(db: Db, slug: string, field: 'to' | 'project'): Promise<string> {
+  if (slug === 'global') throw validationFailed([{ path: field, message: 'must be a project, not "global"' }]);
+  try {
+    await requireProject(db, slug);
+  } catch (e) {
+    if (e instanceof DomainError && e.code === 'not_found') {
+      throw new AppApiError(404, 'project_not_found', `project "${slug}" does not exist; GET /app-api/v1/projects lists the projects`);
+    }
+    throw e;
+  }
+  return slug;
+}
+
+/**
+ * A follow-up points at a message of the project it goes to: one sent to it or by it (spec §3). The Inbox domain has no
+ * such rule, so the App API checks it; createMessage then resolves the id once more, which is harmless.
+ */
+async function relatedMessage(db: Db, raw: string, to: string): Promise<string> {
+  let m: Message | undefined;
+  try {
+    m = await findMessageByRef(db, raw);
+  } catch (e) {
+    // Not a reference at all, or a prefix that matches several messages.
+    if (e instanceof DomainError && e.code === 'bad_request') throw validationFailed([{ path: 'related_to', message: e.message }]);
+    throw e;
+  }
+  if (!m || (m.toProject !== to && m.fromProject !== to)) {
+    throw validationFailed([{ path: 'related_to', message: `must be a message sent to or by project "${to}"` }]);
+  }
+  return m.id;
+}
+
+const messageBody = z.strictObject({
+  to: z.string(),
+  type: z.enum(MESSAGE_TYPES),
+  title: z.string(),
+  body: z.string(),
+  related_to: z.string().optional(),
+});
 
 /**
  * The App API: a narrow, versioned REST API for apps that act on the owner's behalf. It is registered next to /api, so
@@ -29,6 +85,16 @@ export const appApiRoutes: FastifyPluginAsync<AppApiDeps> = async (app, deps) =>
     req.log.info({ req }, 'route not found');
     return reply.code(404).send(errorBody(new AppApiError(404, 'not_found', 'no such endpoint in the App API')));
   });
+  // Bodies are JSON (an upload has its own parser): any other type is refused with 415.
+  app.removeContentTypeParser('text/plain');
+
+  /** A POST that creates something; `run` says what to answer. */
+  const created = (instance: FastifyInstance, path: string, run: (req: FastifyRequest, reply: FastifyReply) => Promise<Created>) =>
+    instance.post(path, async (req, reply) => {
+      const r = await run(req, reply);
+      return reply.code(r.status).send(r.body);
+    });
+
   // When the web UI is served, its wildcard GET (and HEAD) route at the root would answer an unknown GET here before
   // the 404 handler, without authentication and in the root's shape; this more specific wildcard keeps it in the API.
   app.get('/*', async () => {
@@ -38,4 +104,12 @@ export const appApiRoutes: FastifyPluginAsync<AppApiDeps> = async (app, deps) =>
   app.get('/v1/projects', async () => ({
     items: (await listProjects(db)).filter((p) => p.id !== 'global').map((p) => ({ slug: p.id, name: p.name, description: p.description })),
   }));
+
+  created(app, '/v1/messages', async (req) => {
+    const b = parseBody(messageBody, req.body);
+    const to = await requireAppProject(db, b.to, 'to');
+    const relatedTo = b.related_to === undefined ? undefined : await relatedMessage(db, b.related_to, to);
+    const m = await createMessage(db, { to, from: null, type: b.type, title: b.title, body: b.body, relatedTo }, editorOf(req));
+    return { status: 201, body: { id: m.id, ref: refOf(m.id), status: m.status, version: m.version } };
+  });
 };

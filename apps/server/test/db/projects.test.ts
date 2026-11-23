@@ -59,4 +59,9 @@ describe('projects', () => {
     const p = await updateProject(db, 'demo', { description: 'Gate' });
     expect(p.description).toBe('Gate');
   });
+
+  it('refuses the reserved slug "author", in the domain and in the database', async () => {
+    await expect(createProject(db, { id: 'author', name: 'Author' })).rejects.toMatchObject({ code: 'bad_request' });
+    await expect(db.insert(projects).values({ id: 'author', name: 'Author' })).rejects.toMatchObject({ cause: { code: '23514' } });
+  });
 });

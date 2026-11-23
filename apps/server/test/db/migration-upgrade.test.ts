@@ -153,3 +153,23 @@ describe('upgrade to Fornax (migration 0016)', () => {
     }
   });
 });
+
+describe('reserving the slug "author" (migration 0021)', () => {
+  it('stops with a clear error while a project has the slug', async () => {
+    const name = 'tabula_upgrade_author';
+    await admin.unsafe(`DROP DATABASE IF EXISTS ${name}`);
+    await admin.unsafe(`CREATE DATABASE ${name}`);
+    const url = new URL(upgradeUrl);
+    url.pathname = `/${name}`;
+    const c = postgres(url.href, { max: 1, onnotice: () => {} });
+    try {
+      for (const m of migrations.filter((x) => x.file < '0021')) for (const s of m.statements) await c.unsafe(s);
+      await c`INSERT INTO projects (id, name) VALUES ('author', 'Author')`;
+      const reserve = migrations.find((m) => m.file.startsWith('0021'))!;
+      await expect((async () => { for (const s of reserve.statements) await c.unsafe(s); })()).rejects.toThrow(/"author" is reserved/);
+    } finally {
+      await c.end();
+      await admin.unsafe(`DROP DATABASE IF EXISTS ${name}`);
+    }
+  });
+});

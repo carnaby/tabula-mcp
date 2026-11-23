@@ -5,6 +5,7 @@ import { messages, projectFiles, reportAttachments, reportJobs, reports, reportT
 import { BAR_DAYS, checkTimeZone, projectActivity, SERVER_TZ } from './activity.js';
 import type { TrimStep } from './digest.js';
 import { FILE_LIMITS } from './files.js';
+import { senderView } from './messages.js';
 import { listProjects } from './projects.js';
 import { recallDigests } from './recall.js';
 import { openReportCounts } from './reports.js';
@@ -39,6 +40,8 @@ export type WaitingItem = {
   error?: string | null;
   /** message_waiting: the project that declares it sent the message; `project` is the recipient. */
   from?: string;
+  /** message_waiting from the owner: the app connection it was sent through. */
+  via?: string;
 };
 
 export type DashboardWarning =
@@ -105,7 +108,7 @@ export async function dashboard(db: Db, now = new Date(), { transcriptionEnabled
     db
       .select({
         id: messages.id, title: messages.title, toProject: messages.toProject, fromProject: messages.fromProject,
-        version: messages.version, updatedAt: messages.updatedAt,
+        createdBy: messages.createdBy, version: messages.version, updatedAt: messages.updatedAt,
       })
       .from(messages)
       .where(and(eq(messages.status, 'waiting'), eq(messages.waitingOn, 'author'))),
@@ -148,7 +151,7 @@ export async function dashboard(db: Db, now = new Date(), { transcriptionEnabled
   }
   for (const m of waitingMessages) {
     waiting.push({
-      type: 'message_waiting', id: m.id, ref: refOf(m.id), title: m.title, project: m.toProject, from: m.fromProject,
+      type: 'message_waiting', id: m.id, ref: refOf(m.id), title: m.title, project: m.toProject, ...senderView(m),
       since: m.updatedAt.toISOString(), version: m.version, keep_media: false, recordings: 0, transcript: null,
     });
   }

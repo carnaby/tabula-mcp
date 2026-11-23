@@ -34,12 +34,17 @@ const timestamps = {
     .$onUpdate(() => new Date()),
 };
 
-export const projects = pgTable('projects', {
-  id: text('id').primaryKey(),
-  name: text('name').notNull(),
-  description: text('description').notNull().default(''),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-});
+export const projects = pgTable(
+  'projects',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    description: text('description').notNull().default(''),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  // "author" names the owner as the sender of a message (App API); migration 0021 explains a conflict before this check.
+  (t) => [check('projects_id_not_reserved', sql`${t.id} <> 'author'`)],
+);
 
 export const memories = pgTable(
   'memories',
@@ -389,8 +394,8 @@ export const messages = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     toProject: text('to_project').notNull().references(() => projects.id, { onDelete: 'restrict' }),
-    /** Declared by the sender; nothing verifies it. */
-    fromProject: text('from_project').notNull().references(() => projects.id, { onDelete: 'restrict' }),
+    /** Declared by the sender; nothing verifies it. Null: the owner sent it through an app (shown as "author"). */
+    fromProject: text('from_project').references(() => projects.id, { onDelete: 'restrict' }),
     type: messageType('type').notNull(),
     title: text('title').notNull(),
     body: text('body').notNull(),
@@ -411,6 +416,7 @@ export const messages = pgTable(
     check('messages_title_len', sql`char_length(${t.title}) between 1 and 200`),
     check('messages_body_len', sql`char_length(${t.body}) between 1 and 50000`),
     check('messages_waiting_on', sql`(${t.status} = 'waiting') = (${t.waitingOn} IS NOT NULL)`),
+    check('messages_sender', sql`${t.fromProject} IS NOT NULL OR ${t.source} = 'human'`),
   ],
 );
 

@@ -311,9 +311,7 @@
             <pre><code>git clone https://github.com/carnaby/tabula-mcp.git &amp;&amp; cd tabula-mcp
 cat &gt; .env &lt;&lt;EOF
 POSTGRES_PASSWORD=$(openssl rand -hex 32)
-TABULA_TOKEN=$(openssl rand -hex 32)
 TABULA_PUBLIC_URL=http://localhost:3000
-TABULA_CONNECTOR_SECRET=$(openssl rand -hex 32)
 EOF
 docker compose up -d --build</code></pre>
             <p>Open <code>http://localhost:3000</code> and add your first passkey with the one-time link from the server log (<code>docker compose logs app</code>). For anything beyond localhost, put Tabula behind a reverse proxy that terminates TLS and set <code>TABULA_PUBLIC_URL</code> to its address.</p>

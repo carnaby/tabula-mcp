@@ -2,14 +2,19 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { type AddressInfo, createServer, type Socket } from 'node:net';
 import { dirname, join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { seedProject, TEST_TOKEN, useTestDb } from '../helpers.js';
+import { cliConfig, seedProject, useTestDb, useTestTokens } from '../helpers.js';
 import { CLI, git, makeRepo, readText, runCli, startProxy, tempDir, useServer } from './harness.js';
 
 const db = useTestDb();
+useTestTokens(db);
 const server = useServer(db);
 let home: string;
-// TABULA_HOME keeps `tabula update` and the rest away from the real configuration.
-const env = () => ({ TABULA_HOME: home, TABULA_URL: server.url, TABULA_TOKEN: TEST_TOKEN });
+// TABULA_HOME keeps `tabula update` and the rest away from the real configuration. The CLI is logged in with OAuth to
+// the server it is pointed at (a saved login is used only for the URL it was made with), never with a shared token.
+const env = (url = server.url) => {
+  writeFileSync(join(home, 'config.json'), JSON.stringify(cliConfig(url)));
+  return { TABULA_HOME: home, TABULA_URL: url };
+};
 const cfg = { project: 'demo', sync: ['docs/**'] };
 
 beforeEach(async () => {
@@ -29,7 +34,7 @@ describe('tabula pull --hook', { timeout: 60_000 }, () => {
   it('exits 0 silently without credentials, without .tabula.json and outside a repository', async () => {
     const a = makeRepo(tempDir('tabula-h-'), cfg);
     const quiet = { code: 0, stdout: '', stderr: '' };
-    expect(await runCli(['pull', '--hook'], { cwd: a, env: { TABULA_HOME: home, TABULA_URL: undefined, TABULA_TOKEN: undefined } }))
+    expect(await runCli(['pull', '--hook'], { cwd: a, env: { TABULA_HOME: home, TABULA_URL: undefined } }))
       .toMatchObject(quiet);
     const bare = tempDir('tabula-h2-');
     git(bare, 'init', '-q');
@@ -54,7 +59,7 @@ describe('tabula pull --hook', { timeout: 60_000 }, () => {
 
   it('exits 0 within 5 s with one stderr line when the server is unreachable', async () => {
     const a = makeRepo(tempDir('tabula-h5-'), cfg);
-    const r = await runCli(['pull', '--hook'], { cwd: a, env: { ...env(), TABULA_URL: `http://127.0.0.1:${await closedPort()}` } });
+    const r = await runCli(['pull', '--hook'], { cwd: a, env: env(`http://127.0.0.1:${await closedPort()}`) });
     expect(r.code).toBe(0);
     expect(r.ms).toBeLessThan(5000);
     expect(r.stderr.trim().split('\n')).toHaveLength(1);
@@ -68,7 +73,7 @@ describe('tabula pull --hook', { timeout: 60_000 }, () => {
     try {
       const a = makeRepo(tempDir('tabula-h6-'), cfg);
       const url = `http://127.0.0.1:${(hang.address() as AddressInfo).port}`;
-      const r = await runCli(['pull', '--hook'], { cwd: a, env: { ...env(), TABULA_URL: url } });
+      const r = await runCli(['pull', '--hook'], { cwd: a, env: env(url) });
       expect(r.code).toBe(0);
       expect(r.ms).toBeLessThan(5000);
       expect(r.stderr.trim().split('\n')).toHaveLength(1);
@@ -91,7 +96,7 @@ describe('tabula pull --hook', { timeout: 60_000 }, () => {
     // A proxy that answers every file download slowly, so the hook runs out of time part way.
     const slow = await startProxy(server.url, (url) => (url.includes('/files/content') ? 500 : 0));
     try {
-      const r = await runCli(['pull', '--hook'], { cwd: b, env: { ...env(), TABULA_URL: slow.url, TABULA_HOOK_DEADLINE_MS: '2500' } });
+      const r = await runCli(['pull', '--hook'], { cwd: b, env: { ...env(slow.url), TABULA_HOOK_DEADLINE_MS: '2500' } });
       expect(r.code).toBe(0);
       expect(r.stderr).toBe('');
       const m = /^tabula: restored (\d+) of 13 files from Tabula project demo; run tabula pull for the rest$/.exec(r.stdout.trim());

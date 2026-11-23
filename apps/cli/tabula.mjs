@@ -13,7 +13,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const VERSION = '1.6.0';
+export const VERSION = '2.0.0';
 /** 1 MiB, the server's limit for one file. */
 export const MAX_BYTES = 1048576;
 export const DEFAULT_STATE = ['docs/handoff/*.md', '**/docs/handoff/*.md'];
@@ -219,21 +219,20 @@ const isOAuthLogin = (o) =>
   Boolean(o) && typeof o === 'object' && typeof o.client_id === 'string' && typeof o.refresh_token === 'string' && o.refresh_token !== '';
 
 /**
- * Server URL and credentials. TABULA_URL / TABULA_TOKEN in the environment win over ~/.tabula/config.json; a saved
- * OAuth login (tabula login) is used when no shared token is given, and only for the server it was made with: a
- * TABULA_URL naming another server never receives it. Missing values are '' / null.
+ * Server URL and this computer's OAuth login (tabula login). TABULA_URL overrides the saved URL; the saved login is used
+ * only for the server it was made with, so a TABULA_URL naming another server never receives it. Missing values are
+ * '' / null.
  */
 function readConnection() {
   const saved = readConfigFile();
   const url = String(process.env.TABULA_URL || saved.url || '').replace(/\/+$/, '');
-  const token = String(process.env.TABULA_TOKEN || saved.token || '');
   const savedUrl = String(saved.url || '').replace(/\/+$/, '');
-  const oauth = !token && url === savedUrl && isOAuthLogin(saved.oauth) ? saved.oauth : null;
-  return { url, token, oauth };
+  const oauth = url === savedUrl && isOAuthLogin(saved.oauth) ? saved.oauth : null;
+  return { url, oauth };
 }
 
 function requireConnection(conn) {
-  if (!conn.url || (!conn.token && !conn.oauth)) throw new CliError('not logged in: run tabula login <url>');
+  if (!conn.url || !conn.oauth) throw new CliError('not logged in: run tabula login <url>');
   return conn;
 }
 
@@ -395,7 +394,7 @@ function writeAtomic(repo, path, bytes) {
 // ------------------------------------------------------------------ server
 
 /**
- * fetch with the token and a timeout; network failures become a CliError. In hook mode every call ends by the deadline.
+ * fetch with this login's access token and a timeout; network failures become a CliError. In hook mode every call ends by the deadline.
  * Errors are tagged for the pull loop: `unreachable` (no answer, or a renewal the server could not serve: 5xx, 429;
  * `timedOut` when the timeout fired) and `rejected` (401).
  */
@@ -408,7 +407,6 @@ export function makeApi(conn, deadline) {
         method,
         headers: {
           authorization: `Bearer ${bearer}`,
-          'x-tabula-agent': 'cli',
           ...(body !== undefined && { 'content-type': 'application/json' }),
         },
         body: body === undefined ? undefined : JSON.stringify(body),
@@ -416,7 +414,7 @@ export function makeApi(conn, deadline) {
       });
       const data = await res.json().catch(() => null);
       if (res.status === 401) {
-        throw Object.assign(new CliError(conn.token ? 'Tabula rejected the token; run tabula login <url> again' : LOGIN_ENDED), { rejected: true });
+        throw Object.assign(new CliError(LOGIN_ENDED), { rejected: true });
       }
       return { status: res.status, data };
     } catch (e) {
@@ -444,9 +442,8 @@ const RENEW_FLOOR_MS = 2000;
 const hasAccessToken = (o) => typeof o.access_token === 'string' && o.access_token !== '';
 const isCurrent = (o) => hasAccessToken(o) && Number(o.expires_at) - REFRESH_MARGIN_MS > Date.now();
 
-/** The bearer for /api: the shared token as is, or this login's OAuth access token, renewed when it is about to expire. */
+/** The bearer for /api: this login's OAuth access token, renewed when it is about to expire. */
 async function bearerFor(conn, ms, deadline) {
-  if (conn.token) return conn.token;
   if (isCurrent(conn.oauth)) return conn.oauth.access_token;
   // Too little time to rotate safely (RENEW_FLOOR_MS), but the token still works past this command: use it, the next
   // command renews with its full time.
@@ -919,41 +916,6 @@ async function rm(repo, api, arg) {
 
 // ------------------------------------------------------------------ login
 
-async function readStdin() {
-  const chunks = [];
-  for await (const c of process.stdin) chunks.push(c);
-  return Buffer.concat(chunks).toString('utf8');
-}
-
-/** Read a line from the terminal without echoing it. */
-function promptHidden(question) {
-  return new Promise((resolvePrompt, reject) => {
-    const input = process.stdin;
-    process.stderr.write(question);
-    input.setRawMode(true);
-    input.resume();
-    let value = '';
-    const finish = (error) => {
-      input.setRawMode(false);
-      input.pause();
-      input.off('data', onData);
-      process.stderr.write('\n');
-      if (error) reject(error);
-      else resolvePrompt(value);
-    };
-    const onData = (buf) => {
-      for (const ch of buf.toString('utf8')) {
-        const code = ch.charCodeAt(0);
-        if (code === 13 || code === 10) return finish();
-        if (code === 3) return finish(new CliError('cancelled'));
-        if (code === 127 || code === 8) value = value.slice(0, -1);
-        else if (code >= 32) value += ch;
-      }
-    };
-    input.on('data', onData);
-  });
-}
-
 const CALLBACK_PATH = '/callback';
 /**
  * How long a login waits for the browser. TABULA_LOGIN_TIMEOUT_MS exists for the tests and can only shorten it; a
@@ -964,19 +926,8 @@ const LOGIN_TIMEOUT_MS = Math.min(10 * 60000, Math.max(0, Number(process.env.TAB
 async function login(args, flags) {
   const url = (args[0] ?? '').replace(/\/+$/, '');
   if (!/^https?:\/\/[^/]+/.test(url)) throw new CliError('usage: tabula login <url>, e.g. tabula login https://tabula.example.com');
-  if (!flags.has('--token-stdin') && (await offersOAuth(url))) return oauthLogin(url, flags);
-  // A server without TABULA_PUBLIC_URL, or --token-stdin: the shared token, as before.
-  const fromStdin = flags.has('--token-stdin') || !process.stdin.isTTY;
-  // Without a terminal and without the flag, a silent wait for input would look like a hang.
-  if (!flags.has('--token-stdin') && !process.stdin.isTTY) err('Reading the token from stdin (end with Ctrl+D)');
-  const token = (fromStdin ? await readStdin() : await promptHidden('Tabula token: ')).trim();
-  if (!token) throw new CliError('no token given');
-  ok(await makeApi({ url, token })('GET', '/api/projects'), 'checking the token');
-  // Other sections of config.json (an old "worker" one, for instance) stay as they are; an OAuth login is replaced.
-  const { oauth: _replaced, ...saved } = readConfigOrEmpty();
-  const file = writeConfigFile({ ...saved, url, token });
-  out(`Logged in to ${url}. Saved ${file}`);
-  return 0;
+  if (!(await offersOAuth(url))) throw new CliError(`${url} does not offer a browser login; it needs an update of Tabula`);
+  return oauthLogin(url, flags);
 }
 
 /** Whether the server signs the CLI in with OAuth (it has TABULA_PUBLIC_URL and so describes /api as a protected resource). */
@@ -1116,7 +1067,7 @@ async function oauthLogin(url, flags) {
     if (typeof tokens.access_token !== 'string' || typeof tokens.refresh_token !== 'string') {
       throw new CliError('finishing the login: the server sent no refresh token');
     }
-    // A legacy token would win over the new login (readConnection); it goes.
+    // A shared token saved by tabula 1.x is no longer used; it goes.
     const { token: _replaced, ...saved } = readConfigOrEmpty();
     const file = writeConfigFile({ ...saved, url: base, oauth: { client_id: client.client_id, token_endpoint: meta.token_endpoint, ...tokenFields(tokens) } });
     out(`Logged in to ${base}. Saved ${file}`);
@@ -1146,7 +1097,7 @@ async function runHook() {
   }, HOOK_DEADLINE_MS + HOOK_EXIT_GRACE_MS).unref();
   try {
     const conn = readConnection();
-    if (!conn.url || (!conn.token && !conn.oauth)) return 0;
+    if (!conn.url || !conn.oauth) return 0;
     const repo = loadRepo(Math.max(1, deadline - Date.now()));
     if (!repo?.config) return 0;
     repo.deadline = deadline;
@@ -1233,7 +1184,7 @@ const err = (line) => process.stderr.write(`${line}\n`);
 const HELP = `tabula ${VERSION} — keeps a repository's untracked files (handoff state, private specs and plans) in Tabula
 
 Usage:
-  tabula login <url> [--no-browser]    sign in through the browser (an app connection); --token-stdin saves a legacy token instead
+  tabula login <url> [--no-browser]    sign in through the browser (an app connection for this computer)
   tabula status                        show what push and pull would do
   tabula push [--force]                upload new and changed files; never deletes
   tabula pull [--force]                download missing and newer files; never deletes local files
@@ -1243,7 +1194,7 @@ Usage:
   tabula update                        replace this file with the version the server offers
 
 .tabula.json in the repository root: { "project"?: slug, "sync": [globs], "state"?: [globs] }
-Environment: TABULA_URL and TABULA_TOKEN (legacy) override the saved login; TABULA_HOME (default ~/.tabula).
+Environment: TABULA_URL overrides the saved server address; TABULA_HOME (default ~/.tabula).
 Exit codes: 0 OK, 1 error, 2 finished with conflicts.`;
 
 /** What `tabula worker` prints now: one line. */
@@ -1261,7 +1212,7 @@ function fail(e) {
 
 /** Options each command accepts (pull --hook is handled before this check). */
 const FLAGS = {
-  help: [], version: [], login: ['--token-stdin', '--no-browser'], status: [], push: ['--force'], pull: ['--force'], rm: [], install: [], update: [],
+  help: [], version: [], login: ['--no-browser'], status: [], push: ['--force'], pull: ['--force'], rm: [], install: [], update: [],
 };
 
 export async function main(argv) {

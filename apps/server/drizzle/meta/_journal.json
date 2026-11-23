@@ -134,6 +134,13 @@
       "when": 1795167218242,
       "tag": "0018_oauth_passkeys",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1795422872977,
+      "tag": "0019_drop_legacy_settings",
+      "breakpoints": true
     }
   ]
 }

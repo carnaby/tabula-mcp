@@ -7,10 +7,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { type Diarization, reportAttachments, reports, type TranscriptSegment } from '../../src/db/schema.js';
 import { buildApp } from '../../src/http/app.js';
 import { MediaStore } from '../../src/media/store.js';
-import { finishNextJob, seedProject, TEST_TOKEN, testConfig, useTestDb } from '../helpers.js';
+import { finishNextJob, seedProject, TEST_TOKEN, testConfig, useTestDb, useTestTokens } from '../helpers.js';
 import { silentWav } from '../media-fixtures.js';
 
 const db = useTestDb();
+useTestTokens(db);
 const mediaDir = mkdtempSync(join(tmpdir(), 'tabula-segments-media-'));
 const config = testConfig({ media: { dir: mediaDir, maxBytes: 10 * 1024 * 1024, purgeAfterHours: 24, ffmpeg: 'ffmpeg', ffprobe: 'ffprobe' } });
 let app: FastifyInstance;

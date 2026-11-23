@@ -288,11 +288,10 @@ export type MessageToken = { id: string; project: string; name: string; created_
 export type MessagePatch = { expected_version: number; reply?: string; status?: MessageStatus; waiting_on?: MessageWaitingOn };
 
 export type SecurityOverview = {
-  via: 'session' | 'legacy';
+  via: 'session';
   fresh: boolean;
-  publicUrl: string | null;
+  publicUrl: string;
   passkeys: Array<{ id: string; name: string; createdAt: string; lastUsedAt: string | null }>;
   connections: Array<{ id: string; name: string; app: string; target: string; resource: 'mcp' | 'api'; createdAt: string; lastUsedAt: string | null }>;
   sessions: Array<{ id: string; device: string; createdAt: string; lastUsedAt: string; current: boolean }>;
-  legacy: { since: string | null; token: string | null; connector: string | null; connectorConfigured: boolean };
 };

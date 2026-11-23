@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createRegistration } from '../src/auth/passkeys/registrations.js';
 import { countPasskeys } from '../src/auth/passkeys/store.js';
 import { oauthConnections, uiSessions } from '../src/db/schema.js';
-import { TEST_TOKEN, useTestDb } from '../test/helpers.js';
+import { useTestDb } from '../test/helpers.js';
 import { newPkce, useAuthServer } from '../test/oauth-flow.js';
 import { chromePath } from './chrome.js';
 
@@ -19,7 +19,7 @@ const server = useAuthServer(db, { webDist: WEB_DIST });
 let browser: Browser;
 let page: Page;
 /** Every /api request the page sends, with the Authorization header it carried (if any). */
-let apiRequests: { url: string; authorization: string | undefined }[] = [];
+const apiRequests: { url: string; authorization: string | undefined }[] = [];
 
 beforeAll(async () => {
   // A desktop viewport: below 961 px the sidebar with Sign out is a closed drawer.
@@ -82,9 +82,12 @@ describe('signing in with a passkey in a real browser', () => {
     expect(new URL(page.url()).hash).toBe('#/thoughts');
 
     // 3. Sign in: the gate's button opens /signin, which asks for the passkey at once and returns to the same screen.
-    // A legacy token left in this browser is dropped once the passkey session works and never goes to /api.
-    await page.evaluate((legacy) => localStorage.setItem('tabula.token', legacy), TEST_TOKEN);
-    apiRequests = [];
+    // A token left by the release before passkeys is dropped by the gate while still signed out, and never sent.
+    await page.evaluate(() => localStorage.setItem('tabula.token', 'old-shared-token'));
+    await page.reload();
+    await page.waitForSelector('.gate a[href^="/signin"]', { timeout: 30_000 });
+    expect(await page.evaluate(() => localStorage.getItem('tabula.token'))).toBeNull();
+    const beforeSignIn = apiRequests.length;
     // Not waitForNetworkIdle: the app polls, so the network may never go quiet for long.
     const thoughtsLoaded = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/thoughts', { timeout: 30_000 });
     await page.click('a[href^="/signin"]');
@@ -93,8 +96,7 @@ describe('signing in with a passkey in a real browser', () => {
     expect(await db.select().from(uiSessions)).toHaveLength(1);
     expect(page.url()).toBe(`${server.url}/#/thoughts`);
     expect(await page.evaluate(() => localStorage.getItem('tabula.token'))).toBeNull();
-    expect(apiRequests.length).toBeGreaterThan(0);
-    expect(apiRequests.filter((r) => r.authorization !== undefined)).toEqual([]);
+    expect(apiRequests.length).toBeGreaterThan(beforeSignIn);
 
     // 4. Approve an app on the consent page; the code comes back to the app's loopback address.
     // The decision is a native click on the form's button: the browser's own POST, with the Origin it sends by itself.
@@ -127,5 +129,8 @@ describe('signing in with a passkey in a real browser', () => {
     await signOutInApp();
     expect(await db.select().from(uiSessions)).toHaveLength(0);
     expect(await page.evaluate(async () => (await fetch('/api/auth/me', { credentials: 'same-origin' })).status)).toBe(401);
+
+    // No request of the whole flow carried an Authorization header: the browser has only its session cookie.
+    expect(apiRequests.filter((r) => r.authorization !== undefined)).toEqual([]);
   });
 });

@@ -3,14 +3,13 @@ import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createRegistration } from '../../src/auth/passkeys/registrations.js';
 import { createSession } from '../../src/auth/sessions.js';
-import { passkeyRegistrations, passkeys, settings, uiSessions } from '../../src/db/schema.js';
+import { passkeyRegistrations, uiSessions } from '../../src/db/schema.js';
 import { buildApp } from '../../src/http/app.js';
-import { TEST_PUBLIC_URL, TEST_TOKEN, testConfig, useTestDb } from '../helpers.js';
+import { TEST_PUBLIC_URL, testConfig, useTestDb } from '../helpers.js';
 
 const db = useTestDb();
 const logs: string[] = [];
 let app: FastifyInstance;
-let bare: FastifyInstance;
 
 beforeAll(async () => {
   // The suite runs at warn, where a request writes nothing; the masking test needs the request lines.
@@ -18,12 +17,8 @@ beforeAll(async () => {
   process.env.LOG_LEVEL = 'info';
   app = await buildApp({ config: testConfig({ publicUrl: TEST_PUBLIC_URL }), db, logStream: { write: (m) => void logs.push(m) } });
   process.env.LOG_LEVEL = prevLevel;
-  bare = await buildApp({ config: testConfig(), db });
 });
-afterAll(async () => {
-  await app.close();
-  await bare.close();
-});
+afterAll(() => app.close());
 
 const get = (url: string, headers: Record<string, string> = {}) => app.inject({ method: 'GET', url, headers });
 const dataOf = (html: string, name: string) => new RegExp(`data-${name}="([^"]*)"`).exec(html)?.[1];
@@ -120,42 +115,5 @@ describe('auth pages', () => {
     const res = await get('/passkey/add', { cookie: `tabula_session=${token}` });
     expect(res.statusCode).toBe(200);
     expect(res.headers['set-cookie']).toBe(`tabula_session=${token}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Strict`);
-  });
-
-  it('let the old token add the first passkey through a form from Tabula itself', async () => {
-    const form = (token: string, headers: Record<string, string> = { origin: TEST_PUBLIC_URL }) =>
-      app.inject({ method: 'POST', url: '/passkey/add', headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers }, payload: new URLSearchParams({ legacy_token: token }).toString() });
-    expect((await form(TEST_TOKEN, {})).statusCode).toBe(403);
-    expect((await form('wrong')).statusCode).toBe(403);
-    expect((await form(TEST_TOKEN, { origin: 'https://evil.example' })).statusCode).toBe(403);
-    const raw = (payload: string, contentType: string) =>
-      app.inject({ method: 'POST', url: '/passkey/add', headers: { 'content-type': contentType, origin: TEST_PUBLIC_URL }, payload });
-    const repeated = await raw(`legacy_token=${TEST_TOKEN}&legacy_token=${TEST_TOKEN}`, 'application/x-www-form-urlencoded');
-    expect(repeated.statusCode).toBe(403);
-    expectPageHeaders(repeated);
-    expect((await raw(JSON.stringify({ legacy_token: TEST_TOKEN }), 'application/json')).statusCode).toBe(403);
-    expect(await db.select().from(passkeyRegistrations)).toHaveLength(0);
-    const res = await form(TEST_TOKEN);
-    expect(res.statusCode).toBe(200);
-    expectPageHeaders(res);
-    expect(dataOf(res.body, 'token')).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect((await db.select().from(settings).where(eq(settings.key, 'legacy_token_last_used')))[0]?.value).toEqual({ at: expect.any(String) });
-  });
-
-  it('let the old token add only the first passkey, never another', async () => {
-    await db.insert(passkeys).values({ credentialId: 'existing', publicKey: 'key', name: 'Laptop' });
-    const res = await app.inject({
-      method: 'POST', url: '/passkey/add',
-      headers: { 'content-type': 'application/x-www-form-urlencoded', origin: TEST_PUBLIC_URL },
-      payload: new URLSearchParams({ legacy_token: TEST_TOKEN }).toString(),
-    });
-    expect(res.statusCode).toBe(403);
-    expectPageHeaders(res);
-    expect(res.body).toContain('A passkey already exists');
-    expect(await db.select().from(passkeyRegistrations)).toHaveLength(0);
-  });
-
-  it('do not exist without TABULA_PUBLIC_URL', async () => {
-    for (const url of ['/signin', '/passkey/add', '/auth/passkey.js']) expect((await bare.inject({ method: 'GET', url })).statusCode).toBe(404);
   });
 });

@@ -8,7 +8,7 @@ import { memories, messageEvents, messages, projectFileRevisions, projectFiles, 
 import { createMessage } from '../../src/domain/messages.js';
 import { setSyncConfig } from '../../src/domain/sync-config.js';
 import { buildApp } from '../../src/http/app.js';
-import { issueTestAccessToken, seedProject, TEST_PUBLIC_URL, TEST_TOKEN, testConfig, useTestDb } from '../helpers.js';
+import { issueTestAccessToken, seedProject, TEST_PUBLIC_URL, testConfig, useTestDb } from '../helpers.js';
 
 const db = useTestDb();
 let app: FastifyInstance;
@@ -77,13 +77,19 @@ describe('who wrote it', () => {
     await c.close();
   });
 
-  it('stores "unknown" when no model is named, and nothing for the web UI and the CLI', async () => {
+  it('refuses a write without model and names the parameter', async () => {
     const { value } = await issueTestAccessToken(db, { resource: 'mcp', name: 'gemini-cli' });
     const c = await connect({ Authorization: `Bearer ${value}` });
-    const t = json(await c.callTool({ name: 'save_thought', arguments: { title: 'T', body: 'b' } }));
-    expect((await db.select().from(thoughts).where(eq(thoughts.id, t.id)))[0]).toMatchObject({ editedBy: 'gemini-cli', editedByModel: 'unknown' });
+    const r = await c.callTool({ name: 'save_thought', arguments: { title: 'T', body: 'b' } });
+    expect(r.isError).toBe(true);
+    expect(texts(r).join('\n')).toMatch(/model/);
+    expect(await db.select().from(thoughts)).toHaveLength(0);
+    const frame = (await c.listTools()).tools.find((t) => t.name === 'get_frame')!;
+    expect((frame.inputSchema as { required?: string[] }).required ?? []).not.toContain('model');
     await c.close();
+  });
 
+  it('stores nothing for the web UI and the CLI', async () => {
     const cookie = `tabula_session=${(await createSession(db, { userAgent: 't', now: new Date() })).token}`;
     const ui = await app.inject({ method: 'POST', url: '/api/thoughts', headers: { cookie, origin: TEST_PUBLIC_URL }, payload: { title: 'Mine' } });
     expect(ui.json()).toMatchObject({ editedBy: 'human', editedByModel: null });
@@ -113,13 +119,6 @@ describe('who wrote it', () => {
   it('ignores X-Tabula-Agent on an OAuth connection to /mcp', async () => {
     const { value } = await issueTestAccessToken(db, { resource: 'mcp', name: 'claude-code' });
     const c = await connect({ Authorization: `Bearer ${value}`, 'X-Tabula-Agent': 'someone-else' });
-    const t = json(await c.callTool({ name: 'save_thought', arguments: { title: 'T', body: 'b', model: M } }));
-    expect((await db.select().from(thoughts).where(eq(thoughts.id, t.id)))[0]).toMatchObject({ editedBy: 'claude-code', editedByModel: M });
-    await c.close();
-  });
-
-  it('keeps the X-Tabula-Agent label for the old token', async () => {
-    const c = await connect({ Authorization: `Bearer ${TEST_TOKEN}`, 'X-Tabula-Agent': 'claude-code' });
     const t = json(await c.callTool({ name: 'save_thought', arguments: { title: 'T', body: 'b', model: M } }));
     expect((await db.select().from(thoughts).where(eq(thoughts.id, t.id)))[0]).toMatchObject({ editedBy: 'claude-code', editedByModel: M });
     await c.close();

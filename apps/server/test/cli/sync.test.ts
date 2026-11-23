@@ -1,19 +1,28 @@
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { projectFiles } from '../../src/db/schema.js';
 import { agentWriteFile } from '../../src/agent/operations.js';
 import { getFile, listFiles, putFile } from '../../src/domain/files.js';
 import { getSyncConfig } from '../../src/domain/sync-config.js';
-import { seedProject, TEST_TOKEN, useTestDb } from '../helpers.js';
+import { cliConfig, seedProject, TEST_TOKEN, useTestDb, useTestTokens } from '../helpers.js';
 import { git, makeRepo, readText, runCli, startProxy, tempDir, useServer, writeFile } from './harness.js';
 
 const db = useTestDb();
+useTestTokens(db);
 const server = useServer(db);
 let home: string;
-const env = () => ({ TABULA_HOME: home, TABULA_URL: server.url, TABULA_TOKEN: TEST_TOKEN });
-const noCreds = () => ({ TABULA_HOME: home, TABULA_URL: undefined, TABULA_TOKEN: undefined });
+// Logged in with OAuth to the server the CLI is pointed at: a saved login is used only for the URL it was made with.
+const env = (url = server.url) => {
+  writeFile(home, 'config.json', JSON.stringify(cliConfig(url)));
+  return { TABULA_HOME: home, TABULA_URL: url };
+};
+// Not logged in: no saved login (an earlier env() wrote one) and nothing in the environment.
+const noCreds = () => {
+  rmSync(join(home, 'config.json'), { force: true });
+  return { TABULA_HOME: home, TABULA_URL: undefined };
+};
 const cfg = { project: 'demo', sync: ['docs/**'], state: ['docs/handoff/*.md'] };
 const serverPaths = async (project = 'demo') => (await listFiles(db, project)).map((f) => f.path);
 
@@ -239,7 +248,7 @@ describe('tabula pull and push: failures, case collisions and what --force leave
     }
     const gone = await startProxy(server.url, (url) => (url.includes('/files/content') ? 'drop' : 0));
     try {
-      const pull = await runCli(['pull'], { cwd: a, env: { ...env(), TABULA_URL: gone.url } });
+      const pull = await runCli(['pull'], { cwd: a, env: env(gone.url) });
       expect(pull.code).toBe(1);
       expect(pull.stderr).toMatch(/^failed docs\/a\.md: cannot reach .*; stopped, 3 files not pulled$/m);
       expect(pull.stderr).not.toMatch(/docs\/b\.md/);
@@ -256,10 +265,10 @@ describe('tabula pull and push: failures, case collisions and what --force leave
     }
     const revoked = await startProxy(server.url, (url) => (url.includes('/files/content') ? { status: 401 } : 0));
     try {
-      const pull = await runCli(['pull'], { cwd: a, env: { ...env(), TABULA_URL: revoked.url } });
+      const pull = await runCli(['pull'], { cwd: a, env: env(revoked.url) });
       expect(pull.code).toBe(1);
       expect(pull.stderr.trim().split('\n')).toEqual([
-        'failed docs/a.md: Tabula rejected the token; run tabula login <url> again; stopped, 3 files not pulled',
+        'failed docs/a.md: the Tabula login expired or was revoked; run tabula login <url> again; stopped, 3 files not pulled',
       ]);
       expect(pull.stdout).toMatch(/0 pulled, 0 conflicts, 3 failed/);
     } finally {
@@ -358,7 +367,7 @@ describe('tabula and the agents that write over MCP', { timeout: 60_000 }, () =>
     const a = makeRepo(tempDir('tabula-o-'), cfg, { 'docs/a.md': 'a' });
     const old = await startProxy(server.url, (url) => (url.includes('/sync-config') ? { status: 404 } : 0));
     try {
-      const push = await runCli(['push'], { cwd: a, env: { ...env(), TABULA_URL: old.url } });
+      const push = await runCli(['push'], { cwd: a, env: env(old.url) });
       expect(push.code, push.stderr).toBe(0);
       expect(push.stderr).toMatch(/^warning: .*sync patterns.*HTTP 404/m);
       expect(push.stdout).toMatch(/1 pushed, 0 conflicts/);
@@ -394,36 +403,6 @@ describe('tabula and the agents that write over MCP', { timeout: 60_000 }, () =>
 });
 
 describe('tabula login, status, rm and errors', { timeout: 60_000 }, () => {
-  it('logs in with a token from stdin, refuses a wrong token, and works without the environment afterwards', async () => {
-    const a = makeRepo(tempDir('tabula-l-'), cfg, { 'docs/a.md': 'a' });
-    const bad = await runCli(['login', server.url, '--token-stdin'], { cwd: a, env: noCreds(), input: 'wrong-token\n' });
-    expect(bad.code).toBe(1);
-    expect(bad.stderr).toMatch(/rejected the token/);
-    expect(existsSync(join(home, 'config.json'))).toBe(false);
-    // Without a terminal and without --token-stdin it reads stdin too, and says so.
-    const piped = await runCli(['login', server.url], { cwd: a, env: noCreds(), input: `${TEST_TOKEN}\n` });
-    expect(piped.code, piped.stderr).toBe(0);
-    expect(piped.stderr).toContain('Reading the token from stdin (end with Ctrl+D)');
-    rmSync(join(home, 'config.json'));
-    const ok = await runCli(['login', `${server.url}/`, '--token-stdin'], { cwd: a, env: noCreds(), input: `${TEST_TOKEN}\n` });
-    expect(ok.code, ok.stderr).toBe(0);
-    expect(JSON.parse(readFileSync(join(home, 'config.json'), 'utf8'))).toEqual({ url: server.url, token: TEST_TOKEN });
-    if (process.platform !== 'win32') expect(statSync(join(home, 'config.json')).mode & 0o777).toBe(0o600);
-    expect((await runCli(['push'], { cwd: a, env: noCreds() })).code).toBe(0);
-    expect(await serverPaths()).toEqual(['docs/a.md']);
-  });
-
-  it('replaces an existing credentials file and makes it private again', async () => {
-    const a = makeRepo(tempDir('tabula-l2-'), cfg);
-    const file = join(home, 'config.json');
-    writeFile(home, 'config.json', JSON.stringify({ url: 'https://tabula.example.com', token: 'old' }));
-    if (process.platform !== 'win32') chmodSync(file, 0o644);
-    const ok = await runCli(['login', server.url, '--token-stdin'], { cwd: a, env: noCreds(), input: `${TEST_TOKEN}\n` });
-    expect(ok.code, ok.stderr).toBe(0);
-    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ url: server.url, token: TEST_TOKEN });
-    if (process.platform !== 'win32') expect(statSync(file).mode & 0o777).toBe(0o600);
-  });
-
   it('shows the status, deletes on the server with rm (path relative to the current folder) and keeps the local file', async () => {
     const a = makeRepo(tempDir('tabula-r-'), cfg, { 'docs/a.md': 'a', 'docs/b.md': 'b', 'docs/plány/a b.md': 'ab' });
     expect((await runCli(['push'], { cwd: a, env: env() })).code).toBe(0);

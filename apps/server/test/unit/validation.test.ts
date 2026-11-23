@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DomainError } from '../../src/domain/errors.js';
 import {
-  isAgentLabel, normalizeModel, normalizeTags, sanitizeAgentLabel, validateMemoryText, validateNoteText, validateProjectSlug,
+  isAgentLabel, normalizeModel, normalizeTags, validateMemoryText, validateNoteText, validateProjectSlug,
 } from '../../src/domain/validation.js';
 
 const fails = (fn: () => unknown, re: RegExp) => {
@@ -42,20 +42,6 @@ describe('normalizeTags', () => {
     expect(normalizeTags([' DB ', 'db', '', 'Postgres'])).toEqual(['db', 'postgres']);
   });
   it('handles undefined', () => expect(normalizeTags(undefined)).toEqual([]));
-});
-
-describe('sanitizeAgentLabel', () => {
-  it('keeps a clean label lowercased', () => expect(sanitizeAgentLabel('Claude-Code')).toBe('claude-code'));
-  it('falls back to unknown', () => {
-    expect(sanitizeAgentLabel(undefined)).toBe('unknown');
-    expect(sanitizeAgentLabel('bad label!')).toBe('unknown');
-    expect(sanitizeAgentLabel(['a', 'b'])).toBe('unknown');
-  });
-  it('never lets an agent pose as the human', () => {
-    expect(sanitizeAgentLabel('human')).toBe('unknown');
-    expect(sanitizeAgentLabel(' Human ')).toBe('unknown');
-    expect(sanitizeAgentLabel('humans')).toBe('humans');
-  });
 });
 
 describe('validateProjectSlug', () => {

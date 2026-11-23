@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../../src/http/app.js';
 import { createStatusCache } from '../../src/fornax/status.js';
-import { seedProject, TEST_TOKEN, TEST_WORKER_TOKEN, testConfig, useTestDb } from '../helpers.js';
+import { seedProject, TEST_TOKEN, TEST_WORKER_TOKEN, testConfig, useTestDb, useTestTokens } from '../helpers.js';
 import { type FakeFornax, startFakeFornax } from '../fake-fornax.js';
 
 const db = useTestDb();
+useTestTokens(db);
 const auth = { authorization: `Bearer ${TEST_TOKEN}` };
 let fornax: FakeFornax;
 beforeAll(async () => {

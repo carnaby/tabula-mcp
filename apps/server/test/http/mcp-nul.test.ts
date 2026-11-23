@@ -41,16 +41,16 @@ describe('a NUL character', () => {
     ['search', { query: 'x', project: bad }],
     // A quoted phrase goes to websearch_to_tsquery as typed; unquoted words are reduced to letters and digits first.
     ['search', { query: `"${bad}"` }],
-    ['remember', { project: bad, kind: 'rule', title: 't', body: 'b' }],
-    ['setup_project', { id: bad }],
+    ['remember', { project: bad, kind: 'rule', title: 't', body: 'b', model: 'claude-opus-5-5' }],
+    ['setup_project', { id: bad, model: 'claude-opus-5-5' }],
     ['list_files', { project: bad }],
     ['read_file', { project: bad, path: 'docs/a.md' }],
     ['read_file', { project: 'alpha', path: bad }],
-    ['write_file', { project: bad, path: 'docs/a.md', content: 'x' }],
-    ['delete_file', { project: bad, path: 'docs/a.md', base_sha256: sha }],
+    ['write_file', { project: bad, path: 'docs/a.md', content: 'x', model: 'claude-opus-5-5' }],
+    ['delete_file', { project: bad, path: 'docs/a.md', base_sha256: sha, model: 'claude-opus-5-5' }],
     ['find_notes', { tag: bad }],
     ['list_reports', { project: bad }],
-    ['create_report', { project: bad, title: 't' }],
+    ['create_report', { project: bad, title: 't', model: 'claude-opus-5-5' }],
   ])('in %s %j is a 400, not a server error', async (name, args) => {
     const r = await tool(name, args);
     expect(r.isError).toBe(true);

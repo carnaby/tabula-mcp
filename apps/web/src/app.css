@@ -955,8 +955,6 @@ span.transcript__time { color: var(--text-subtle); }
 .message-tokens__row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: var(--text-sm); }
 .message-tokens__value { overflow-wrap: anywhere; }
 .gate__wide { width: 100%; justify-content: center; }
-.gate__legacy summary { cursor: pointer; font-size: var(--text-sm); }
-.gate__legacy form { margin-top: 12px; }
 .security-card { display: grid; gap: 12px; padding: 16px; margin-bottom: 16px; }
 .security-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: var(--text-sm); }
 /* Names come from apps and user agents: a long one without spaces wraps instead of widening the page. */

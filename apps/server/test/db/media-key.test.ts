@@ -50,7 +50,7 @@ describe('media signing key', () => {
     }
   });
 
-  it('does not depend on TABULA_TOKEN', async () => {
+  it('does not depend on any bearer token', async () => {
     const key = await mediaSigningKey(db);
     const url = new URL(`http://h${signMediaPath(key, id, 3600)}`);
     const exp = Number(url.searchParams.get('exp'));

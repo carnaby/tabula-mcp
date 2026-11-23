@@ -5,7 +5,7 @@ import { createRegistration } from '../../src/auth/passkeys/registrations.js';
 import { passkeyRegistrations, passkeys, uiSessions } from '../../src/db/schema.js';
 import { buildApp } from '../../src/http/app.js';
 import { SoftAuthenticator } from '../soft-authenticator.js';
-import { issueTestAccessToken, TEST_PUBLIC_URL, TEST_TOKEN, testConfig, useTestDb } from '../helpers.js';
+import { issueTestAccessToken, TEST_PUBLIC_URL, testConfig, useTestDb } from '../helpers.js';
 
 const db = useTestDb();
 let app: FastifyInstance;
@@ -193,8 +193,7 @@ describe('/api/auth', () => {
     expect(await db.select().from(uiSessions)).toHaveLength(0);
   });
 
-  it('answers the old token, and refuses an app connection', async () => {
-    expect((await me({ authorization: `Bearer ${TEST_TOKEN}` })).json()).toEqual({ via: 'legacy', fresh: false, passkeys: 0, publicUrl: TEST_PUBLIC_URL });
+  it('refuses an app connection', async () => {
     const api = await issueTestAccessToken(db, { resource: 'api' });
     expect((await me({ authorization: `Bearer ${api.value}` })).statusCode).toBe(403);
   });

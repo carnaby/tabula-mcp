@@ -1,8 +1,9 @@
 import type { FastifyInstance } from 'fastify';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { memories } from '../../src/db/schema.js';
 import { buildApp } from '../../src/http/app.js';
-import { TEST_TOKEN, TEST_WORKER_TOKEN, testConfig, useTestDb } from '../helpers.js';
+import { TEST_PUBLIC_URL, TEST_WORKER_TOKEN, testConfig, useTestDb } from '../helpers.js';
+import { signedInCookie } from '../oauth-flow.js';
 
 const db = useTestDb();
 let app: FastifyInstance;
@@ -14,12 +15,16 @@ beforeAll(async () => {
 });
 afterAll(() => app.close());
 
-const auth = { authorization: `Bearer ${TEST_TOKEN}` };
+/** The web UI: its session cookie, sent from Tabula's own origin. */
+let ui: Record<string, string>;
+beforeEach(async () => {
+  ui = { cookie: await signedInCookie(db), origin: TEST_PUBLIC_URL };
+});
 const call = (method: 'GET' | 'POST' | 'PATCH' | 'DELETE', url: string, payload?: object) =>
-  app.inject({ method, url, headers: auth, ...(payload && { payload }) });
+  app.inject({ method, url, headers: ui, ...(payload && { payload }) });
 
 describe('REST API', () => {
-  it('requires the bearer token', async () => {
+  it('requires sign-in (OAuth token or session)', async () => {
     expect((await app.inject({ method: 'GET', url: '/api/projects' })).statusCode).toBe(401);
   });
 
@@ -148,7 +153,7 @@ describe('REST API', () => {
     expect((await call('GET', '/api/notes/tags')).json()).toEqual([{ tag: 'music', count: 1 }]);
   });
 
-  it('resolves a reference for the UI, ambiguous ones with their candidates, under the main token only', async () => {
+  it('resolves a reference for the UI, ambiguous ones with their candidates', async () => {
     const t = (await call('POST', '/api/thoughts', { title: 'Idea' })).json();
     const ref = `tabula:${t.id.slice(0, 8)}`;
     const ok = await call('GET', `/api/resolve/${encodeURIComponent(ref.toUpperCase())}`);

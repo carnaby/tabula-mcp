@@ -3,9 +3,10 @@ import { notInArray } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { settings } from '../../src/db/schema.js';
 import { buildApp } from '../../src/http/app.js';
-import { TEST_TOKEN, TEST_WORKER_TOKEN, testConfig, useTestDb } from '../helpers.js';
+import { TEST_TOKEN, TEST_WORKER_TOKEN, testConfig, useTestDb, useTestTokens } from '../helpers.js';
 
 const db = useTestDb();
+useTestTokens(db);
 let app: FastifyInstance;
 beforeAll(async () => {
   app = await buildApp({ config: testConfig(), db });
@@ -13,8 +14,8 @@ beforeAll(async () => {
 afterAll(() => app.close());
 
 const URL = '/api/settings/copy-prompt';
-/** Rows the text settings do not own: the media signing key and the legacy last-use records written by any request. */
-const NOT_COUNTED = ['media_signing_key', 'legacy_tracking_since', 'legacy_token_last_used', 'connector_secret_last_used'];
+/** The row the text settings do not own: the media signing key. */
+const NOT_COUNTED = ['media_signing_key'];
 const as = (token: string) => ({ authorization: `Bearer ${token}` });
 const get = () => app.inject({ method: 'GET', url: URL, headers: as(TEST_TOKEN) });
 const put = (payload: object) => app.inject({ method: 'PUT', url: URL, headers: as(TEST_TOKEN), payload });

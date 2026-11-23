@@ -23,8 +23,10 @@ export async function seedProject(db: Db, id: string): Promise<void> {
   await db.insert(projects).values({ id, name: id, description: `${id} project` });
 }
 
+/** An OAuth access token for /api of a connection named "cli": what the CLI and the old REST tests send. */
 export const TEST_TOKEN = 't'.repeat(32);
-export const TEST_SECRET = 's'.repeat(32);
+/** An OAuth access token for /mcp of a connection named "claude-code". */
+export const TEST_MCP_TOKEN = 'm'.repeat(32);
 /** A token that opens nothing: the retired worker token, sent to check that it is refused. */
 export const TEST_WORKER_TOKEN = 'w'.repeat(32);
 /** The public URL of servers under test that have OAuth and passkeys on (requests via inject; the port is not used). */
@@ -33,9 +35,7 @@ export const TEST_PUBLIC_URL = 'http://localhost:3999';
 export function testConfig(overrides: Partial<Config> = {}): Config {
   return {
     databaseUrl: 'unused-in-tests',
-    token: TEST_TOKEN,
-    connectorSecret: TEST_SECRET,
-    publicUrl: undefined,
+    publicUrl: TEST_PUBLIC_URL,
     fornax: { url: 'https://fornax.example.com', token: 'f'.repeat(32), priority: 'high' },
     port: 0,
     host: '127.0.0.1',
@@ -68,7 +68,23 @@ export async function issueTestAccessToken(
   });
   const value = opts.value ?? newSecret();
   await db.insert(oauthAccessTokens).values({
-    hash: hashSecret(value), connectionId: connection.id, resource: opts.resource, expiresAt: new Date(Date.now() + 3600_000),
+    hash: hashSecret(value), connectionId: connection.id, resource: opts.resource, expiresAt: new Date(Date.now() + 24 * 3600_000),
   });
   return { value, connectionId: connection.id };
 }
+
+/**
+ * Both test tokens before every test (after useTestDb empties the tables); call it right after useTestDb. Never in a
+ * file that creates its own connection named "cli" or "claude-code": a live connection name is unique.
+ */
+export function useTestTokens(db: Db): void {
+  beforeEach(async () => {
+    await issueTestAccessToken(db, { resource: 'api', name: 'cli', value: TEST_TOKEN });
+    await issueTestAccessToken(db, { resource: 'mcp', name: 'claude-code', value: TEST_MCP_TOKEN });
+  });
+}
+
+/** config.json of a CLI logged in with OAuth whose access token is TEST_TOKEN (valid long enough not to refresh). */
+export const cliConfig = (url: string) => ({
+  url, oauth: { client_id: 'test-client', refresh_token: 'unused', access_token: TEST_TOKEN, expires_at: Date.now() + 3600_000 },
+});

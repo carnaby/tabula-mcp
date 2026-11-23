@@ -25,7 +25,7 @@ export const SERVER_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
 /** Who transcribes recordings. */
 export const WORKER = 'worker';
 const HUMAN = 'human';
-/** The label the CLI wrote under with the shared token (X-Tabula-Agent: cli). */
+/** The label of rows written by CLI 1.x with the shared token (it sent X-Tabula-Agent: cli). */
 const LEGACY_CLI = 'cli';
 
 /** One change before merging. */
@@ -360,7 +360,7 @@ export async function collect(db: Db, from: Date, to: Date, type: ActivityType |
 
   const inside = (d: Date) => d.getTime() >= from.getTime() && d.getTime() < to.getTime();
   const events: ActivityEvent[] = [];
-  // A file written over /api is a push: by the shared token's "cli" label or by an /api connection (revoked ones too,
+  // A file written over /api is a push: under CLI 1.x's "cli" label or by an /api connection (revoked ones too,
   // so older rows keep their verb). A connection renamed later shows its earlier rows, written under the old name, as "Edited".
   const pushers = new Set([LEGACY_CLI, ...apiConnections.map((c) => c.name)]);
   for (const f of [...files, ...fileRevisions]) {

@@ -1,14 +1,13 @@
 import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { startLegacyTracking } from '../../src/auth/legacy.js';
 import { createClient, createConnection } from '../../src/auth/oauth/store.js';
 import { insertPasskey } from '../../src/auth/passkeys/store.js';
 import { hashSecret } from '../../src/auth/secrets.js';
 import { createSession } from '../../src/auth/sessions.js';
 import { oauthConnections, passkeys, uiSessions } from '../../src/db/schema.js';
 import { buildApp } from '../../src/http/app.js';
-import { issueTestAccessToken, TEST_PUBLIC_URL, TEST_TOKEN, testConfig, useTestDb } from '../helpers.js';
+import { issueTestAccessToken, TEST_PUBLIC_URL, testConfig, useTestDb } from '../helpers.js';
 
 const db = useTestDb();
 let app: FastifyInstance;
@@ -28,9 +27,7 @@ const passkey = async (name: string) =>
   (await insertPasskey(db, { credentialId: `cred-${name}`, publicKey: 'pk', counter: 0, transports: [], name, now: new Date() }))!;
 
 describe('GET /api/security', () => {
-  it('lists passkeys, live connections, sessions and the legacy token indicator', async () => {
-    // buildApp starts the tracking, but every test begins with empty settings.
-    await startLegacyTracking(db);
+  it('lists passkeys, live connections and sessions', async () => {
     const me = await session();
     await session(0, 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1');
     await passkey('Laptop');
@@ -48,11 +45,10 @@ describe('GET /api/security', () => {
       expect.objectContaining({ name: 'claude-ai', app: 'Test client', target: 'client.example.com', resource: 'mcp', lastUsedAt: null }),
     ]);
     expect(body.sessions.map((s: { device: string; current: boolean }) => [s.device, s.current]).sort()).toEqual([['Chrome on Windows', true], ['Safari on iPhone', false]]);
-    expect(body.legacy).toEqual({ since: expect.any(String), token: null, connector: null, connectorConfigured: true });
+    expect(body).not.toHaveProperty('legacy');
   });
 
-  it('is for the person only: the old token yes, an app connection no', async () => {
-    expect((await call('GET', '/security', { authorization: `Bearer ${TEST_TOKEN}` })).json()).toMatchObject({ via: 'legacy', fresh: false });
+  it('is for the person only, never an app connection', async () => {
     const api = await issueTestAccessToken(db, { resource: 'api' });
     const asApp = { authorization: `Bearer ${api.value}` };
     const k = await passkey('Kept');
@@ -101,7 +97,8 @@ describe('passkeys', () => {
     const a = await passkey('A');
     const b = await passkey('B');
     expect((await call('DELETE', `/passkeys/${a.id}`, { cookie: (await session(10 * 60_000)).cookie })).json().error).toBe('fresh_auth_required');
-    expect((await call('DELETE', `/passkeys/${a.id}`, { authorization: `Bearer ${TEST_TOKEN}` })).statusCode).toBe(403);
+    const api = await issueTestAccessToken(db, { resource: 'api' });
+    expect((await call('DELETE', `/passkeys/${a.id}`, { authorization: `Bearer ${api.value}` })).statusCode).toBe(403);
     const { cookie } = await session();
     expect((await call('DELETE', `/passkeys/${a.id}`, { cookie })).statusCode).toBe(204);
     expect((await call('DELETE', `/passkeys/${b.id}`, { cookie })).statusCode).toBe(409);

@@ -22,8 +22,8 @@ const listQuery = z.object({
 
 /**
  * The API of a narrow token: the messages of one project and nothing else. It is registered next to the /api plugin, so
- * it does not inherit that plugin's full-token check, and it accepts no other credential. Every other route compares
- * against the full token or the connector secret, which is why a narrow token opens nothing there.
+ * it does not inherit that plugin's authentication, and it accepts no other credential. Every other route accepts only
+ * an OAuth access token or the session cookie, which is why a narrow token opens nothing there.
  */
 export const inboxApiRoutes: FastifyPluginAsync<{ db: Db }> = async (app, { db }) => {
   const tokens = new WeakMap<FastifyRequest, InboxToken>();

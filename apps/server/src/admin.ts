@@ -22,10 +22,6 @@ export async function runAdmin(
   }
   const config = loadConfig(env);
   const auth = authSettings(config);
-  if (!auth) {
-    err('TABULA_PUBLIC_URL is not set: passkeys are off, so there is nothing to register');
-    return 1;
-  }
   const { db, close } = createDb(config.databaseUrl);
   try {
     // A recovery link too: it adds a passkey without signing in; the new link ends every earlier one.

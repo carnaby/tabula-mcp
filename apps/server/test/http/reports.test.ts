@@ -9,10 +9,12 @@ import { MEDIA_GONE } from '../../src/domain/jobs.js';
 import { purgeClosedMedia } from '../../src/domain/reports.js';
 import { buildApp } from '../../src/http/app.js';
 import { MediaStore } from '../../src/media/store.js';
-import { seedProject, TEST_TOKEN, testConfig, useTestDb } from '../helpers.js';
+import { seedProject, TEST_PUBLIC_URL, TEST_TOKEN, testConfig, useTestDb, useTestTokens } from '../helpers.js';
+import { signedInCookie } from '../oauth-flow.js';
 import { HAS_FFMPEG, headerDuration, liveWebm, PNG, testVideo } from '../media-fixtures.js';
 
 const db = useTestDb();
+useTestTokens(db);
 const mediaDir = mkdtempSync(join(tmpdir(), 'tabula-media-'));
 const config = testConfig({ media: { dir: mediaDir, maxBytes: 2 * 1024 * 1024, purgeAfterHours: 24, ffmpeg: 'ffmpeg', ffprobe: 'ffprobe' } });
 const store = new MediaStore(mediaDir, config.media.maxBytes);
@@ -21,11 +23,16 @@ beforeAll(async () => {
   app = await buildApp({ config, db, store });
 });
 afterAll(() => app.close());
-beforeEach(() => seedProject(db, 'demo'));
+/** The web UI: its session cookie, sent from Tabula's own origin. */
+let ui: Record<string, string>;
+beforeEach(async () => {
+  await seedProject(db, 'demo');
+  ui = { cookie: await signedInCookie(db), origin: TEST_PUBLIC_URL };
+});
 
 const auth = { authorization: `Bearer ${TEST_TOKEN}` };
 const call = (method: 'GET' | 'POST' | 'PATCH' | 'DELETE', url: string, payload?: object) =>
-  app.inject({ method, url, headers: auth, ...(payload && { payload }) });
+  app.inject({ method, url, headers: ui, ...(payload && { payload }) });
 const upload = (reportId: string, body: Buffer, type: string, name = 'file') =>
   app.inject({
     method: 'POST', url: `/api/reports/${reportId}/attachments`, payload: body,

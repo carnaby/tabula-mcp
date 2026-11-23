@@ -8,8 +8,8 @@ import { makeRepo, spawnCli, tempDir } from './harness.js';
 
 /** `tabula login` through the browser against a real OAuth server, for the CLI tests. */
 
-/** The CLI's environment: its own home, no shared token, no browser opened. */
-export const env = (home: string) => ({ TABULA_HOME: home, TABULA_URL: undefined, TABULA_TOKEN: undefined, TABULA_NO_BROWSER: '1' });
+/** The CLI's environment: its own home, no browser opened. */
+export const env = (home: string) => ({ TABULA_HOME: home, TABULA_URL: undefined, TABULA_NO_BROWSER: '1' });
 export const configOf = (home: string) => JSON.parse(readFileSync(join(home, 'config.json'), 'utf8'));
 /** Rewrites the saved config.json with `change`. */
 export const rewrite = (home: string, change: (c: any) => any) => writeFileSync(join(home, 'config.json'), JSON.stringify(change(configOf(home))));

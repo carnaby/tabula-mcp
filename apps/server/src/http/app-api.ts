@@ -12,7 +12,8 @@ import { createReport } from '../domain/reports.js';
 import { createThought } from '../domain/thoughts.js';
 import { normalizeModel } from '../domain/validation.js';
 import type { MediaStore } from '../media/store.js';
-import { AppApiError, errorBody, logAppError, parseBody, toAppError, validationFailed } from './app-api-errors.js';
+import { AppApiError, errorBody, logAppError, parseBody, toAppError, translate, validationFailed } from './app-api-errors.js';
+import { receiveAttachment } from './attachment-upload.js';
 
 export type AppApiDeps = { db: Db; config: Config; store: MediaStore; authCtx: AuthContext };
 
@@ -76,6 +77,7 @@ const noteBody = z.strictObject({ title: z.string(), body: z.string(), tags, pro
 const reportBody = z.strictObject({ title: z.string().optional(), body: z.string().optional(), project: z.string().optional(), model: z.string().optional() });
 /** The identifiers every new record is answered with. */
 const ids = (id: string): Created => ({ status: 201, body: { id, ref: refOf(id) } });
+const reportParams = z.object({ id: z.uuid() });
 
 /**
  * The App API: a narrow, versioned REST API for apps that act on the owner's behalf. It is registered next to /api, so
@@ -127,7 +129,7 @@ export const appApiRoutes: FastifyPluginAsync<AppApiDeps> = async (app, deps) =>
     return ids((await createThought(db, { title: b.title, body: b.body, tags: b.tags }, editorOf(req, b.model))).id);
   });
 
-  // Notes carry no author: they are always the owner's (spec ง4).
+  // Notes carry no author: they are always the owner's (spec ยง4).
   created(app, '/v1/notes', async (req) => {
     const b = parseBody(noteBody, req.body);
     const projectId = b.project === undefined ? null : await requireAppProject(db, b.project, 'project');
@@ -138,5 +140,24 @@ export const appApiRoutes: FastifyPluginAsync<AppApiDeps> = async (app, deps) =>
     const b = parseBody(reportBody, req.body);
     const projectId = b.project === undefined ? null : await requireAppProject(db, b.project, 'project');
     return ids((await createReport(db, { projectId, title: b.title, body: b.body }, editorOf(req, b.model))).id);
+  });
+
+  // An attachment is the raw request body (no multipart), streamed to disk by the shared upload path.
+  await app.register(async (upload) => {
+    upload.removeAllContentTypeParsers();
+    upload.addContentTypeParser('*', (_req, _payload, done) => done(null));
+    created(upload, '/v1/reports/:id/attachments', async (req, reply) => {
+      const params = reportParams.safeParse(req.params);
+      if (!params.success) {
+        reply.header('connection', 'close');
+        throw new AppApiError(404, 'report_not_found', 'no report has this id');
+      }
+      try {
+        const a = await receiveAttachment(deps, req, reply, params.data.id, { header: 'X-Filename', value: req.headers['x-filename'] }, editorOf(req));
+        return { status: 201, body: { id: a.id, kind: a.kind, mime: a.mime, size: a.size } };
+      } catch (e) {
+        throw translate(e, { not_found: 'report_not_found', conflict: 'report_closed' });
+      }
+    });
   });
 };

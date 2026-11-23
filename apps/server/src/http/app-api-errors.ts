@@ -1,6 +1,6 @@
 import type { FastifyRequest } from 'fastify';
 import type { z } from 'zod';
-import { DomainError, isNulRefusal, loggableError, NUL_REFUSED } from '../domain/errors.js';
+import { DomainError, isNulRefusal, loggableError, NUL_REFUSED, UnsupportedMediaError } from '../domain/errors.js';
 
 /**
  * The error codes of the App API (spec §6): the code is the contract, the message is not. `unavailable` (503, media
@@ -39,9 +39,17 @@ export function parseBody<T extends z.ZodType>(schema: T, data: unknown): z.infe
   return r.data;
 }
 
+/** A domain refusal under the code an endpoint promises for it, e.g. not_found → report_not_found. */
+export function translate(e: unknown, codes: { not_found?: AppErrorCode; conflict?: AppErrorCode }): unknown {
+  if (!(e instanceof DomainError) || e instanceof UnsupportedMediaError) return e;
+  const code = e.code === 'not_found' ? codes.not_found : e.code === 'conflict' ? codes.conflict : undefined;
+  return code ? new AppApiError(e.status, code, e.message) : e;
+}
+
 /** Any error as the App API answers it; nothing about an unexpected one leaves the server. */
 export function toAppError(err: unknown): AppApiError {
   if (err instanceof AppApiError) return err;
+  if (err instanceof UnsupportedMediaError) return new AppApiError(415, 'unsupported_media_type', err.message);
   if (err instanceof DomainError) {
     if (err.code === 'bad_request') return validationFailed([{ path: '', message: err.message }]);
     if (err.code === 'too_large') return new AppApiError(413, 'too_large', err.message);

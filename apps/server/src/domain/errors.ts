@@ -21,6 +21,15 @@ export const conflict = (m: string) => new DomainError('conflict', m);
 export const tooLarge = (m: string) => new DomainError('too_large', m);
 export const unavailable = (m: string) => new DomainError('unavailable', m);
 
+/** A file type Tabula does not store. A 400 for /api, which always answered it so; the App API names it 415. */
+export class UnsupportedMediaError extends DomainError {
+  constructor(message: string) {
+    super('bad_request', message);
+    this.name = 'UnsupportedMediaError';
+  }
+}
+export const unsupportedMedia = (m: string) => new UnsupportedMediaError(m);
+
 export const AGENT_READ_ONLY = 'human-authored records are read-only for agents';
 
 export const NUL_REFUSED = 'a value contains a character that cannot be stored (such as a NUL character)';

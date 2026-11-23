@@ -14,7 +14,7 @@ export type Principal =
 
 declare module 'fastify' {
   interface FastifyRequest {
-    /** Set by apiAuth / mcpAuth; null on routes that do not authenticate. */
+    /** Set by apiAuth / mcpAuth / appAuth; null on routes that do not authenticate. */
     principal: Principal | null;
   }
 }
@@ -83,6 +83,24 @@ export function mcpAuth(ctx: AuthContext) {
     const bearer = bearerToken(req);
     const p = bearer === undefined ? null : await fromBearer(ctx, bearer, 'mcp');
     if (!p) return unauthorized(reply, ctx, 'mcp', bearer !== undefined);
+    req.principal = p;
+  };
+}
+
+/**
+ * /app-api: an OAuth token issued for /app-api and nothing else — no session cookie, no token of another resource, no
+ * Inbox token (App API spec §2). Answers in the App API's error shape.
+ */
+export function appAuth(ctx: AuthContext) {
+  return async (req: FastifyRequest, reply: FastifyReply) => {
+    const bearer = bearerToken(req);
+    const p = bearer === undefined ? null : await fromBearer(ctx, bearer, 'app');
+    if (!p) {
+      return reply
+        .code(401)
+        .header('WWW-Authenticate', challenge(ctx.auth, 'app', bearer !== undefined))
+        .send({ error: 'unauthorized', message: "send an OAuth access token issued for this server's /app-api" });
+    }
     req.principal = p;
   };
 }

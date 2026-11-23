@@ -72,4 +72,19 @@ describe('the OAuth resource app', () => {
       `Bearer resource_metadata="${U}/.well-known/oauth-protected-resource/app-api", scope="app", error="invalid_token"`,
     );
   });
+
+  it('lives with its connection: listed, renamed and revoked under Security', async () => {
+    const c = await connectApp();
+    const projects = (token: string) => app.inject({ method: 'GET', url: '/app-api/v1/projects', headers: { authorization: `Bearer ${token}` } });
+    expect((await projects(c.tokens.access_token)).statusCode).toBe(200);
+    const ui = { cookie: await signedInCookie(db), origin: U };
+    const listed = (await app.inject({ method: 'GET', url: '/api/security', headers: ui })).json().connections as Array<{ id: string; name: string; resource: string }>;
+    const conn = listed.find((x) => x.name === 'klara')!;
+    expect(conn.resource).toBe('app');
+    expect((await app.inject({ method: 'PATCH', url: `/api/connections/${conn.id}`, headers: ui, payload: { name: 'klara-phone' } })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'POST', url: `/api/connections/${conn.id}/revoke`, headers: ui })).statusCode).toBe(204);
+    const after = await projects(c.tokens.access_token);
+    expect(after.statusCode).toBe(401);
+    expect(after.json().error).toBe('unauthorized');
+  });
 });

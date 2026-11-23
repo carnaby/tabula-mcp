@@ -30,6 +30,8 @@ export const TEST_TOKEN = 't'.repeat(32);
 export const TEST_MCP_TOKEN = 'm'.repeat(32);
 /** A token that opens nothing: the retired worker token, sent to check that it is refused. */
 export const TEST_WORKER_TOKEN = 'w'.repeat(32);
+/** An OAuth access token for /app-api of a connection named "klara": an app that writes on the owner's behalf. */
+export const TEST_APP_TOKEN = 'k'.repeat(32);
 /** The public URL of servers under test that have OAuth and passkeys on (requests via inject; the port is not used). */
 export const TEST_PUBLIC_URL = 'http://localhost:3999';
 
@@ -82,6 +84,13 @@ export function useTestTokens(db: Db): void {
   beforeEach(async () => {
     await issueTestAccessToken(db, { resource: 'api', name: 'cli', value: TEST_TOKEN });
     await issueTestAccessToken(db, { resource: 'mcp', name: 'claude-code', value: TEST_MCP_TOKEN });
+  });
+}
+
+/** TEST_APP_TOKEN before every test; call it right after useTestDb, never in a file that makes its own "klara". */
+export function useTestAppToken(db: Db): void {
+  beforeEach(async () => {
+    await issueTestAccessToken(db, { resource: 'app', name: 'klara', value: TEST_APP_TOKEN });
   });
 }
 

@@ -221,7 +221,7 @@ export const projectSyncConfigs = pgTable('project_sync_configs', {
 });
 
 export const reportStatus = pgEnum('report_status', ['new', 'triaged', 'done']);
-export const attachmentKind = pgEnum('attachment_kind', ['image', 'video', 'audio', 'frame']);
+export const attachmentKind = pgEnum('attachment_kind', ['image', 'video', 'audio', 'frame', 'document']);
 
 /**
  * Reports: bugs captured on the phone (text, photos, screen recordings, voice) and recordings of meetings and
@@ -245,7 +245,7 @@ export const reports = pgTable(
     editedByModel: text('edited_by_model'),
     version: integer('version').notNull().default(1),
     closedAt: timestamp('closed_at', { withTimezone: true }),
-    /** The user keeps the video and audio after closing: the purge skips the report while this is on. */
+    /** The user keeps the video, audio and documents after closing: the purge skips the report while this is on. */
     keepMedia: boolean('keep_media').notNull().default(false),
     ...timestamps,
     search: tsvector('search').generatedAlwaysAs(
@@ -284,7 +284,7 @@ export const reportAttachments = pgTable(
     note: text('note'),
     createdBy: text('created_by').notNull(),
     createdByModel: text('created_by_model'),
-    /** Set when the bytes were deleted (video and audio after the report is closed); the row stays as a record. */
+    /** Set when the bytes were deleted (video, audio and documents after the report is closed); the row stays as a record. */
     purgedAt: timestamp('purged_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },

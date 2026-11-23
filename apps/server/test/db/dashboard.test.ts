@@ -127,6 +127,31 @@ describe('dashboard: waiting for you', () => {
     expect((await dashboard(db)).waiting).toEqual([expect.objectContaining({ title: 'Reopened', recordings: 1 })]);
   });
 
+  it('counts documents on disk with the recordings as the media that closing deletes', async () => {
+    await seedProject(db, 'demo');
+    const r = await report({ title: 'Contract', created: ago(5) });
+    await recording(r.id, { job: { status: 'done' }, transcribed: true });
+    for (const purged of [false, false, true]) {
+      const id = randomUUID();
+      await db.insert(reportAttachments).values({
+        id, reportId: r.id, kind: 'document', mime: 'application/pdf', size: 10, sha256: 'x', fileName: 'a.pdf', storageKey: `${r.id}/${id}.pdf`,
+        createdBy: 'human', purgedAt: purged ? new Date() : null,
+      });
+    }
+    const docsOnly = await report({ title: 'Documents only', created: ago(4) });
+    const id = randomUUID();
+    await db.insert(reportAttachments).values({
+      id, reportId: docsOnly.id, kind: 'document', mime: 'text/plain; charset=utf-8', size: 3, sha256: 'x', fileName: 'a.txt',
+      storageKey: `${docsOnly.id}/${id}.txt`, createdBy: 'human',
+    });
+    await report({ title: 'Text only', created: ago(3) });
+
+    const by = Object.fromEntries((await dashboard(db)).waiting.map((w) => [w.title, w]));
+    expect(by.Contract).toMatchObject({ transcript: 'done', recordings: 1, media: 3 });
+    expect(by['Documents only']).toMatchObject({ transcript: null, recordings: 0, media: 1 });
+    expect(by['Text only']).toMatchObject({ recordings: 0, media: 0 });
+  });
+
   it('does not call a report failed because of a purged recording', async () => {
     await seedProject(db, 'demo');
     const r = await report({ title: 'Reopened', created: ago(60) });

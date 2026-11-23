@@ -48,7 +48,7 @@ const sync =
     : null;
 if (config.fornax && mediaProblem) app.log.error('transcription is paused: Fornax is configured but the media storage is not usable');
 
-// Every 15 minutes: video and audio of closed reports are deleted after a grace period.
+// Every 15 minutes: video, audio and documents of closed reports are deleted after a grace period.
 const purge = async () => {
   try {
     const n = await purgeClosedMedia(db, store, config.media.purgeAfterHours, new Date(), (err, id) =>

@@ -102,7 +102,7 @@ function WaitingRow({
 
   const markDone = async () => {
     const ok = await confirm({
-      title: 'Close this report?', message: closeReportMessage(w.recordings, w.keep_media, purgeAfterHours), confirmLabel: 'Close report',
+      title: 'Close this report?', message: closeReportMessage(w.media, w.keep_media, purgeAfterHours), confirmLabel: 'Close report',
     });
     if (!ok) return;
     setBusy(true);

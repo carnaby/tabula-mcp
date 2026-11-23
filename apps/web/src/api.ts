@@ -166,6 +166,20 @@ export const api = {
   signOutSession: (id: string) => request<void>('DELETE', `/sessions/${id}`),
 };
 
+/** Browsers often leave the type of a document empty (Markdown above all): it is taken from the extension, so the server can check it. */
+const DOCUMENT_TYPES = new Map(Object.entries({
+  pdf: 'application/pdf',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  odt: 'application/vnd.oasis.opendocument.text',
+  txt: 'text/plain',
+  md: 'text/markdown',
+  markdown: 'text/markdown',
+}));
+const uploadType = (file: Blob, name: string): string =>
+  file.type || DOCUMENT_TYPES.get(name.split('.').pop()?.toLowerCase() ?? '') || 'application/octet-stream';
+
 /**
  * Upload one file as the raw request body. XMLHttpRequest because fetch has no upload progress;
  * abort() cancels it.
@@ -179,7 +193,7 @@ export function uploadAttachment(
   const xhr = new XMLHttpRequest();
   const promise = new Promise<Attachment>((resolve, reject) => {
     xhr.open('POST', `/api/reports/${reportId}/attachments`);
-    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+    xhr.setRequestHeader('Content-Type', uploadType(file, name));
     xhr.setRequestHeader('X-File-Name', encodeURIComponent(name));
     xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
     xhr.onload = () => {

@@ -112,7 +112,7 @@ const textBlock = (text: string): AgentBlock => ({ type: 'text', text });
 const jsonBlock = (value: unknown): AgentBlock => textBlock(JSON.stringify(value));
 const isoDay = (d: Date) => d.toISOString().slice(0, 10);
 
-const ATTACHMENT_WORD = { frame: 'frame', image: 'photo', video: 'video', audio: 'voice note' } as const;
+const ATTACHMENT_WORD = { frame: 'frame', image: 'photo', video: 'video', audio: 'voice note', document: 'document' } as const;
 
 /** What a record is for the headline, and its state when it is not active. */
 function describeRecord(r: ResolvedRecord): { what: string; inactive?: string } {
@@ -133,7 +133,7 @@ function describeRecord(r: ResolvedRecord): { what: string; inactive?: string } 
     case 'attachment':
       return {
         what: `${ATTACHMENT_WORD[r.record.kind]} of report ${refOf(r.report.id)}`,
-        inactive: r.record.purgedAt ? 'recording deleted' : undefined,
+        inactive: r.record.purgedAt ? (r.record.kind === 'document' ? 'file deleted' : 'recording deleted') : undefined,
       };
   }
 }
@@ -182,12 +182,23 @@ function fileBlocks(f: ProjectFile): AgentBlock[] {
   return blocks;
 }
 
-/** A photo or frame as an image with its details; a video or voice note as details and where its transcript is. */
+/** What an attachment is, for messages to agents. */
+const kindText = (a: Attachment): string =>
+  ({ image: 'a photo', frame: 'a frame', video: 'a video', audio: 'an audio recording', document: 'a document' })[a.kind];
+
+/**
+ * A photo or frame as an image with its details; a video or voice note as details and where its transcript is;
+ * a document as its details only.
+ */
 async function attachmentBlocks(ctx: AgentContext, a: Attachment, report: Report): Promise<AgentBlock[]> {
   const isImage = a.kind === 'frame' || a.kind === 'image';
   // Only an image needs the media store; a purged recording has no link, so it needs nothing.
   const m = isImage || !a.purgedAt ? requireMedia(ctx) : ctx.media;
   const view = { ...attachmentForAgent(a, m), report: refOf(report.id), report_title: report.title };
+  if (a.kind === 'document') {
+    const note = a.purgedAt ? 'a document: its content cannot be read yet' : 'a document: its content cannot be read yet; the url downloads the file';
+    return [jsonBlock({ ...view, note })];
+  }
   if (isImage) {
     const { image, mime } = await attachmentImage(ctx.db, m!.store, m!.paths, a.id);
     return [{ type: 'image', image, mime }, jsonBlock(view)];
@@ -449,7 +460,7 @@ const reportForAgent = (r: Report) => ({
   project: r.projectId ?? NO_PROJECT,
   title: r.title,
   status: r.status,
-  /** The user keeps the video and audio after closing. */
+  /** The user keeps the video, audio and documents after closing. */
   keep_media: r.keepMedia,
   description: r.body,
   triage: r.triage,
@@ -509,7 +520,7 @@ export async function agentUpdateReport(
 ) {
   const r = await requireReportRef(ctx, input.id);
   if (input.triage !== undefined && input.append_triage !== undefined) throw badRequest('pass either triage (replace) or append_triage, not both');
-  // Replacing text, or closing (which starts the deletion of the report's video and audio), must not be based on
+  // Replacing text, or closing (which starts the deletion of the report's video, audio and documents), must not be based on
   // a stale read.
   if ((input.triage !== undefined || input.title !== undefined || input.status === 'done') && input.expected_version === undefined) {
     throw badRequest('expected_version is required when you replace triage or title or set status "done"; read it with get_report first. append_triage and status "triaged" may be sent without it.');
@@ -553,7 +564,7 @@ async function resolveAttachmentId(ctx: AgentContext, raw: string): Promise<stri
 export async function agentGetTranscript(ctx: AgentContext, input: { attachment_id: string; offset?: number }): Promise<string> {
   const id = await resolveAttachmentId(ctx, input.attachment_id);
   const a = await requireAttachment(ctx.db, id);
-  if (!isRecording(a)) throw badRequest(`attachment ${id} is ${a.kind === 'image' ? 'a photo' : 'a frame'}; only video and audio are transcribed`);
+  if (!isRecording(a)) throw badRequest(`attachment ${id} is ${kindText(a)}; only video and audio are transcribed`);
   const s = (await transcriptStates(ctx.db, [id])).get(id);
   if (s?.status !== 'done') throw notFound(`attachment ${id} has no transcript yet: ${pendingText(s, ctx.transcriptionEnabled !== false)}`);
   const view = speakerView(s.segments, s.diarization, s.speakers);
@@ -575,7 +586,7 @@ export async function agentGetTranscript(ctx: AgentContext, input: { attachment_
 export async function agentNameSpeakers(ctx: AgentContext, input: { attachment_id: string; names: Record<string, string> }) {
   const id = await resolveAttachmentId(ctx, input.attachment_id);
   const a = await requireAttachment(ctx.db, id);
-  if (!isRecording(a)) throw badRequest(`attachment ${id} is ${a.kind === 'image' ? 'a photo' : 'a frame'}; only video and audio have speakers`);
+  if (!isRecording(a)) throw badRequest(`attachment ${id} is ${kindText(a)}; only video and audio have speakers`);
   if (!Object.keys(input.names).length) throw badRequest('names is empty; pass e.g. {"S2": "Tomáš"}');
   const r = await nameSpeakersAsAgent(ctx.db, id, input.names);
   const s = (await transcriptStates(ctx.db, [id])).get(id);
@@ -587,7 +598,7 @@ export async function agentNameSpeakers(ctx: AgentContext, input: { attachment_i
 export async function agentEditTranscript(ctx: AgentContext, input: { attachment_id: string; edits: AgentLineEdit[] }) {
   const id = await resolveAttachmentId(ctx, input.attachment_id);
   const a = await requireAttachment(ctx.db, id);
-  if (!isRecording(a)) throw badRequest(`attachment ${id} is ${a.kind === 'image' ? 'a photo' : 'a frame'}; only video and audio have a transcript`);
+  if (!isRecording(a)) throw badRequest(`attachment ${id} is ${kindText(a)}; only video and audio have a transcript`);
   const r = await editTranscriptAsAgent(ctx.db, id, input.edits);
   return { attachment: refOf(id), written: r.written, skipped: r.skipped };
 }

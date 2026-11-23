@@ -55,7 +55,7 @@ export type Report = {
 };
 
 export type Attachment = typeof reportAttachments.$inferSelect;
-export type ReportSummary = Report & { counts: Record<'image' | 'video' | 'audio' | 'frame', number> };
+export type ReportSummary = Report & { counts: Record<'image' | 'video' | 'audio' | 'frame' | 'document', number> };
 
 function cleanTitle(raw: string): string {
   const t = raw.replace(/\s+/g, ' ').trim();
@@ -210,7 +210,7 @@ export async function pageReports(
     : [];
   return {
     items: items.map((r) => {
-      const c = { image: 0, video: 0, audio: 0, frame: 0 };
+      const c = { image: 0, video: 0, audio: 0, frame: 0, document: 0 };
       for (const x of counts) if (x.reportId === r.id) c[x.kind] = x.n;
       return { ...r, counts: c };
     }),
@@ -293,7 +293,8 @@ export async function addAttachment(
     const key = `${reportId}/${id}.${file.type.ext}`;
     let durationMs: number | null = null;
     let transcribe = false;
-    if (file.type.kind !== 'image') {
+    // A document never goes through ffmpeg and is never rewritten.
+    if (file.type.kind === 'video' || file.type.kind === 'audio') {
       if (file.type.ext === 'webm') file = await remuxed(store, paths, file);
       durationMs = await probeDurationMs(paths, file.tmpPath, file.type.mime);
       // A video without a sound track has nothing to transcribe; when ffprobe can't tell, Fornax finds out.
@@ -377,7 +378,7 @@ export async function frameAt(
   editor: Editor,
 ): Promise<{ frame: Attachment; image: Buffer; created: boolean }> {
   const video = await requireAttachment(db, videoId);
-  if (video.kind !== 'video') throw badRequest(`attachment ${videoId} is ${video.kind === 'frame' ? 'a frame' : `an ${video.kind}`}, not a video`);
+  if (video.kind !== 'video') throw badRequest(`attachment ${videoId} is ${video.kind === 'frame' ? 'a frame' : video.kind === 'document' ? 'a document' : `an ${video.kind}`}, not a video`);
   if (video.purgedAt) throw conflict('the video was deleted after the report was closed; only its saved frames remain');
   if (video.durationMs !== null && atMs > video.durationMs) {
     throw badRequest(`the video is ${(video.durationMs / 1000).toFixed(1)} s long; ${(atMs / 1000).toFixed(1)} s is past its end`);
@@ -444,6 +445,9 @@ async function readAll(store: MediaStore, key: string): Promise<Buffer> {
 export async function attachmentImage(db: Db, store: MediaStore, paths: FfmpegPaths, id: string): Promise<{ attachment: Attachment; image: Buffer; mime: string }> {
   const a = await requireAttachment(db, id);
   if (a.kind === 'frame') return { attachment: a, image: await readAll(store, a.storageKey), mime: 'image/jpeg' };
+  if (a.kind === 'document') {
+    throw badRequest(`attachment ${id} is a document (${a.fileName}); its content cannot be read yet: there is no image or text of it`);
+  }
   if (a.kind !== 'image') {
     throw badRequest(`attachment ${id} is ${a.kind === 'audio' ? 'an audio recording' : 'a video'}; use get_frame for a still from a video`);
   }
@@ -457,7 +461,7 @@ export async function attachmentImage(db: Db, store: MediaStore, paths: FfmpegPa
 }
 
 /**
- * Video and audio of reports closed more than `hours` ago are deleted from disk, unless the report has Keep media on
+ * Video, audio and documents of reports closed more than `hours` ago are deleted from disk, unless the report has Keep media on
  * (checked on every run, so turning it off lets the next run delete them); photos, frames and the text stay.
  * The rows remain with purged_at set, so the report still shows what was there. A file that can't be deleted is
  * reported to onError and tried again next time; the others go on. Returns how many were deleted.
@@ -477,7 +481,7 @@ export async function purgeClosedMedia(
     .innerJoin(reports, eq(reports.id, reportAttachments.reportId))
     .where(
       and(
-        inArray(reportAttachments.kind, ['video', 'audio']),
+        inArray(reportAttachments.kind, ['video', 'audio', 'document']),
         isNull(reportAttachments.purgedAt),
         dueReport,
       ),

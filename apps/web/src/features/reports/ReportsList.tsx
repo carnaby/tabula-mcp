@@ -14,8 +14,9 @@ export const STATUS_TONE: Record<ReportStatus, BadgeTone> = { new: 'accent', tri
 
 function Counts({ r }: { r: ReportSummary }) {
   const c = r.counts;
-  const items: [number, 'image' | 'film' | 'mic' | 'aperture', string][] = [
+  const items: [number, 'image' | 'film' | 'mic' | 'aperture' | 'paperclip', string][] = [
     [c.image, 'image', 'photos'], [c.video, 'film', 'videos'], [c.audio, 'mic', 'voice notes'], [c.frame, 'aperture', 'frames'],
+    [c.document, 'paperclip', 'documents'],
   ];
   return (
     <span className="report-card__counts">

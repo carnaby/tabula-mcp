@@ -1,5 +1,5 @@
 import { refOf } from '@tabula/shared/refs';
-import { and, asc, desc, eq, gt, inArray, isNull, ne } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gt, inArray, isNull, ne } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { messages, projectFiles, reportAttachments, reportJobs, reports, reportTranscripts } from '../db/schema.js';
 import { BAR_DAYS, checkTimeZone, projectActivity, SERVER_TZ } from './activity.js';
@@ -31,8 +31,10 @@ export type WaitingItem = {
   /** The report's version, for Mark done (expected_version). */
   version: number;
   keep_media: boolean;
-  /** Video and audio of the report still on disk: the Mark done confirmation names them. */
+  /** Video and audio of the report still on disk. */
   recordings: number;
+  /** Video, audio and documents of the report still on disk: what closing deletes, so the close confirmation names them. */
+  media: number;
   transcript: WaitingTranscript | null;
   /** transcription_failed: the recording, its file name and the error. */
   attachment_id?: string;
@@ -76,7 +78,7 @@ const RANK: Record<WaitingTranscript, number> = { done: 1, failed: 2, queued: 3,
 /** What the Home page shows besides the timeline. */
 export async function dashboard(db: Db, now = new Date(), { transcriptionEnabled = true, tz = SERVER_TZ }: { transcriptionEnabled?: boolean; tz?: string } = {}): Promise<Dashboard> {
   const zone = checkTimeZone(tz);
-  const [open, recordings, large, projectList, openCounts, activity, waitingMessages] = await Promise.all([
+  const [open, recordings, documents, large, projectList, openCounts, activity, waitingMessages] = await Promise.all([
     db
       .select({
         id: reports.id, projectId: reports.projectId, title: reports.title, status: reports.status, version: reports.version,
@@ -96,6 +98,13 @@ export async function dashboard(db: Db, now = new Date(), { transcriptionEnabled
       .leftJoin(reportJobs, and(eq(reportJobs.attachmentId, reportAttachments.id), eq(reportJobs.kind, 'transcribe')))
       .leftJoin(reportTranscripts, eq(reportTranscripts.attachmentId, reportAttachments.id))
       .where(and(inArray(reports.status, [...OPEN]), inArray(reportAttachments.kind, ['video', 'audio']))),
+    // Documents of open reports still on disk: closing deletes them like video and audio.
+    db
+      .select({ reportId: reportAttachments.reportId, n: count() })
+      .from(reportAttachments)
+      .innerJoin(reports, eq(reports.id, reportAttachments.reportId))
+      .where(and(inArray(reports.status, [...OPEN]), eq(reportAttachments.kind, 'document'), isNull(reportAttachments.purgedAt)))
+      .groupBy(reportAttachments.reportId),
     db
       .select({ id: projectFiles.id, projectId: projectFiles.projectId, path: projectFiles.path, size: projectFiles.size })
       .from(projectFiles)
@@ -127,6 +136,7 @@ export async function dashboard(db: Db, now = new Date(), { transcriptionEnabled
     else recordingsOf.set(a.reportId, [a]);
   }
 
+  const documentsOf = new Map(documents.map((d) => [d.reportId, d.n]));
   const waiting: WaitingItem[] = [];
   for (const r of open) {
     const recs = recordingsOf.get(r.id) ?? [];
@@ -135,9 +145,10 @@ export async function dashboard(db: Db, now = new Date(), { transcriptionEnabled
       const s = stateOf(a);
       if (s && (!transcript || RANK[s] > RANK[transcript])) transcript = s;
     }
+    const onDisk = recs.filter((a) => !a.purgedAt).length;
     const base = {
       id: r.id, ref: refOf(r.id), title: r.title, project: r.projectId, version: r.version, keep_media: r.keepMedia,
-      recordings: recs.filter((a) => !a.purgedAt).length, transcript,
+      recordings: onDisk, media: onDisk + (documentsOf.get(r.id) ?? 0), transcript,
     };
     waiting.push({ ...base, type: r.status === 'new' ? 'new_report' : 'triaged', since: (r.status === 'new' ? r.createdAt : r.updatedAt).toISOString() });
     for (const a of recs) {
@@ -152,7 +163,7 @@ export async function dashboard(db: Db, now = new Date(), { transcriptionEnabled
   for (const m of waitingMessages) {
     waiting.push({
       type: 'message_waiting', id: m.id, ref: refOf(m.id), title: m.title, project: m.toProject, ...senderView(m),
-      since: m.updatedAt.toISOString(), version: m.version, keep_media: false, recordings: 0, transcript: null,
+      since: m.updatedAt.toISOString(), version: m.version, keep_media: false, recordings: 0, media: 0, transcript: null,
     });
   }
   waiting.sort((a, b) => a.since.localeCompare(b.since) || a.id.localeCompare(b.id));

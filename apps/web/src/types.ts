@@ -117,7 +117,7 @@ export const REPORT_STATUS_INFO: Record<ReportStatus, { label: string; hint: str
   triaged: { label: 'Triaged', hint: 'An agent wrote the tasks' },
   done: { label: 'Done', hint: 'Fixed and closed' },
 };
-export type AttachmentKind = 'image' | 'video' | 'audio' | 'frame';
+export type AttachmentKind = 'image' | 'video' | 'audio' | 'frame' | 'document';
 /** A line changed after the worker wrote it: who changed it last, when, and the worker's own text and speaker. */
 export type SegmentEdit = { by: 'user' | 'agent'; at: string; original: { text: string; speaker?: string } };
 export type TranscriptSegment = { start_ms: number; end_ms: number; text: string; speaker?: string; edit?: SegmentEdit };
@@ -207,8 +207,10 @@ export type WaitingItem = {
   /** For Mark done (expectedVersion). */
   version: number;
   keep_media: boolean;
-  /** Video and audio still on disk: the close confirmation names them. */
+  /** Video and audio still on disk. */
   recordings: number;
+  /** Video, audio and documents still on disk: what closing deletes, so the close confirmation names them. */
+  media: number;
   transcript: WaitingTranscript | null;
   /** transcription_failed: the recording, its file name and the error. */
   attachment_id?: string;

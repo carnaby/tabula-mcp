@@ -223,13 +223,15 @@ export function registerMediaRoute(app: FastifyInstance, { db, store, mediaKey }
     const size = await store.size(a.storageKey);
     if (size === null) throw notFound('the file is missing from the media directory');
 
+    // A document is only ever downloaded, never shown in a page (spec §3.1); photos and recordings play inline.
+    const disposition = a.kind === 'document' ? 'attachment' : 'inline';
     reply
       .header('Content-Type', a.mime)
       .header('X-Content-Type-Options', 'nosniff')
       .header('Content-Security-Policy', "default-src 'none'; sandbox")
       .header('Cache-Control', 'private, max-age=3600')
       .header('Accept-Ranges', 'bytes')
-      .header('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(a.fileName)}`);
+      .header('Content-Disposition', `${disposition}; filename*=UTF-8''${encodeURIComponent(a.fileName)}`);
 
     const range = /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range ?? ''));
     if (range && (range[1] || range[2])) {

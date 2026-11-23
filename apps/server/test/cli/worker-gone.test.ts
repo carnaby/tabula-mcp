@@ -1,10 +1,11 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { TEST_TOKEN, useTestDb } from '../helpers.js';
+import { TEST_TOKEN, useTestDb, useTestTokens } from '../helpers.js';
 import { runCli, tempDir, useServer } from './harness.js';
 
 const db = useTestDb();
+useTestTokens(db);
 const server = useServer(db);
 const env = (home: string) => ({ TABULA_HOME: home, TABULA_URL: undefined, TABULA_TOKEN: undefined, TABULA_WORKER_TOKEN: undefined });
 

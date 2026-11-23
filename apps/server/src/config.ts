@@ -5,12 +5,7 @@ const emptyToUndefined = (v: unknown) => (v === '' ? undefined : v);
 
 const schema = z.object({
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
-  TABULA_TOKEN: z.string().min(32, 'TABULA_TOKEN must be at least 32 characters'),
-  TABULA_CONNECTOR_SECRET: z.preprocess(
-    emptyToUndefined,
-    z.string().min(32, 'TABULA_CONNECTOR_SECRET must be at least 32 characters').optional(),
-  ),
-  TABULA_PUBLIC_URL: z.preprocess(emptyToUndefined, z.string().optional()),
+  TABULA_PUBLIC_URL: z.string({ error: 'TABULA_PUBLIC_URL is required' }).min(1, 'TABULA_PUBLIC_URL is required'),
   TABULA_FORNAX_URL: z.preprocess(emptyToUndefined, z.string().optional()),
   TABULA_FORNAX_TOKEN: z.preprocess(emptyToUndefined, z.string().optional()),
   TABULA_FORNAX_PRIORITY: z.preprocess(emptyToUndefined, z.enum(['low', 'normal', 'high']).default('high')),
@@ -28,13 +23,11 @@ export type FornaxConfig = { url: string; token: string; priority: 'low' | 'norm
 
 export type Config = {
   databaseUrl: string;
-  token: string;
-  connectorSecret: string | undefined;
   /**
    * The public address, https://<host> without a path: the OAuth issuer, the base of /mcp and /api as resources and
-   * the passkey domain. Unset: no OAuth and no passkeys, only TABULA_TOKEN.
+   * the passkey domain. Required: passkeys and OAuth are the only way in.
    */
-  publicUrl: string | undefined;
+  publicUrl: string;
   /** The Fornax job queue that transcribes recordings. Unset = transcription is off. */
   fornax: FornaxConfig | undefined;
   port: number;
@@ -114,19 +107,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (e.TABULA_FORNAX_TOKEN === undefined) throw new Error('Invalid configuration: TABULA_FORNAX_TOKEN is required when TABULA_FORNAX_URL is set');
     fornax = { url: fornaxUrl(e.TABULA_FORNAX_URL), token: e.TABULA_FORNAX_TOKEN, priority: e.TABULA_FORNAX_PRIORITY };
   }
-  let publicUrl: string | undefined;
-  if (e.TABULA_PUBLIC_URL !== undefined) {
-    const normalized = normalizePublicUrl(e.TABULA_PUBLIC_URL);
-    if (normalized === null) {
-      const rule = isHttpsIp(e.TABULA_PUBLIC_URL) ? PUBLIC_URL_IP_RULE : PUBLIC_URL_RULE;
-      throw new Error(`Invalid configuration: TABULA_PUBLIC_URL ${rule}`);
-    }
-    publicUrl = normalized;
+  const publicUrl = normalizePublicUrl(e.TABULA_PUBLIC_URL);
+  if (publicUrl === null) {
+    const rule = isHttpsIp(e.TABULA_PUBLIC_URL) ? PUBLIC_URL_IP_RULE : PUBLIC_URL_RULE;
+    throw new Error(`Invalid configuration: TABULA_PUBLIC_URL ${rule}`);
   }
   return {
     databaseUrl: e.DATABASE_URL,
-    token: e.TABULA_TOKEN,
-    connectorSecret: e.TABULA_CONNECTOR_SECRET,
     publicUrl,
     fornax,
     port: e.PORT,
@@ -146,5 +133,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 export function configWarnings(env: NodeJS.ProcessEnv = process.env): string[] {
   const warnings: string[] = [];
   if (env.TABULA_WORKER_TOKEN) warnings.push('TABULA_WORKER_TOKEN is no longer used; transcription runs on Fornax (TABULA_FORNAX_URL)');
+  if (env.TABULA_TOKEN) warnings.push('TABULA_TOKEN is no longer used and is ignored: sign in with a passkey and connect apps with OAuth; remove it from .env');
+  if (env.TABULA_CONNECTOR_SECRET) {
+    warnings.push('TABULA_CONNECTOR_SECRET is no longer used and is ignored: claude.ai connects to <TABULA_PUBLIC_URL>/mcp with OAuth; remove it from .env');
+  }
   return warnings;
 }

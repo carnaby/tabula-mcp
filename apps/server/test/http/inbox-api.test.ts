@@ -4,9 +4,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createMessageToken, listMessageTokens, revokeMessageToken } from '../../src/domain/message-tokens.js';
 import { createMessage, getMessage, listMessageEvents, type Message, updateMessage } from '../../src/domain/messages.js';
 import { buildApp } from '../../src/http/app.js';
-import { seedProject, TEST_SECRET, TEST_TOKEN, testConfig, useTestDb } from '../helpers.js';
+import { seedProject, TEST_TOKEN, testConfig, useTestDb, useTestTokens } from '../helpers.js';
 
 const db = useTestDb();
+useTestTokens(db);
 const logs: string[] = [];
 let app: FastifyInstance;
 let token: string;
@@ -207,7 +208,6 @@ describe('what the narrow token never opens', () => {
 describe('authentication of the narrow API', () => {
   it.each([
     ['the full token', TEST_TOKEN],
-    ['the connector secret', TEST_SECRET],
     ['an unknown token', `tabula_inbox_${'a'.repeat(43)}`],
   ])('refuses %s', async (_name, bearer) => {
     const res = await call('GET', base, undefined, bearer);

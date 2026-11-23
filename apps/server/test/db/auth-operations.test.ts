@@ -13,7 +13,7 @@ import {
   oauthAccessTokens, oauthClients, oauthCodes, oauthConnections, oauthPending, oauthRefreshTokens, passkeyRegistrations, uiSessions,
   webauthnChallenges,
 } from '../../src/db/schema.js';
-import { TEST_TOKEN, useTestDb } from '../helpers.js';
+import { useTestDb } from '../helpers.js';
 
 const db = useTestDb();
 const DAY = 24 * 3600_000;
@@ -101,7 +101,7 @@ describe('sweepAuth', () => {
 describe('the first passkey', () => {
   const log = () => {
     const lines: string[] = [];
-    return { lines, info: (m: string) => void lines.push(`info ${m}`), warn: (m: string) => void lines.push(`warn ${m}`) };
+    return { lines, warn: (m: string) => void lines.push(`warn ${m}`) };
   };
 
   it('logs a working registration link at start while no passkey exists', async () => {
@@ -124,27 +124,17 @@ describe('the first passkey', () => {
     expect(await findRegistration(db, later!, new Date())).toBeDefined();
   });
 
-  it('logs nothing once a passkey exists, and says why passkeys are off without TABULA_PUBLIC_URL', async () => {
+  it('logs nothing once a passkey exists', async () => {
     await insertPasskey(db, { credentialId: 'c', publicKey: 'p', counter: 0, transports: [], name: 'x', now: new Date() });
     const l = log();
     await announceFirstPasskey(db, auth, l);
     expect(l.lines).toEqual([]);
-    await announceFirstPasskey(db, null, l);
-    expect(l.lines).toEqual(['info TABULA_PUBLIC_URL is not set: passkeys and OAuth are off; the web UI and MCP accept only TABULA_TOKEN']);
-    expect(await db.select().from(passkeyRegistrations)).toHaveLength(0);
-  });
-
-  it('creates no link without TABULA_PUBLIC_URL even when no passkey exists', async () => {
-    const l = log();
-    await announceFirstPasskey(db, null, l);
-    expect(l.lines).toHaveLength(1);
-    expect(l.lines[0]).not.toMatch(/passkey\/register/);
     expect(await db.select().from(passkeyRegistrations)).toHaveLength(0);
   });
 });
 
 describe('admin passkey-link', () => {
-  const env = () => ({ DATABASE_URL: inject('databaseUrl'), TABULA_TOKEN: TEST_TOKEN, TABULA_PUBLIC_URL: 'https://tabula.example.com' });
+  const env = () => ({ DATABASE_URL: inject('databaseUrl'), TABULA_PUBLIC_URL: 'https://tabula.example.com' });
 
   it('prints a new link that replaces the earlier one', async () => {
     const earlier = await createRegistration(db, 'link', new Date());
@@ -160,8 +150,8 @@ describe('admin passkey-link', () => {
     const out: string[] = [];
     expect(await runAdmin([], env(), () => {}, (l) => void err.push(l))).toBe(2);
     expect(err[0]).toBe('usage: node dist/admin.js passkey-link');
-    expect(await runAdmin(['passkey-link'], { ...env(), TABULA_PUBLIC_URL: '' }, (l) => void out.push(l), (l) => void err.push(l))).toBe(1);
-    expect(err[1]).toBe('TABULA_PUBLIC_URL is not set: passkeys are off, so there is nothing to register');
+    await expect(runAdmin(['passkey-link'], { ...env(), TABULA_PUBLIC_URL: '' }, (l) => void out.push(l), (l) => void err.push(l)))
+      .rejects.toThrow(/TABULA_PUBLIC_URL is required/);
     expect(out).toEqual([]);
     expect(await db.select().from(passkeyRegistrations)).toHaveLength(0);
   });

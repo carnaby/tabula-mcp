@@ -14,12 +14,9 @@ describe('safeEqual', () => {
 });
 
 describe('apiEditor', () => {
-  it('is the human only for the web UI and the old token without a label', () => {
+  it('is the human only for the web UI', () => {
     expect(apiEditor(req({ kind: 'session', session: {} }))).toEqual({ source: 'human', label: 'human' });
     expect(apiEditor(req({ kind: 'oauth', connectionId: 'c', name: 'tabula-cli' }))).toEqual({ source: 'agent', label: 'tabula-cli' });
-    expect(apiEditor(req({ kind: 'legacy', via: 'token' }))).toEqual({ source: 'human', label: 'human' });
-    expect(apiEditor(req({ kind: 'legacy', via: 'token' }, { 'x-tabula-agent': 'cli' }))).toEqual({ source: 'agent', label: 'cli' });
-    expect(apiEditor(req({ kind: 'legacy', via: 'token' }, { 'x-tabula-agent': 'human' }))).toEqual({ source: 'agent', label: 'unknown' });
   });
 });
 

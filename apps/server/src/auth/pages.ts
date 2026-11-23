@@ -9,8 +9,8 @@ export const PAGE_CSP =
 
 /**
  * Never no-referrer: a browser then sends `Origin: null` with a native form POST (Fetch, "append a request Origin
- * header"), so sameOrigin() would refuse the consent page's Allow and Deny and the legacy /passkey/add form. Same-origin
- * fetch() POSTs (the passkey ceremonies) keep the real Origin either way, as the headless browser test shows.
+ * header"), so sameOrigin() would refuse the consent page's Allow and Deny. Same-origin fetch() POSTs (the passkey
+ * ceremonies) keep the real Origin either way, as the headless browser test shows.
  * strict-origin keeps the real Origin and sends at most the origin as Referer, never a path with a registration token.
  */
 export const REFERRER_POLICY = 'strict-origin';
@@ -62,7 +62,7 @@ export function signInPage(view: { next: string; reason: 'signin' | 'fresh'; noP
     ? 'Confirm it is you with your passkey to continue.'
     : 'Use a passkey saved on this device, on your phone or on a security key.';
   const none = view.noPasskeys
-    ? '<p class="warn">No passkey is registered yet. Open the registration link from the server log, or run <span class="mono">node dist/admin.js passkey-link</span> on the server. Until then the web app also accepts the legacy token.</p>'
+    ? '<p class="warn">No passkey is registered yet. Open the registration link from the server log, or run <span class="mono">node dist/admin.js passkey-link</span> on the server.</p>'
     : '';
   return page(
     'Sign in',

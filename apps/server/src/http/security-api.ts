@@ -2,7 +2,6 @@ import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { type AuthContext, requirePerson } from '../auth/authenticate.js';
 import { clearedSessionCookie } from '../auth/cookie.js';
-import { legacyStatus } from '../auth/legacy.js';
 import { displayClientName } from '../auth/names.js';
 import { isLoopbackRedirect } from '../auth/oauth/crypto.js';
 import { findConnection, listLiveConnections, renameConnection, revokeConnection } from '../auth/oauth/store.js';
@@ -24,7 +23,7 @@ const clearSession = (reply: FastifyReply, auth: AuthSettings) => reply.removeHe
 
 /** Sign-in state and security settings of the web UI. Only the person: an app's OAuth token gets 403. */
 export const securityRoutes: FastifyPluginAsync<{ authCtx: AuthContext }> = async (app, { authCtx }) => {
-  const { db, auth, config } = authCtx;
+  const { db, auth } = authCtx;
   app.addHook('preHandler', requirePerson);
 
   app.get('/auth/me', async (req) => {
@@ -33,7 +32,7 @@ export const securityRoutes: FastifyPluginAsync<{ authCtx: AuthContext }> = asyn
       via: p.kind,
       fresh: p.kind === 'session' && isFresh(p.session, new Date()),
       passkeys: await countPasskeys(db),
-      publicUrl: auth?.issuer ?? null,
+      publicUrl: auth.issuer,
     };
   });
 
@@ -41,7 +40,7 @@ export const securityRoutes: FastifyPluginAsync<{ authCtx: AuthContext }> = asyn
     const p = req.principal!;
     if (p.kind === 'session') {
       await deleteSession(db, p.session.id);
-      if (auth) clearSession(reply, auth);
+      clearSession(reply, auth);
     }
     return reply.code(204).send();
   });
@@ -54,7 +53,7 @@ export const securityRoutes: FastifyPluginAsync<{ authCtx: AuthContext }> = asyn
     return {
       via: p.kind,
       fresh: p.kind === 'session' && isFresh(p.session, now),
-      publicUrl: auth?.issuer ?? null,
+      publicUrl: auth.issuer,
       passkeys: (await listPasskeys(db)).map((k) => ({ id: k.id, name: k.name, createdAt: k.createdAt.toISOString(), lastUsedAt: iso(k.lastUsedAt) })),
       connections: (await listLiveConnections(db)).map((c) => ({
         id: c.id,
@@ -72,7 +71,6 @@ export const securityRoutes: FastifyPluginAsync<{ authCtx: AuthContext }> = asyn
         lastUsedAt: s.lastUsedAt.toISOString(),
         current: s.id === current,
       })),
-      legacy: { ...(await legacyStatus(db)), connectorConfigured: config.connectorSecret !== undefined },
     };
   });
 
@@ -114,7 +112,7 @@ export const securityRoutes: FastifyPluginAsync<{ authCtx: AuthContext }> = asyn
     const { id } = parse(idParams, req.params);
     if (!(await deleteSession(db, id))) throw notFound(`session ${id} does not exist`);
     const p = req.principal!;
-    if (p.kind === 'session' && p.session.id === id && auth) clearSession(reply, auth);
+    if (p.kind === 'session' && p.session.id === id) clearSession(reply, auth);
     return reply.code(204).send();
   });
 };

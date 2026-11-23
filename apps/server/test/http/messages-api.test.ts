@@ -5,11 +5,14 @@ import { createMessageToken } from '../../src/domain/message-tokens.js';
 import { createMessage, getMessage, type Message, updateMessage } from '../../src/domain/messages.js';
 import { memories, messages } from '../../src/db/schema.js';
 import { buildApp } from '../../src/http/app.js';
-import { seedProject, TEST_TOKEN, testConfig, useTestDb } from '../helpers.js';
+import { seedProject, TEST_PUBLIC_URL, testConfig, useTestDb } from '../helpers.js';
+import { signedInCookie } from '../oauth-flow.js';
 
 const db = useTestDb();
 let app: FastifyInstance;
 let message: Message;
+/** The web UI: its session cookie, sent from Tabula's own origin. */
+let ui: Record<string, string>;
 
 beforeAll(async () => {
   app = await buildApp({ config: testConfig(), db });
@@ -18,11 +21,12 @@ afterAll(() => app.close());
 beforeEach(async () => {
   await seedProject(db, 'alpha');
   await seedProject(db, 'beta');
+  ui = { cookie: await signedInCookie(db), origin: TEST_PUBLIC_URL };
   message = await createMessage(db, { to: 'beta', from: 'alpha', type: 'request', title: 'Open a port', body: 'Text' }, { source: 'agent', label: 'test' });
 });
 
 const call = (method: 'GET' | 'POST' | 'PATCH' | 'DELETE', url: string, payload?: object) =>
-  app.inject({ method, url, headers: { authorization: `Bearer ${TEST_TOKEN}` }, ...(payload && { payload }) });
+  app.inject({ method, url, headers: ui, ...(payload && { payload }) });
 const full = { source: 'human' as const, label: 'human', access: 'full' as const };
 
 describe('/api/messages', () => {

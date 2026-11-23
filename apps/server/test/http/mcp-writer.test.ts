@@ -8,7 +8,7 @@ import { memories, messageEvents, messages, projectFileRevisions, projectFiles, 
 import { createMessage } from '../../src/domain/messages.js';
 import { setSyncConfig } from '../../src/domain/sync-config.js';
 import { buildApp } from '../../src/http/app.js';
-import { issueTestAccessToken, seedProject, TEST_PUBLIC_URL, TEST_TOKEN, testConfig, useTestDb } from '../helpers.js';
+import { issueTestAccessToken, seedProject, TEST_PUBLIC_URL, testConfig, useTestDb } from '../helpers.js';
 
 const db = useTestDb();
 let app: FastifyInstance;
@@ -113,13 +113,6 @@ describe('who wrote it', () => {
   it('ignores X-Tabula-Agent on an OAuth connection to /mcp', async () => {
     const { value } = await issueTestAccessToken(db, { resource: 'mcp', name: 'claude-code' });
     const c = await connect({ Authorization: `Bearer ${value}`, 'X-Tabula-Agent': 'someone-else' });
-    const t = json(await c.callTool({ name: 'save_thought', arguments: { title: 'T', body: 'b', model: M } }));
-    expect((await db.select().from(thoughts).where(eq(thoughts.id, t.id)))[0]).toMatchObject({ editedBy: 'claude-code', editedByModel: M });
-    await c.close();
-  });
-
-  it('keeps the X-Tabula-Agent label for the old token', async () => {
-    const c = await connect({ Authorization: `Bearer ${TEST_TOKEN}`, 'X-Tabula-Agent': 'claude-code' });
     const t = json(await c.callTool({ name: 'save_thought', arguments: { title: 'T', body: 'b', model: M } }));
     expect((await db.select().from(thoughts).where(eq(thoughts.id, t.id)))[0]).toMatchObject({ editedBy: 'claude-code', editedByModel: M });
     await c.close();

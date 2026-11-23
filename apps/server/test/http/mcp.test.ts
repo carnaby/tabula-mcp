@@ -12,9 +12,10 @@ import { setSyncConfig } from '../../src/domain/sync-config.js';
 import { createThought, getThought, HUMAN, listRevisions } from '../../src/domain/thoughts.js';
 import { buildApp } from '../../src/http/app.js';
 import { claudeMdSection, TABULA_JSON } from '../../src/mcp/snippet.js';
-import { seedProject, TEST_SECRET, TEST_TOKEN, testConfig, useTestDb } from '../helpers.js';
+import { issueTestAccessToken, seedProject, TEST_MCP_TOKEN, testConfig, useTestDb, useTestTokens } from '../helpers.js';
 
 const db = useTestDb();
+useTestTokens(db);
 let app: FastifyInstance;
 let base: string;
 
@@ -31,7 +32,7 @@ async function connect(path: string, headers: Record<string, string> = {}, baseU
   await client.connect(new StreamableHTTPClientTransport(new URL(baseUrl + path), { requestInit: { headers } }));
   return client;
 }
-const bearer = { Authorization: `Bearer ${TEST_TOKEN}`, 'X-Tabula-Agent': 'claude-code' };
+const bearer = { Authorization: `Bearer ${TEST_MCP_TOKEN}` };
 type Content = Array<{ type: string; text: string }>;
 const textOf = (r: { content?: unknown }) => (r.content as Content)[0]!.text;
 
@@ -140,8 +141,9 @@ describe('MCP endpoint', () => {
     await client.close();
   });
 
-  it('writes, reads back, updates and deletes a synced file over the connector, labelled claude-ai', async () => {
-    const client = await connect(`/mcp/${TEST_SECRET}`);
+  it('writes, reads back, updates and deletes a synced file, labelled with the connection name', async () => {
+    const { value } = await issueTestAccessToken(db, { resource: 'mcp', name: 'claude-ai' });
+    const client = await connect('/mcp', { Authorization: `Bearer ${value}` });
     const call = (name: string, args: Record<string, unknown>) => client.callTool({ name, arguments: args });
     const path = 'docs/superpowers/specs/2026-11-02-cloud.md';
     const noConfig = await call('write_file', { project: 'demo', path, content: '# Spec' });
@@ -217,10 +219,6 @@ describe('MCP endpoint', () => {
     expect(JSON.parse(textOf(r))).toMatchObject({ version: 1, changed: true });
     expect((await getFile(db, 'demo', 'docs/big.md')).size).toBe(1_048_576);
     await client.close();
-    const viaConnector = await connect(`/mcp/${TEST_SECRET}`);
-    const again = await viaConnector.callTool({ name: 'write_file', arguments: { project: 'demo', path: 'docs/big2.md', content: big } });
-    expect(again.isError, textOf(again).slice(0, 200)).toBeFalsy();
-    await viaConnector.close();
   });
 
   it('accepts a write_file whose JSON-RPC body is larger than the SDK default of 4 MiB', async () => {
@@ -374,13 +372,6 @@ describe('MCP endpoint', () => {
     await client.close();
   });
 
-  it('does not let an agent label itself human', async () => {
-    const client = await connect('/mcp', { ...bearer, 'X-Tabula-Agent': 'human' });
-    const { id } = JSON.parse(textOf(await client.callTool({ name: 'save_thought', arguments: { title: 'T', body: 'b' } }))) as { id: string };
-    expect((await getThought(db, id))?.editedBy).toBe('unknown');
-    await client.close();
-  });
-
   it('returns domain errors as tool errors with the status prefix', async () => {
     const h = await createMemory(db, { projectId: 'demo', kind: 'rule', title: 'Human', body: 'b', source: 'human' });
     const client = await connect('/mcp', bearer);
@@ -406,41 +397,9 @@ describe('MCP endpoint', () => {
     expect((await post({ Authorization: 'Bearer wrong' })).status).toBe(401);
   });
 
-  it('accepts the connector secret path and labels it claude-ai', async () => {
-    const client = await connect(`/mcp/${TEST_SECRET}`);
-    const r = await client.callTool({
-      name: 'remember', arguments: { project: 'global', kind: 'fact', title: 'Via claude.ai', body: 'b' },
-    });
-    const { id } = JSON.parse(textOf(r)) as { id: string };
-    expect((await getMemory(db, id))?.agentLabel).toBe('claude-ai');
-    await client.close();
-    const wrong = await fetch(`${base}/mcp/${'w'.repeat(32)}`, { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } });
-    expect(wrong.status).toBe(404);
-  });
-
   it('answers GET /mcp with 405 and keeps /healthz public', async () => {
     expect((await fetch(`${base}/mcp`)).status).toBe(405);
     expect(await (await fetch(`${base}/healthz`)).json()).toEqual({ ok: true });
-  });
-
-  it('answers GET on the connector path with 405, never with the 404 that logs the raw url', async () => {
-    expect((await fetch(`${base}/mcp/${TEST_SECRET}`)).status).toBe(405);
-    expect((await fetch(`${base}/mcp/${'w'.repeat(32)}`)).status).toBe(404);
-  });
-});
-
-describe('connector secret unset', () => {
-  it('the secret route does not exist at all when TABULA_CONNECTOR_SECRET is unset', async () => {
-    const noSecretApp = await buildApp({ config: testConfig({ connectorSecret: undefined }), db });
-    try {
-      const res = await noSecretApp.inject({
-        method: 'POST', url: `/mcp/${'x'.repeat(32)}`, payload: '{}', headers: { 'content-type': 'application/json' },
-      });
-      expect(res.statusCode).toBe(404);
-      expect(res.json()).toEqual({ error: 'not found' });
-    } finally {
-      await noSecretApp.close();
-    }
   });
 });
 
@@ -472,41 +431,5 @@ describe('unexpected (non-domain) errors', () => {
       await app2.close();
     }
     expect(lines.some((l) => l.includes('Failed query'))).toBe(true);
-  });
-});
-
-describe('connector secret in logs', () => {
-  it('never writes the secret to info-level logs, whatever the method or path shape', async () => {
-    const lines: string[] = [];
-    const prevLevel = process.env.LOG_LEVEL;
-    process.env.LOG_LEVEL = 'info';
-    const logged = await buildApp({ config: testConfig(), db, logStream: { write: (msg) => void lines.push(msg) } });
-    process.env.LOG_LEVEL = prevLevel;
-    try {
-      const init = {
-        jsonrpc: '2.0', id: 1, method: 'initialize',
-        params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 't', version: '0' } },
-      };
-      const ok = await logged.inject({
-        method: 'POST', url: `/mcp/${TEST_SECRET}`, payload: init,
-        headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
-      });
-      expect(ok.statusCode).toBe(200);
-      const probes = [
-        ['POST', `/mcp/${TEST_SECRET}/`], ['GET', `/mcp/${TEST_SECRET}/`], ['PUT', `/mcp/${TEST_SECRET}`],
-        ['PATCH', `/mcp/${TEST_SECRET}`], ['OPTIONS', `/mcp/${TEST_SECRET}`], ['GET', `/MCP/${TEST_SECRET}`],
-      ] as const;
-      for (const [method, url] of probes) {
-        const r = await logged.inject(
-          method === 'POST' ? { method, url, payload: '{}', headers: { 'content-type': 'application/json' } } : { method, url },
-        );
-        expect(r.statusCode, `${method} ${url}`).toBe(404);
-        expect(r.json()).toEqual({ error: 'not found' });
-      }
-      expect(lines.length).toBeGreaterThan(probes.length);
-      expect(lines.filter((l) => l.includes(TEST_SECRET))).toEqual([]);
-    } finally {
-      await logged.close();
-    }
   });
 });

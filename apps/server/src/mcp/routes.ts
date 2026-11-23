@@ -1,11 +1,9 @@
 import { NodeStreamableHTTPServerTransport } from '@modelcontextprotocol/node';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { type AuthContext, mcpAuth } from '../auth/authenticate.js';
+import { type AuthContext, mcpAuth, type Principal } from '../auth/authenticate.js';
 import type { Config } from '../config.js';
 import type { Db } from '../db/client.js';
 import { FILE_LIMITS } from '../domain/files.js';
-import { sanitizeAgentLabel } from '../domain/validation.js';
-import { safeEqual } from '../http/auth.js';
 import type { MediaStore } from '../media/store.js';
 import { buildMcpServer } from './server.js';
 
@@ -46,37 +44,10 @@ export function registerMcpRoutes(
   };
 
   // Authentication runs before the body is read: only an authorized client gets the larger body limit.
-  // An OAuth connection writes under its own name; the old token keeps the X-Tabula-Agent header (spec §5).
+  // A connection writes under its own name (spec §5); mcpAuth admits only OAuth tokens.
   app.post('/mcp', { bodyLimit: MCP_BODY_LIMIT, onRequest: mcpAuth(deps.authCtx) }, (req, reply) =>
-    handle(req, reply, req.principal?.kind === 'oauth' ? req.principal.name : sanitizeAgentLabel(req.headers['x-tabula-agent'])),
+    handle(req, reply, (req.principal as Extract<Principal, { kind: 'oauth' }>).name),
   );
-
-  const secret = deps.config.connectorSecret;
-  if (secret) {
-    app.post<{ Params: { secret: string } }>(
-      '/mcp/:secret',
-      {
-        bodyLimit: MCP_BODY_LIMIT,
-        onRequest: async (req, reply) => {
-          if (!safeEqual(req.params.secret, secret)) return reply.code(404).send({ error: 'not found' });
-          await deps.authCtx.legacy.record('connector');
-        },
-      },
-      async (req, reply) => {
-        const header = req.headers['x-tabula-agent'];
-        return handle(req, reply, header ? sanitizeAgentLabel(header) : 'claude-ai');
-      },
-    );
-    // After initialize the client tries GET (SSE stream); without this route the default 404 handler would log the URL containing the secret.
-    app.route<{ Params: { secret: string } }>({
-      method: ['GET', 'DELETE'],
-      url: '/mcp/:secret',
-      handler: (req, reply) =>
-        safeEqual(req.params.secret, secret)
-          ? reply.code(405).send(METHOD_NOT_ALLOWED)
-          : reply.code(404).send({ error: 'not found' }),
-    });
-  }
 
   for (const method of ['GET', 'DELETE'] as const) {
     app.route({ method, url: '/mcp', handler: (_req, reply) => reply.code(405).send(METHOD_NOT_ALLOWED) });

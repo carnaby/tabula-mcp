@@ -1,9 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../../src/http/app.js';
-import { seedProject, TEST_TOKEN, testConfig, useTestDb } from '../helpers.js';
+import { seedProject, TEST_PUBLIC_URL, TEST_TOKEN, testConfig, useTestDb, useTestTokens } from '../helpers.js';
+import { signedInCookie } from '../oauth-flow.js';
 
 const db = useTestDb();
+useTestTokens(db);
 let app: FastifyInstance;
 beforeAll(async () => {
   app = await buildApp({ config: testConfig(), db });
@@ -12,8 +14,7 @@ afterAll(() => app.close());
 beforeEach(() => seedProject(db, 'demo'));
 
 const auth = { authorization: `Bearer ${TEST_TOKEN}` };
-const cli = { ...auth, 'x-tabula-agent': 'cli' };
-const call = (method: 'GET' | 'PUT' | 'POST' | 'DELETE', url: string, payload?: object, headers: Record<string, string> = cli) =>
+const call = (method: 'GET' | 'PUT' | 'POST' | 'DELETE', url: string, payload?: object, headers: Record<string, string> = auth) =>
   app.inject({ method, url, headers, ...(payload && { payload }) });
 const put = (path: string, content: string, base_sha256: string | null, force?: boolean) =>
   call('PUT', '/api/projects/demo/files', { path, content, base_sha256, ...(force !== undefined && { force }) });
@@ -49,8 +50,9 @@ describe('files REST API', () => {
     expect((await put(path, '# Mine', v1.json().sha256, true)).json()).toMatchObject({ version: 3 });
   });
 
-  it('writes as the human when no agent header is sent (the UI)', async () => {
-    await call('PUT', '/api/projects/demo/files', { path: 'a.md', content: 'x', base_sha256: null }, auth);
+  it('writes as the human from the web UI', async () => {
+    const ui = { cookie: await signedInCookie(db), origin: TEST_PUBLIC_URL };
+    await call('PUT', '/api/projects/demo/files', { path: 'a.md', content: 'x', base_sha256: null }, ui);
     expect((await call('GET', '/api/projects/demo/files')).json()[0]).toMatchObject({ updatedBy: 'human' });
   });
 

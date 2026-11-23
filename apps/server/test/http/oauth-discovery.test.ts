@@ -7,15 +7,10 @@ import { TEST_PUBLIC_URL, testConfig, useTestDb } from '../helpers.js';
 
 const db = useTestDb();
 let app: FastifyInstance;
-let bare: FastifyInstance;
 beforeAll(async () => {
   app = await buildApp({ config: testConfig({ publicUrl: TEST_PUBLIC_URL }), db });
-  bare = await buildApp({ config: testConfig(), db });
 });
-afterAll(async () => {
-  await app.close();
-  await bare.close();
-});
+afterAll(() => app.close());
 
 const U = TEST_PUBLIC_URL;
 let address = 0;
@@ -51,13 +46,6 @@ describe('discovery', () => {
       scopes_supported: ['mcp', 'api', 'offline_access'],
       authorization_response_iss_parameter_supported: true,
     });
-  });
-
-  it('does not exist without TABULA_PUBLIC_URL', async () => {
-    for (const url of ['/.well-known/oauth-authorization-server', '/.well-known/oauth-protected-resource/mcp']) {
-      expect((await bare.inject({ method: 'GET', url })).statusCode).toBe(404);
-    }
-    expect((await bare.inject({ method: 'POST', url: '/oauth/register', payload: {} })).statusCode).toBe(404);
   });
 });
 

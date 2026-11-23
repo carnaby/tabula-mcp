@@ -13,8 +13,7 @@ export type AuthSettings = {
   cookie: { name: string; secure: boolean };
 };
 
-export function authSettings(config: Pick<Config, 'publicUrl'>): AuthSettings | null {
-  if (!config.publicUrl) return null;
+export function authSettings(config: Pick<Config, 'publicUrl'>): AuthSettings {
   const url = new URL(config.publicUrl);
   const secure = url.protocol === 'https:';
   return {

@@ -2,9 +2,10 @@ import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { updateReport } from '../../src/domain/reports.js';
 import { buildApp } from '../../src/http/app.js';
-import { seedProject, TEST_TOKEN, TEST_WORKER_TOKEN, testConfig, useTestDb } from '../helpers.js';
+import { seedProject, TEST_TOKEN, TEST_WORKER_TOKEN, testConfig, useTestDb, useTestTokens } from '../helpers.js';
 
 const db = useTestDb();
+useTestTokens(db);
 let app: FastifyInstance;
 beforeAll(async () => {
   app = await buildApp({ config: testConfig(), db });

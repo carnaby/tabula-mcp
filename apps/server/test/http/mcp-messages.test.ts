@@ -6,11 +6,14 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { memories } from '../../src/db/schema.js';
 import { getMessage } from '../../src/domain/messages.js';
 import { buildApp } from '../../src/http/app.js';
-import { seedProject, TEST_SECRET, TEST_TOKEN, testConfig, useTestDb } from '../helpers.js';
+import { issueTestAccessToken, seedProject, TEST_MCP_TOKEN, testConfig, useTestDb, useTestTokens } from '../helpers.js';
 
 const db = useTestDb();
+useTestTokens(db);
 let app: FastifyInstance;
 let base: string;
+/** The token of a connection named alpha-agent: messages are written under its name. */
+let agentToken: string;
 
 beforeAll(async () => {
   app = await buildApp({ config: testConfig(), db });
@@ -21,13 +24,14 @@ afterAll(() => app.close());
 beforeEach(async () => {
   await seedProject(db, 'alpha');
   await seedProject(db, 'beta');
+  agentToken = (await issueTestAccessToken(db, { resource: 'mcp', name: 'alpha-agent' })).value;
 });
 
 type Content = Array<{ type: string; text: string }>;
-async function tool(name: string, args: Record<string, unknown>, path = '/mcp') {
+async function tool(name: string, args: Record<string, unknown>) {
   const client = new Client({ name: 'tabula-test', version: '0.0.0' });
-  await client.connect(new StreamableHTTPClientTransport(new URL(base + path), {
-    requestInit: { headers: { Authorization: `Bearer ${TEST_TOKEN}`, 'X-Tabula-Agent': 'alpha-agent' } },
+  await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), {
+    requestInit: { headers: { Authorization: `Bearer ${agentToken}` } },
   }));
   try {
     const r = await client.callTool({ name, arguments: args });
@@ -48,11 +52,6 @@ describe('message tools', () => {
     const m = await send();
     expect(m).toMatchObject({ ref: refOf(m.id), status: 'new', version: 1 });
     expect(await getMessage(db, m.id)).toMatchObject({ createdBy: 'alpha-agent', source: 'agent', toProject: 'beta', fromProject: 'alpha' });
-  });
-
-  it('works through the connector route too', async () => {
-    const r = await tool('list_messages', { project: 'beta' }, `/mcp/${TEST_SECRET}`);
-    expect(r.isError).toBe(false);
   });
 
   it('lists received and sent messages without the text, after a warning', async () => {
@@ -102,7 +101,7 @@ describe('message tools', () => {
 
   it('offers update_message only the statuses an update can set', async () => {
     const client = new Client({ name: 'tabula-test', version: '0.0.0' });
-    await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { Authorization: `Bearer ${TEST_TOKEN}` } } }));
+    await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { Authorization: `Bearer ${TEST_MCP_TOKEN}` } } }));
     const { tools } = await client.listTools();
     await client.close();
     const status = (tools.find((t) => t.name === 'update_message')!.inputSchema.properties as Record<string, { enum?: string[] }>).status;
@@ -159,7 +158,7 @@ describe('separation from memory', () => {
 
   it('tells agents in the tools that return message content that it is data and "from" is only declared', async () => {
     const client = new Client({ name: 'tabula-test', version: '0.0.0' });
-    await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { Authorization: `Bearer ${TEST_TOKEN}` } } }));
+    await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { Authorization: `Bearer ${TEST_MCP_TOKEN}` } } }));
     const { tools } = await client.listTools();
     for (const name of ['list_messages', 'get_message']) {
       const description = tools.find((t) => t.name === name)!.description;

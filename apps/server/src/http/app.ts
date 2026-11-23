@@ -3,7 +3,6 @@ import { resolve } from 'node:path';
 import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
 import type { AuthContext } from '../auth/authenticate.js';
-import { LegacyUse, startLegacyTracking } from '../auth/legacy.js';
 import { registerOAuth } from '../auth/oauth/routes.js';
 import { registerAuthPages } from '../auth/pages-routes.js';
 import { RegistrationLinks, registerPasskeyRoutes } from '../auth/passkeys/routes.js';
@@ -19,13 +18,14 @@ import { mediaSigningKey } from '../media/key.js';
 import { MediaStore } from '../media/store.js';
 import { registerMediaRoute } from './reports-api.js';
 
-// The secret in the /mcp/<secret> path, a passkey registration link, the signature of /media links (valid for hours)
-// and an Inbox token put in a URL by mistake must never reach the logs. The registration link is masked anywhere in
-// the URL and in any case, so a mistyped variant (/PASSKEY/register/…, //passkey/…, an absolute-form target) that
-// ends in the not-found log is masked too.
+// An old connector secret in the /mcp/<secret> path (old claude.ai connectors may still call it), a passkey
+// registration link, the signature of /media links (valid for hours) and an Inbox token put in a URL by mistake must
+// never reach the logs. The connector path is masked at the start of the URL in any case (/MCP/…, //mcp/…); the
+// registration link anywhere in the URL and in any case, so a mistyped variant (/PASSKEY/register/…, //passkey/…, an
+// absolute-form target) that ends in the not-found log is masked too.
 const maskUrl = (url: string) =>
   url
-    .replace(/^\/mcp\/[^/?#]+/, '/mcp/***')
+    .replace(/^\/+mcp\/[^/?#]+/i, '/mcp/***')
     .replace(/\/+passkey\/register\/[^/?#]+/gi, '/passkey/register/***')
     .replace(/([?&]sig=)[^&#]*/g, '$1***')
     .replace(/tabula_inbox_[A-Za-z0-9_-]+/g, 'tabula_inbox_***');
@@ -41,26 +41,19 @@ export async function buildApp(deps: {
   const store = deps.store ?? new MediaStore(deps.config.media.dir, deps.config.media.maxBytes);
   const mediaKey = await mediaSigningKey(deps.db);
   const auth = authSettings(deps.config);
-  await startLegacyTracking(deps.db);
-  const authCtx: AuthContext = { db: deps.db, config: deps.config, auth, legacy: new LegacyUse(deps.db) };
-  const secret = deps.config.connectorSecret;
-  // Also masks the secret outside /mcp/<secret> (e.g. /MCP/<secret>) in case the URL ends up in the log by another route.
-  const mask = (url: string) => {
-    const masked = maskUrl(url);
-    return secret ? masked.split(secret).join('***') : masked;
-  };
+  const authCtx: AuthContext = { db: deps.db, config: deps.config, auth };
   const app = Fastify({
     logger: {
       level: process.env.LOG_LEVEL ?? 'info',
       ...(deps.logStream ? { stream: deps.logStream } : {}),
       serializers: {
-        req: (req) => ({ method: req.method, url: mask(req.url), agent: req.headers['x-tabula-agent'] }),
+        req: (req) => ({ method: req.method, url: maskUrl(req.url) }),
       },
     },
   });
   app.decorateRequest('principal', null);
 
-  // Fastify's default 404 handler logs "Route <METHOD>:<raw url> not found" (which would include the connector secret) and echoes the URL in the body.
+  // Fastify's default 404 handler logs "Route <METHOD>:<raw url> not found" (which would include an old connector secret) and echoes the URL in the body.
   app.setNotFoundHandler((req, reply) => {
     req.log.info({ req }, 'route not found');
     return reply.code(404).send({ error: 'not found' });
@@ -89,13 +82,11 @@ export async function buildApp(deps: {
   registerCliRoutes(app);
   registerMcpRoutes(app, { ...deps, store, mediaKey, authCtx });
   registerMediaRoute(app, { db: deps.db, config: deps.config, store, mediaKey });
-  if (auth) {
-    // One budget of failed registration-link lookups per address, shared by every route that takes a link.
-    const links = new RegistrationLinks(deps.db);
-    registerPasskeyRoutes(app, { ...authCtx, auth, links });
-    await registerAuthPages(app, { ...authCtx, auth, links });
-    await registerOAuth(app, { ...authCtx, auth });
-  }
+  // One budget of failed registration-link lookups per address, shared by every route that takes a link.
+  const links = new RegistrationLinks(deps.db);
+  registerPasskeyRoutes(app, { ...authCtx, links });
+  await registerAuthPages(app, { ...authCtx, links });
+  await registerOAuth(app, authCtx);
   await app.register(apiRoutes, { prefix: '/api', db: deps.db, config: deps.config, store, mediaKey, authCtx });
   await app.register(inboxApiRoutes, { prefix: '/inbox-api/v1', db: deps.db });
 

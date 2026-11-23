@@ -7,7 +7,6 @@ import { type AuthContext, sameOrigin, sessionFromCookie } from '../authenticate
 import { sessionCookie } from '../cookie.js';
 import { clientKey, FixedWindows } from '../rate-limit.js';
 import { createSession, deviceLabel, markVerified, SESSION_TTL_MS } from '../sessions.js';
-import type { AuthSettings } from '../settings.js';
 import { loginOptions, registrationOptions, verifyLogin, verifyRegistration } from './ceremony.js';
 import { findRegistration, type RegistrationKind } from './registrations.js';
 import { cleanPasskeyName } from './store.js';
@@ -53,7 +52,7 @@ const LINK_INVALID = { error: 'link_invalid', message: 'this registration link i
 const LINK_ATTEMPTS = { error: 'too_many_requests', message: 'too many registration attempts; wait a minute' };
 
 /** The JSON half of the passkey ceremonies; the pages and /auth/passkey.js call them (same origin only). */
-export function registerPasskeyRoutes(app: FastifyInstance, ctx: AuthContext & { auth: AuthSettings; links: RegistrationLinks }): void {
+export function registerPasskeyRoutes(app: FastifyInstance, ctx: AuthContext & { links: RegistrationLinks }): void {
   const { db, auth, links } = ctx;
   const failures = new FixedWindows(MINUTE);
   const loginOptionCalls = new FixedWindows(MINUTE);

@@ -1,16 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { configWarnings, loadConfig } from '../../src/config.js';
 
-const TOKEN = 'x'.repeat(32);
+const PUBLIC_URL = 'https://tabula.example.com';
 
 describe('loadConfig', () => {
   it('parses required and default values', () => {
-    const c = loadConfig({ DATABASE_URL: 'postgres://u:p@localhost:5432/db', TABULA_TOKEN: TOKEN });
+    const c = loadConfig({ DATABASE_URL: 'postgres://u:p@localhost:5432/db', TABULA_PUBLIC_URL: PUBLIC_URL });
     expect(c).toEqual({
       databaseUrl: 'postgres://u:p@localhost:5432/db',
-      token: TOKEN,
-      connectorSecret: undefined,
-      publicUrl: undefined,
+      publicUrl: PUBLIC_URL,
       fornax: undefined,
       port: 3000,
       host: '0.0.0.0',
@@ -21,28 +19,13 @@ describe('loadConfig', () => {
 
   it('reads the media settings', () => {
     const c = loadConfig({
-      DATABASE_URL: 'postgres://x', TABULA_TOKEN: TOKEN, TABULA_MEDIA_DIR: '/data/media', TABULA_MEDIA_MAX_MB: '200', TABULA_MEDIA_PURGE_HOURS: '0',
+      DATABASE_URL: 'postgres://x', TABULA_PUBLIC_URL: PUBLIC_URL, TABULA_MEDIA_DIR: '/data/media', TABULA_MEDIA_MAX_MB: '200', TABULA_MEDIA_PURGE_HOURS: '0',
     });
     expect(c.media).toMatchObject({ dir: '/data/media', maxBytes: 200 * 1024 * 1024, purgeAfterHours: 0 });
   });
 
-  it('rejects a short token', () => {
-    expect(() => loadConfig({ DATABASE_URL: 'postgres://x', TABULA_TOKEN: 'short' })).toThrow(/TABULA_TOKEN/);
-  });
-
-  it('treats an empty connector secret as unset', () => {
-    const c = loadConfig({ DATABASE_URL: 'postgres://x', TABULA_TOKEN: TOKEN, TABULA_CONNECTOR_SECRET: '' });
-    expect(c.connectorSecret).toBeUndefined();
-  });
-
-  it('rejects a short connector secret', () => {
-    expect(() =>
-      loadConfig({ DATABASE_URL: 'postgres://x', TABULA_TOKEN: TOKEN, TABULA_CONNECTOR_SECRET: 'abc' }),
-    ).toThrow(/TABULA_CONNECTOR_SECRET/);
-  });
-
   describe('Fornax', () => {
-    const base = { DATABASE_URL: 'postgres://x', TABULA_TOKEN: TOKEN };
+    const base = { DATABASE_URL: 'postgres://x', TABULA_PUBLIC_URL: PUBLIC_URL };
     const F = { TABULA_FORNAX_URL: 'https://fornax.example.com', TABULA_FORNAX_TOKEN: 'f'.repeat(24) };
 
     it('is off when neither variable is set (empty counts as unset)', () => {
@@ -86,11 +69,11 @@ describe('loadConfig', () => {
   });
 
   describe('TABULA_PUBLIC_URL', () => {
-    const base = { DATABASE_URL: 'postgres://x', TABULA_TOKEN: TOKEN };
+    const base = { DATABASE_URL: 'postgres://x' };
 
-    it('is optional (empty counts as unset)', () => {
-      expect(loadConfig(base).publicUrl).toBeUndefined();
-      expect(loadConfig({ ...base, TABULA_PUBLIC_URL: '' }).publicUrl).toBeUndefined();
+    it('is required; empty counts as missing', () => {
+      expect(() => loadConfig(base)).toThrow(/TABULA_PUBLIC_URL is required/);
+      expect(() => loadConfig({ ...base, TABULA_PUBLIC_URL: '' })).toThrow(/TABULA_PUBLIC_URL is required/);
     });
 
     it('accepts https with a host and drops one trailing slash, and http only on localhost', () => {

@@ -141,7 +141,7 @@ export async function startProxy(
         const chunks: Buffer[] = [];
         for await (const c of req) chunks.push(c as Buffer);
         const headers: Record<string, string> = { authorization: String(req.headers.authorization) };
-        for (const h of ['content-type', 'x-tabula-agent']) if (req.headers[h]) headers[h] = String(req.headers[h]);
+        if (req.headers['content-type']) headers['content-type'] = req.headers['content-type'];
         const body = chunks.length ? Buffer.concat(chunks) : undefined;
         const r = await fetch(target + req.url, { method: req.method, headers, body });
         res.writeHead(r.status, { 'content-type': r.headers.get('content-type') ?? 'application/json' });

@@ -9,14 +9,17 @@ import { eq } from 'drizzle-orm';
 import { type Diarization, reportAttachments, reportJobs } from '../../src/db/schema.js';
 import { buildApp } from '../../src/http/app.js';
 import { MediaStore } from '../../src/media/store.js';
-import { finishNextJob, seedProject, TEST_TOKEN, testConfig, useTestDb } from '../helpers.js';
+import { finishNextJob, issueTestAccessToken, seedProject, TEST_MCP_TOKEN, TEST_TOKEN, testConfig, useTestDb, useTestTokens } from '../helpers.js';
 import { HAS_FFMPEG, PNG, silentWav, testVideo } from '../media-fixtures.js';
 
 const db = useTestDb();
+useTestTokens(db);
 const mediaDir = mkdtempSync(join(tmpdir(), 'tabula-mcp-media-'));
 const config = testConfig({ media: { dir: mediaDir, maxBytes: 50 * 1024 * 1024, purgeAfterHours: 24, ffmpeg: 'ffmpeg', ffprobe: 'ffprobe' } });
 let app: FastifyInstance;
 let base: string;
+/** The token of a connection named claude-ai: reports are written under its name. */
+let agentToken: string;
 
 beforeAll(async () => {
   app = await buildApp({ config, db, store: new MediaStore(mediaDir, config.media.maxBytes) });
@@ -24,13 +27,16 @@ beforeAll(async () => {
   base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
 });
 afterAll(() => app.close());
-beforeEach(() => seedProject(db, 'demo'));
+beforeEach(async () => {
+  await seedProject(db, 'demo');
+  agentToken = (await issueTestAccessToken(db, { resource: 'mcp', name: 'claude-ai' })).value;
+});
 
 type Content = Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
 async function tool(name: string, args: Record<string, unknown>, origin = base) {
   const client = new Client({ name: 'tabula-test', version: '0.0.0' });
   await client.connect(new StreamableHTTPClientTransport(new URL(`${origin}/mcp`), {
-    requestInit: { headers: { Authorization: `Bearer ${TEST_TOKEN}`, 'X-Tabula-Agent': 'claude-ai' } },
+    requestInit: { headers: { Authorization: `Bearer ${agentToken}` } },
   }));
   try {
     const r = await client.callTool({ name, arguments: args });
@@ -224,7 +230,7 @@ describe('reports over MCP', () => {
   it('tells agents where report slugs come from', async () => {
     const client = new Client({ name: 'tabula-test', version: '0.0.0' });
     await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), {
-      requestInit: { headers: { Authorization: `Bearer ${TEST_TOKEN}` } },
+      requestInit: { headers: { Authorization: `Bearer ${TEST_MCP_TOKEN}` } },
     }));
     try {
       expect(client.getInstructions()).toMatch(/create_report, take the project slug from list_projects/);
@@ -284,7 +290,7 @@ describe('reports over MCP', () => {
     expect(JSON.parse(text((await tool('view_attachment', { id: frame.id })).content)).note).toBe('The spinner never stops.');
     const { tools } = await (async () => {
       const c = new Client({ name: 'tabula-test', version: '0.0.0' });
-      await c.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { Authorization: `Bearer ${TEST_TOKEN}` } } }));
+      await c.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { Authorization: `Bearer ${TEST_MCP_TOKEN}` } } }));
       try { return await c.listTools(); } finally { await c.close(); }
     })();
     for (const n of ['get_report', 'view_attachment']) expect(tools.find((t) => t.name === n)!.description).toMatch(/frames may carry the user's note/);

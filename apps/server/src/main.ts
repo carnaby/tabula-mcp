@@ -29,7 +29,7 @@ const authSweep = async () => {
     app.log.error({ err: loggableError(e) }, 'could not clean up expired sign-in data; retrying in a minute');
   }
 };
-const authTimer = auth ? setInterval(singleFlight(authSweep), 60_000) : null;
+const authTimer = setInterval(singleFlight(authSweep), 60_000);
 
 // Without usable media storage Tabula still runs: only report uploads and new frames fail (503).
 const mediaProblem = await store.startup();
@@ -65,7 +65,7 @@ void purgeOnce();
 
 const shutdown = async () => {
   clearInterval(purgeTimer);
-  if (authTimer) clearInterval(authTimer);
+  clearInterval(authTimer);
   // The server closes and the process exits even when stopping the sync fails.
   try {
     await sync?.stop();

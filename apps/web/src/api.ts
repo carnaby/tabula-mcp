@@ -158,7 +158,6 @@ export const api = {
   setTidyPrompt: (text: string) => request<{ text: string }>('PUT', '/settings/tidy-prompt', { text }),
   compactPrompt: (signal?: S) => request<{ text: string }>('GET', '/settings/compact-prompt', undefined, signal),
   setCompactPrompt: (text: string) => request<{ text: string }>('PUT', '/settings/compact-prompt', { text }),
-  me: (signal?: S) => request<Me>('GET', '/auth/me', undefined, signal),
   security: (signal?: S) => request<SecurityOverview>('GET', '/security', undefined, signal),
   renamePasskey: (id: string, name: string) => request<{ id: string; name: string }>('PATCH', `/passkeys/${id}`, { name }),
   deletePasskey: (id: string) => request<void>('DELETE', `/passkeys/${id}`),

@@ -30,7 +30,7 @@ const call = (method: 'GET' | 'POST' | 'PATCH' | 'DELETE', url: string, payload?
 const full = { source: 'human' as const, label: 'human', access: 'full' as const };
 
 describe('/api/messages', () => {
-  it('needs the full token', async () => {
+  it('needs sign-in', async () => {
     expect((await app.inject({ method: 'GET', url: '/api/messages' })).statusCode).toBe(401);
   });
 

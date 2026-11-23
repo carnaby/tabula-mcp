@@ -21,7 +21,7 @@ const put = (path: string, content: string, base_sha256: string | null, force?: 
 const q = encodeURIComponent;
 
 describe('files REST API', () => {
-  it('requires the bearer token on every file route', async () => {
+  it('requires sign-in (OAuth token or session) on every file route', async () => {
     const routes = [
       ['GET', '/api/projects/demo/files'], ['GET', '/api/projects/demo/files/content?path=a.md'],
       ['PUT', '/api/projects/demo/files'], ['DELETE', '/api/projects/demo/files?path=a.md'],

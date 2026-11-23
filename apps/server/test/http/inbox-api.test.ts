@@ -207,7 +207,7 @@ describe('what the narrow token never opens', () => {
 
 describe('authentication of the narrow API', () => {
   it.each([
-    ['the full token', TEST_TOKEN],
+    ['an /api OAuth token', TEST_TOKEN],
     ['an unknown token', `tabula_inbox_${'a'.repeat(43)}`],
   ])('refuses %s', async (_name, bearer) => {
     const res = await call('GET', base, undefined, bearer);

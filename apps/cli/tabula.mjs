@@ -394,7 +394,7 @@ function writeAtomic(repo, path, bytes) {
 // ------------------------------------------------------------------ server
 
 /**
- * fetch with the token and a timeout; network failures become a CliError. In hook mode every call ends by the deadline.
+ * fetch with this login's access token and a timeout; network failures become a CliError. In hook mode every call ends by the deadline.
  * Errors are tagged for the pull loop: `unreachable` (no answer, or a renewal the server could not serve: 5xx, 429;
  * `timedOut` when the timeout fired) and `rejected` (401).
  */

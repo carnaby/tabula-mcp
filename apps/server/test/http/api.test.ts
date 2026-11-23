@@ -24,7 +24,7 @@ const call = (method: 'GET' | 'POST' | 'PATCH' | 'DELETE', url: string, payload?
   app.inject({ method, url, headers: ui, ...(payload && { payload }) });
 
 describe('REST API', () => {
-  it('requires the bearer token', async () => {
+  it('requires sign-in (OAuth token or session)', async () => {
     expect((await app.inject({ method: 'GET', url: '/api/projects' })).statusCode).toBe(401);
   });
 
@@ -153,7 +153,7 @@ describe('REST API', () => {
     expect((await call('GET', '/api/notes/tags')).json()).toEqual([{ tag: 'music', count: 1 }]);
   });
 
-  it('resolves a reference for the UI, ambiguous ones with their candidates, under the main token only', async () => {
+  it('resolves a reference for the UI, ambiguous ones with their candidates', async () => {
     const t = (await call('POST', '/api/thoughts', { title: 'Idea' })).json();
     const ref = `tabula:${t.id.slice(0, 8)}`;
     const ok = await call('GET', `/api/resolve/${encodeURIComponent(ref.toUpperCase())}`);

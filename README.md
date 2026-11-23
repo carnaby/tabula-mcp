@@ -261,7 +261,7 @@ Upgrading an existing deployment: set `TABULA_PUBLIC_URL` if it is missing, and 
 
 CI also publishes a ready-made image, `ghcr.io/carnaby/tabula:latest` (plus a `sha-<commit>` tag per build). [`deploy/`](deploy/) holds an example production stack that pulls it and a daily `pg_dump` backup script.
 
-For anything beyond localhost, put Tabula behind a reverse proxy that terminates TLS and bind the container to loopback: the bearer token travels in a header, and it unlocks everything Tabula holds.
+For anything beyond localhost, put Tabula behind a reverse proxy that terminates TLS and bind the container to loopback: OAuth tokens and the session cookie travel in headers; without TLS anyone on the path can take them.
 
 The proxy must pass `/.well-known/*`, `/oauth/*`, `/signin`, `/passkey/*` and `/auth/*` to Tabula like everything else, set `X-Forwarded-For` (the per-address limits of sign-in use its last entry), and must not block Anthropic's servers: claude.ai connects to `/.well-known/*`, `/oauth/register`, `/oauth/token` and `/mcp` (and possibly `/oauth/revoke` when a connector is removed) from Anthropic's cloud, not from your browser.
 

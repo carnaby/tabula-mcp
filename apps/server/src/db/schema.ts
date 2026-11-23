@@ -10,6 +10,7 @@ import {
   jsonb,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -542,6 +543,31 @@ export const oauthAccessTokens = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index('oauth_access_tokens_connection_idx').on(t.connectionId)],
+);
+
+export const idempotencyState = pgEnum('idempotency_state', ['pending', 'done']);
+
+/**
+ * App API (spec §5): the answer to a POST sent with an Idempotency-Key, per connection, for 7 days. `pending` while
+ * the request runs; a failed request deletes its row, so a retry runs again.
+ */
+export const appIdempotency = pgTable(
+  'app_idempotency',
+  {
+    connectionId: uuid('connection_id').notNull().references(() => oauthConnections.id, { onDelete: 'cascade' }),
+    key: text('key').notNull(),
+    /** SHA-256 of the method, the path and the raw body (an upload: its length, type and file name). */
+    fingerprint: text('fingerprint').notNull(),
+    state: idempotencyState('state').notNull(),
+    responseStatus: integer('response_status'),
+    responseBody: jsonb('response_body').$type<unknown>(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.connectionId, t.key] }),
+    index('app_idempotency_created_idx').on(t.createdAt),
+    check('app_idempotency_done', sql`(${t.state} = 'done') = (${t.responseStatus} IS NOT NULL)`),
+  ],
 );
 
 /** The owner's passkeys (one user, any number of devices). The last one cannot be deleted. */

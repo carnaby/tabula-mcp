@@ -11,7 +11,7 @@ import { storeTranscript, type TranscriptInput } from '../src/domain/jobs.js';
 export function useTestDb(): Db {
   const { db, close } = createDb(inject('databaseUrl'));
   beforeEach(async () => {
-    await db.execute(sql`TRUNCATE memories, notes, thoughts, project_files, project_file_revisions, reports, report_attachments, report_jobs, report_transcripts, messages, message_events, message_tokens, oauth_clients, oauth_pending, oauth_connections, oauth_codes, oauth_refresh_tokens, oauth_access_tokens, passkeys, passkey_registrations, webauthn_challenges, ui_sessions CASCADE`);
+    await db.execute(sql`TRUNCATE memories, notes, thoughts, project_files, project_file_revisions, reports, report_attachments, report_jobs, report_transcripts, messages, message_events, message_tokens, oauth_clients, oauth_pending, oauth_connections, oauth_codes, oauth_refresh_tokens, oauth_access_tokens, app_idempotency, passkeys, passkey_registrations, webauthn_challenges, ui_sessions CASCADE`);
     // The media signing key outlives a test like it outlives a restart: an app built in beforeAll keeps signing with it.
     await db.execute(sql`DELETE FROM settings WHERE key <> 'media_signing_key'`);
     await db.execute(sql`DELETE FROM projects WHERE id <> 'global'`);

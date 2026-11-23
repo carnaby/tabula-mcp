@@ -1,21 +1,24 @@
 import { and, eq, isNotNull, lt, lte, notExists, or, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import {
-  oauthAccessTokens, oauthClients, oauthCodes, oauthConnections, oauthPending, oauthRefreshTokens, passkeyRegistrations, uiSessions,
-  webauthnChallenges,
+  appIdempotency, oauthAccessTokens, oauthClients, oauthCodes, oauthConnections, oauthPending, oauthRefreshTokens, passkeyRegistrations,
+  uiSessions, webauthnChallenges,
 } from '../db/schema.js';
+import { IDEMPOTENCY_TTL_MS } from '../domain/idempotency.js';
 
 const HOUR = 3600_000;
 const DAY = 24 * HOUR;
 
 export type AuthSweep = {
   pending: number; codes: number; refresh: number; access: number; clients: number; challenges: number; registrations: number; sessions: number;
+  idempotency: number;
 };
 
 /**
  * One pass of housekeeping, every minute (spec §3.4, Limen §9). None of it is what makes an expired thing stop
  * working (every reader checks expiry itself); a used code is kept an hour and a rotated refresh token a day, so a
  * replay is still recognised and revokes its connection. Revoked connections stay: they explain old labels.
+ * App API idempotency keys older than 7 days go too.
  */
 export async function sweepAuth(db: Db, now: Date): Promise<AuthSweep> {
   const ago = (ms: number) => new Date(now.getTime() - ms);
@@ -37,6 +40,7 @@ export async function sweepAuth(db: Db, now: Date): Promise<AuthSweep> {
     const challenges = (await tx.delete(webauthnChallenges).where(lte(webauthnChallenges.expiresAt, now)).returning({ h: webauthnChallenges.challengeSha256 })).length;
     const registrations = (await tx.delete(passkeyRegistrations).where(lt(passkeyRegistrations.expiresAt, ago(DAY))).returning({ id: passkeyRegistrations.id })).length;
     const sessions = (await tx.delete(uiSessions).where(lte(uiSessions.expiresAt, now)).returning({ id: uiSessions.id })).length;
-    return { pending, codes, refresh, access, clients, challenges, registrations, sessions };
+    const idempotency = (await tx.delete(appIdempotency).where(lt(appIdempotency.createdAt, ago(IDEMPOTENCY_TTL_MS))).returning({ k: appIdempotency.key })).length;
+    return { pending, codes, refresh, access, clients, challenges, registrations, sessions, idempotency };
   });
 }

@@ -39,7 +39,7 @@ describe('sweepAuth', () => {
     await createSession(db, { userAgent: 'old', now: ago(31 * DAY) });
     await createSession(db, { userAgent: 'new', now });
 
-    expect(await sweepAuth(db, now)).toEqual({ pending: 1, codes: 1, refresh: 1, access: 1, clients: 1, challenges: 1, registrations: 1, sessions: 1 });
+    expect(await sweepAuth(db, now)).toEqual({ pending: 1, codes: 1, refresh: 1, access: 1, clients: 1, challenges: 1, registrations: 1, sessions: 1, idempotency: 0 });
     expect((await db.select().from(oauthClients)).map((c) => c.clientName)).toEqual(['approved']);
     expect(await db.select().from(oauthCodes)).toHaveLength(0);
     expect(await db.select().from(oauthRefreshTokens)).toHaveLength(1);
@@ -84,7 +84,7 @@ describe('sweepAuth', () => {
     await createRegistration(db, 'link', ago(3600_000));
     await createSession(db, { userAgent: 'live', now: ago(29 * DAY) });
 
-    expect(await sweepAuth(db, now)).toEqual({ pending: 0, codes: 1, refresh: 1, access: 0, clients: 0, challenges: 0, registrations: 0, sessions: 0 });
+    expect(await sweepAuth(db, now)).toEqual({ pending: 0, codes: 1, refresh: 1, access: 0, clients: 0, challenges: 0, registrations: 0, sessions: 0, idempotency: 0 });
     expect((await db.select().from(oauthClients)).map((c) => c.clientName).sort()).toEqual(['live app', 'new app', 'revoked app']);
     const connections = await db.select().from(oauthConnections);
     expect(connections.map((c) => [c.name, c.revokedAt !== null]).sort()).toEqual([['gone', true], ['live', false]]);

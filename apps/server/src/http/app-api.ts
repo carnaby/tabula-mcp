@@ -13,6 +13,7 @@ import { createThought } from '../domain/thoughts.js';
 import { normalizeModel } from '../domain/validation.js';
 import type { MediaStore } from '../media/store.js';
 import { AppApiError, errorBody, logAppError, parseBody, toAppError, translate, validationFailed } from './app-api-errors.js';
+import { idempotent } from './app-idempotency.js';
 import { receiveAttachment } from './attachment-upload.js';
 
 export type AppApiDeps = { db: Db; config: Config; store: MediaStore; authCtx: AuthContext };
@@ -97,15 +98,35 @@ export const appApiRoutes: FastifyPluginAsync<AppApiDeps> = async (app, deps) =>
     req.log.info({ req }, 'route not found');
     return reply.code(404).send(errorBody(new AppApiError(404, 'not_found', 'no such endpoint in the App API')));
   });
-  // Bodies are JSON (an upload has its own parser): any other type is refused with 415.
+  // Bodies are JSON (an upload has its own parser): any other type is refused with 415. The raw JSON text is kept for
+  // the idempotency fingerprint (spec §5); parsing stays Fastify's own, with its prototype-poisoning checks.
+  const rawBodies = new WeakMap<FastifyRequest, string>();
+  const parseJson = app.getDefaultJsonParser('error', 'error');
   app.removeContentTypeParser('text/plain');
+  app.removeContentTypeParser('application/json');
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, done) => {
+    rawBodies.set(req, body as string);
+    parseJson(req, body as string, done);
+  });
 
-  /** A POST that creates something; `run` says what to answer. */
-  const created = (instance: FastifyInstance, path: string, run: (req: FastifyRequest, reply: FastifyReply) => Promise<Created>) =>
-    instance.post(path, async (req, reply) => {
-      const r = await run(req, reply);
-      return reply.code(r.status).send(r.body);
-    });
+  /** What identifies a request for its Idempotency-Key: the raw JSON, or for an upload the headers that describe the file. */
+  const partsOf = (req: FastifyRequest, kind: 'json' | 'upload'): string[] =>
+    kind === 'json'
+      ? [req.method, req.url, rawBodies.get(req) ?? '']
+      : [req.method, req.url, ...['content-length', 'content-type', 'x-filename'].map((h) => String(req.headers[h] ?? ''))];
+
+  /** A POST that creates something, at most once per Idempotency-Key; `run` says what to answer. */
+  const created = (
+    instance: FastifyInstance,
+    path: string,
+    run: (req: FastifyRequest, reply: FastifyReply) => Promise<Created>,
+    kind: 'json' | 'upload' = 'json',
+  ) =>
+    instance.post(path, (req, reply) =>
+      idempotent(db, req, reply, { connectionId: connectionOf(req).connectionId, parts: partsOf(req, kind), bodyUnread: kind === 'upload' }, () =>
+        run(req, reply),
+      ),
+    );
 
   // When the web UI is served, its wildcard GET (and HEAD) route at the root would answer an unknown GET here before
   // the 404 handler, without authentication and in the root's shape; this more specific wildcard keeps it in the API.
@@ -146,18 +167,23 @@ export const appApiRoutes: FastifyPluginAsync<AppApiDeps> = async (app, deps) =>
   await app.register(async (upload) => {
     upload.removeAllContentTypeParsers();
     upload.addContentTypeParser('*', (_req, _payload, done) => done(null));
-    created(upload, '/v1/reports/:id/attachments', async (req, reply) => {
-      const params = reportParams.safeParse(req.params);
-      if (!params.success) {
-        reply.header('connection', 'close');
-        throw new AppApiError(404, 'report_not_found', 'no report has this id');
-      }
-      try {
-        const a = await receiveAttachment(deps, req, reply, params.data.id, { header: 'X-Filename', value: req.headers['x-filename'] }, editorOf(req));
-        return { status: 201, body: { id: a.id, kind: a.kind, mime: a.mime, size: a.size } };
-      } catch (e) {
-        throw translate(e, { not_found: 'report_not_found', conflict: 'report_closed' });
-      }
-    });
+    created(
+      upload,
+      '/v1/reports/:id/attachments',
+      async (req, reply) => {
+        const params = reportParams.safeParse(req.params);
+        if (!params.success) {
+          reply.header('connection', 'close');
+          throw new AppApiError(404, 'report_not_found', 'no report has this id');
+        }
+        try {
+          const a = await receiveAttachment(deps, req, reply, params.data.id, { header: 'X-Filename', value: req.headers['x-filename'] }, editorOf(req));
+          return { status: 201, body: { id: a.id, kind: a.kind, mime: a.mime, size: a.size } };
+        } catch (e) {
+          throw translate(e, { not_found: 'report_not_found', conflict: 'report_closed' });
+        }
+      },
+      'upload',
+    );
   });
 };

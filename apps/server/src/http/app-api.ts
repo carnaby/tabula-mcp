@@ -6,7 +6,10 @@ import type { Config } from '../config.js';
 import type { Db } from '../db/client.js';
 import { DomainError } from '../domain/errors.js';
 import { createMessage, findMessageByRef, MESSAGE_TYPES, type Message } from '../domain/messages.js';
+import { createNote } from '../domain/notes.js';
 import { listProjects, requireProject } from '../domain/projects.js';
+import { createReport } from '../domain/reports.js';
+import { createThought } from '../domain/thoughts.js';
 import { normalizeModel } from '../domain/validation.js';
 import type { MediaStore } from '../media/store.js';
 import { AppApiError, errorBody, logAppError, parseBody, toAppError, validationFailed } from './app-api-errors.js';
@@ -67,6 +70,13 @@ const messageBody = z.strictObject({
   related_to: z.string().optional(),
 });
 
+const tags = z.array(z.string()).optional();
+const thoughtBody = z.strictObject({ title: z.string(), body: z.string(), tags, model: z.string().optional() });
+const noteBody = z.strictObject({ title: z.string(), body: z.string(), tags, project: z.string().optional() });
+const reportBody = z.strictObject({ title: z.string().optional(), body: z.string().optional(), project: z.string().optional(), model: z.string().optional() });
+/** The identifiers every new record is answered with. */
+const ids = (id: string): Created => ({ status: 201, body: { id, ref: refOf(id) } });
+
 /**
  * The App API: a narrow, versioned REST API for apps that act on the owner's behalf. It is registered next to /api, so
  * it inherits neither that plugin's authentication nor its error shape. Routes live under /v1; the 404 handler covers
@@ -111,5 +121,22 @@ export const appApiRoutes: FastifyPluginAsync<AppApiDeps> = async (app, deps) =>
     const relatedTo = b.related_to === undefined ? undefined : await relatedMessage(db, b.related_to, to);
     const m = await createMessage(db, { to, from: null, type: b.type, title: b.title, body: b.body, relatedTo }, editorOf(req));
     return { status: 201, body: { id: m.id, ref: refOf(m.id), status: m.status, version: m.version } };
+  });
+  created(app, '/v1/thoughts', async (req) => {
+    const b = parseBody(thoughtBody, req.body);
+    return ids((await createThought(db, { title: b.title, body: b.body, tags: b.tags }, editorOf(req, b.model))).id);
+  });
+
+  // Notes carry no author: they are always the owner's (spec §4).
+  created(app, '/v1/notes', async (req) => {
+    const b = parseBody(noteBody, req.body);
+    const projectId = b.project === undefined ? null : await requireAppProject(db, b.project, 'project');
+    return ids((await createNote(db, { projectId, title: b.title, body: b.body, tags: b.tags })).id);
+  });
+
+  created(app, '/v1/reports', async (req) => {
+    const b = parseBody(reportBody, req.body);
+    const projectId = b.project === undefined ? null : await requireAppProject(db, b.project, 'project');
+    return ids((await createReport(db, { projectId, title: b.title, body: b.body }, editorOf(req, b.model))).id);
   });
 };

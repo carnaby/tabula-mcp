@@ -27,6 +27,7 @@ describe('message tables', () => {
     ['type', sql`type = 'report'`],
     ['source', sql`source = 'human'`],
     ['created_by', sql`created_by = 'other'`],
+    ['sender', sql`sender = 'other'`],
     ['created_at', sql`created_at = now() - interval '1 day'`],
   ])('refuses a direct change of %s', async (_name, set) => {
     const m = await insertMessage();
@@ -71,5 +72,22 @@ describe('message tables', () => {
     const entry = { messageId: m.id, source: 'agent' as const, actor: 'test', version: 1 };
     await db.insert(messageEvents).values(entry);
     await expect(db.insert(messageEvents).values(entry)).rejects.toBeTruthy();
+  });
+
+  it('allows a sender description exactly on a message an agent sent without a project', async () => {
+    const base = { toProject: 'beta', type: 'request' as const, title: 'T', body: 'B', createdBy: 'test' };
+    await db.insert(messages).values({ ...base, fromProject: 'alpha', source: 'agent' });
+    await db.insert(messages).values({ ...base, fromProject: null, source: 'human' });
+    await db.insert(messages).values({ ...base, fromProject: null, source: 'agent', sender: 'claude.ai chat' });
+    await db.insert(messages).values({ ...base, fromProject: null, source: 'agent', sender: '😀'.repeat(80) });
+    for (const bad of [
+      { fromProject: 'alpha', source: 'agent' as const, sender: 'x' },
+      { fromProject: null, source: 'agent' as const },
+      { fromProject: null, source: 'human' as const, sender: 'x' },
+      { fromProject: null, source: 'agent' as const, sender: '' },
+      { fromProject: null, source: 'agent' as const, sender: 'x'.repeat(81) },
+    ]) {
+      await expect(db.insert(messages).values({ ...base, ...bad }), JSON.stringify(bad)).rejects.toMatchObject({ cause: { code: '23514' } });
+    }
   });
 });

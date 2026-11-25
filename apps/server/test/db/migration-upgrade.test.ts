@@ -174,6 +174,26 @@ describe('reserving the slug "author" (migration 0021)', () => {
   });
 });
 
+describe('reserving the slug "external" (migration 0026)', () => {
+  it('stops with a clear error while a project has the slug', async () => {
+    const name = 'tabula_upgrade_external';
+    await admin.unsafe(`DROP DATABASE IF EXISTS ${name}`);
+    await admin.unsafe(`CREATE DATABASE ${name}`);
+    const url = new URL(upgradeUrl);
+    url.pathname = `/${name}`;
+    const c = postgres(url.href, { max: 1, onnotice: () => {} });
+    try {
+      for (const m of migrations.filter((x) => x.file < '0026')) for (const s of m.statements) await c.unsafe(s);
+      await c`INSERT INTO projects (id, name) VALUES ('external', 'External')`;
+      const reserve = migrations.find((m) => m.file.startsWith('0026'))!;
+      await expect((async () => { for (const s of reserve.statements) await c.unsafe(s); })()).rejects.toThrow(/"external" is reserved/);
+    } finally {
+      await c.end();
+      await admin.unsafe(`DROP DATABASE IF EXISTS ${name}`);
+    }
+  });
+});
+
 describe('scope on access tokens (migration 0025)', () => {
   it('gives every existing access token the scope of its connection, and requires one from then on', async () => {
     const name = 'tabula_upgrade_token_scope';

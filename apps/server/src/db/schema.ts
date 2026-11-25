@@ -43,8 +43,8 @@ export const projects = pgTable(
     description: text('description').notNull().default(''),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  // "author" names the owner as the sender of a message (App API); migration 0021 explains a conflict before this check.
-  (t) => [check('projects_id_not_reserved', sql`${t.id} <> 'author'`)],
+  // "author" and "external" name senders of messages without a project; migrations 0021 and 0026 explain a conflict before this check.
+  (t) => [check('projects_id_not_reserved', sql`${t.id} NOT IN ('author', 'external')`)],
 );
 
 export const memories = pgTable(
@@ -395,8 +395,13 @@ export const messages = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     toProject: text('to_project').notNull().references(() => projects.id, { onDelete: 'restrict' }),
-    /** Declared by the sender; nothing verifies it. Null: the owner sent it through an app (shown as "author"). */
+    /**
+     * Declared by the sender; nothing verifies it. Null: no sender project, either the owner through an app (source
+     * human, shown as "author") or an agent outside any project (source agent, shown as "external" with `sender`).
+     */
     fromProject: text('from_project').references(() => projects.id, { onDelete: 'restrict' }),
+    /** Only on a message from an agent outside any project: who it says it is (e.g. "claude.ai chat"), not verified. */
+    sender: text('sender'),
     type: messageType('type').notNull(),
     title: text('title').notNull(),
     body: text('body').notNull(),
@@ -417,7 +422,13 @@ export const messages = pgTable(
     check('messages_title_len', sql`char_length(${t.title}) between 1 and 200`),
     check('messages_body_len', sql`char_length(${t.body}) between 1 and 50000`),
     check('messages_waiting_on', sql`(${t.status} = 'waiting') = (${t.waitingOn} IS NOT NULL)`),
-    check('messages_sender', sql`${t.fromProject} IS NOT NULL OR ${t.source} = 'human'`),
+    check(
+      'messages_sender',
+      sql`(${t.fromProject} IS NOT NULL AND ${t.sender} IS NULL)
+        OR (${t.fromProject} IS NULL AND ${t.source} = 'human' AND ${t.sender} IS NULL)
+        OR (${t.fromProject} IS NULL AND ${t.source} = 'agent' AND ${t.sender} IS NOT NULL)`,
+    ),
+    check('messages_sender_len', sql`${t.sender} IS NULL OR char_length(${t.sender}) BETWEEN 1 AND 80`),
   ],
 );
 

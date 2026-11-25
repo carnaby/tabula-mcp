@@ -91,10 +91,14 @@ export const NO_PROJECT = 'none';
 /** The sender of a message the owner sent through an app (App API): never a project's slug. */
 export const AUTHOR_SENDER = 'author';
 
+/** The sender of a message an agent sent outside any project (MCP without from): never a project's slug. */
+export const EXTERNAL_SENDER = 'external';
+
 export function validateProjectSlug(id: string): string {
   const v = id.trim();
   if (!SLUG.test(v)) throw badRequest(`project slug "${id}" is invalid: use lowercase letters, digits and dashes (max 40)`);
   if (v === NO_PROJECT) throw badRequest(`project slug "${NO_PROJECT}" is reserved: it means "no project" in report filters`);
   if (v === AUTHOR_SENDER) throw badRequest(`project slug "${AUTHOR_SENDER}" is reserved: it names you, the owner, as the sender of a message`);
+  if (v === EXTERNAL_SENDER) throw badRequest(`project slug "${EXTERNAL_SENDER}" is reserved: it marks messages from agents that work outside any project`);
   return v;
 }

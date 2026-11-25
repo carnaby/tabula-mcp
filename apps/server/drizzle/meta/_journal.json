@@ -183,6 +183,13 @@
       "when": 1795615683597,
       "tag": "0025_access_token_scope",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1795626851288,
+      "tag": "0026_inbox_external_sender",
+      "breakpoints": true
     }
   ]
 }

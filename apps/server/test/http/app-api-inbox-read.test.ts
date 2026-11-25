@@ -67,6 +67,7 @@ describe('GET /app-api/v1/messages', () => {
     await send({ title: 'alpha to beta' });
     await send({ to: 'alpha', from: 'beta', title: 'beta to alpha' });
     await fromAuthor();
+    await createMessage(db, { to: 'beta', from: null, sender: 'claude.ai chat', type: 'request', title: 'from a chat', body: 'B' }, agent);
     const w = await send({ title: 'waits on the author' });
     await updateMessage(db, w.id, { expectedVersion: 1, status: 'waiting', waitingOn: 'author' }, full);
     const d = await send({ title: 'done' });
@@ -80,12 +81,20 @@ describe('GET /app-api/v1/messages', () => {
     expect(await titles('?from=alpha')).toEqual(['alpha to beta', 'waits on the author']);
     expect(await titles('?from=author')).toEqual(['from the author']);
     expect(await titles('?to=beta&from=author')).toEqual(['from the author']);
+    expect(await titles('?from=external')).toEqual(['from a chat']);
     expect(await titles('?waiting_on=author')).toEqual(['waits on the author']);
     expect(await titles('?status=waiting&waiting_on=sender')).toEqual([]);
     expect(await titles('?status=done&waiting_on=author')).toEqual([]);
     expect(await titles('?status=archive')).toEqual(['done']);
     expect(await titles('?status=new&to=alpha')).toEqual(['beta to alpha']);
-    expect(await titles('?status=all')).toHaveLength(5);
+    expect(await titles('?status=all')).toHaveLength(6);
+  });
+
+  it('shows a message from an agent outside any project as external, with the connection and its description', async () => {
+    const m = await createMessage(db, { to: 'beta', from: null, sender: 'claude.ai chat', type: 'request', title: 'from a chat', body: 'B' }, agent);
+    expect((await list()).json().items).toEqual([
+      expect.objectContaining({ id: m.id, from: 'external', via: 'test-agent', sender: 'claude.ai chat' }),
+    ]);
   });
 
   it('returns 50 by default, at most limit, and says when more matched', async () => {

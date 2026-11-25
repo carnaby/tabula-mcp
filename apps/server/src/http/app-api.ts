@@ -11,7 +11,7 @@ import { createNote } from '../domain/notes.js';
 import { listProjects, requireProject } from '../domain/projects.js';
 import { createReport } from '../domain/reports.js';
 import { createThought } from '../domain/thoughts.js';
-import { AUTHOR_SENDER, normalizeModel } from '../domain/validation.js';
+import { AUTHOR_SENDER, EXTERNAL_SENDER, normalizeModel } from '../domain/validation.js';
 import type { MediaStore } from '../media/store.js';
 import { AppApiError, errorBody, logAppError, parseBody, toAppError, translate, validationFailed } from './app-api-errors.js';
 import { idempotent } from './app-idempotency.js';
@@ -179,7 +179,7 @@ export const appApiRoutes: FastifyPluginAsync<AppApiDeps> = async (app, deps) =>
     requireScope(req, reply, INBOX_READ);
     const q = parseBody(messagesQuery, req.query);
     const to = q.to === undefined ? undefined : await requireAppProject(db, q.to, 'to');
-    const from = q.from === undefined || q.from === AUTHOR_SENDER ? q.from : await requireAppProject(db, q.from, 'from');
+    const from = q.from === undefined || q.from === AUTHOR_SENDER || q.from === EXTERNAL_SENDER ? q.from : await requireAppProject(db, q.from, 'from');
     const r = await listMessageHeaders(db, { to, from, status: q.status ?? 'open', waitingOn: q.waiting_on, limit: q.limit ?? MESSAGE_LIST_DEFAULT });
     return { items: r.items.map(messageSummaryView), truncated: r.truncated };
   });

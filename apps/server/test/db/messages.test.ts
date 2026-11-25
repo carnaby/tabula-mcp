@@ -23,6 +23,60 @@ const send = (over: Partial<Parameters<typeof createMessage>[1]> = {}) =>
 const move = (m: Message, patch: Partial<Parameters<typeof updateMessage>[2]>, actor: MessageActor = full) =>
   updateMessage(db, m.id, { expectedVersion: m.version, ...patch }, actor);
 
+const external = (over: Partial<Parameters<typeof createMessage>[1]> = {}) =>
+  createMessage(db, { to: 'beta', from: null, sender: 'claude.ai chat', type: 'request', title: 'Add a job type', body: 'Please.', ...over }, editor);
+const fromAuthor = () =>
+  createMessage(db, { to: 'beta', from: null, type: 'request', title: 'Renew it', body: 'By Friday.' }, { source: 'human', label: 'klara' });
+
+describe('a message from an agent outside any project', () => {
+  it('stores it without a sender project, with the description, and shows it as external via the connection', async () => {
+    const m = await external();
+    expect(m).toMatchObject({ fromProject: null, sender: 'claude.ai chat', source: 'agent', createdBy: 'test-agent' });
+    expect(messageSummaryView(m)).toMatchObject({ from: 'external', via: 'test-agent', sender: 'claude.ai chat' });
+    expect(messageDetailView(m, [])).toMatchObject({ from: 'external', via: 'test-agent', sender: 'claude.ai chat' });
+    expect(messageSummaryView(await fromAuthor())).not.toHaveProperty('sender');
+    expect(messageSummaryView(await send())).not.toHaveProperty('sender');
+  });
+
+  it('keeps the description on one line and within 80 characters', async () => {
+    expect((await external({ sender: '  claude.ai\n\tchat  ' })).sender).toBe('claude.ai chat');
+    expect((await external({ sender: '😀'.repeat(80) })).sender).toBe('😀'.repeat(80));
+    for (const sender of ['', ' \n ', 'x'.repeat(81), `a${NUL}b`]) {
+      await expect(external({ sender }), JSON.stringify(sender)).rejects.toMatchObject({ code: 'bad_request' });
+    }
+  });
+
+  it('needs exactly one of a sender project and a description', async () => {
+    await expect(send({ sender: 'claude.ai chat' })).rejects.toMatchObject({ code: 'bad_request', message: expect.stringContaining('not both') });
+    await expect(external({ sender: undefined })).rejects.toMatchObject({ code: 'bad_request', message: expect.stringContaining('sender (who you are') });
+    await expect(
+      createMessage(db, { to: 'beta', from: null, sender: 'x', type: 'request', title: 'T', body: 'B' }, { source: 'human', label: 'klara' }),
+    ).rejects.toMatchObject({ code: 'bad_request', message: expect.stringContaining('no sender description') });
+    expect(await db.select().from(messages)).toHaveLength(0);
+  });
+
+  it('tells an agent with an unknown or global sender project how to send without one', async () => {
+    await expect(send({ from: 'claude-ai-chat' })).rejects.toMatchObject({ code: 'not_found', message: expect.stringContaining('leave out from and pass sender') });
+    await expect(send({ from: 'global' })).rejects.toMatchObject({ code: 'bad_request', message: expect.stringContaining('leave out from and pass sender') });
+    await expect(send({ to: 'nope' })).rejects.toMatchObject({ code: 'not_found', message: expect.not.stringContaining('pass sender') });
+  });
+
+  it('lets it wait on the author but not on the sender', async () => {
+    const m = await external();
+    await expect(move(m, { status: 'waiting', waitingOn: 'sender' })).rejects.toMatchObject({ code: 'bad_request', message: expect.stringContaining('no sender project') });
+    expect(await move(m, { status: 'waiting', waitingOn: 'author' })).toMatchObject({ status: 'waiting', waitingOn: 'author', version: 2 });
+  });
+
+  it('is listed by from "external", and from "author" lists only what the owner sent', async () => {
+    const ext = await external();
+    const own = await fromAuthor();
+    await send();
+    const ids = async (from: string) => (await listMessageHeaders(db, { from, limit: 10 })).items.map((m) => m.id);
+    expect(await ids('external')).toEqual([ext.id]);
+    expect(await ids('author')).toEqual([own.id]);
+  });
+});
+
 describe('createMessage', () => {
   it('stores the message as new with a first history entry', async () => {
     const m = await send();

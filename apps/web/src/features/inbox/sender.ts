@@ -11,7 +11,7 @@ export const isExternal = (m: { from: string }): boolean => m.from === 'external
 export const hasSenderProject = (m: { from: string }): boolean => m.from !== 'author' && m.from !== 'external';
 
 export const senderText = (m: Sender): string =>
-  m.from === 'author' ? `You (via ${m.via})` : isExternal(m) ? `${m.sender} (via ${m.via})` : m.from;
+  m.from === 'author' ? `You (via ${m.via})` : isExternal(m) ? `“${m.sender}” (via ${m.via})` : m.from;
 
 /** The whole sender is declared only for a project; an external message shows its own badge instead. */
 export const isDeclared = (m: { from: string }): boolean => hasSenderProject(m);

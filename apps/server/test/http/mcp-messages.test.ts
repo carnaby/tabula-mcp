@@ -144,7 +144,9 @@ describe('message tools', () => {
     expect(await getMessage(db, m.id)).toMatchObject({ fromProject: null, sender: 'claude.ai chat', source: 'agent', createdBy: 'alpha-agent' });
     const listed = JSON.parse((await tool('list_messages', { project: 'beta' })).blocks[1]!);
     expect(listed.items[0]).toMatchObject({ id: m.id, from: 'external', via: 'alpha-agent', sender: 'claude.ai chat' });
-    expect(JSON.parse((await tool('get_message', { id: m.ref })).blocks[1]!)).toMatchObject({ from: 'external', via: 'alpha-agent', sender: 'claude.ai chat' });
+    const got = await tool('get_message', { id: m.ref });
+    expect(got.blocks[0]).toContain('"external"');
+    expect(JSON.parse(got.blocks[1]!)).toMatchObject({ from: 'external', via: 'alpha-agent', sender: 'claude.ai chat' });
     const waits = await tool('update_message', { id: m.ref, as_project: 'beta', expected_version: 1, status: 'waiting', waiting_on: 'sender' });
     expect(waits.isError).toBe(true);
     expect(waits.all).toContain('waiting_on "author"');

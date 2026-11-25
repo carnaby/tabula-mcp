@@ -5,7 +5,7 @@ import { formOf, useFormBody } from '../form.js';
 import { connectionNameProblem, suggestConnectionName } from '../names.js';
 import { messagePage, sendPage } from '../pages.js';
 import { isFresh } from '../sessions.js';
-import { type AuthSettings, type ResourceKind, resourceKindOf } from '../settings.js';
+import { type AuthSettings, RESOURCE_SCOPES, type ResourceKind, resourceKindOf } from '../settings.js';
 import { renderConsent } from './consent-page.js';
 import { isS256Challenge, redirectMatches } from './crypto.js';
 import { OFFLINE_ACCESS } from './metadata.js';
@@ -60,11 +60,16 @@ function withParams(uri: string, params: Record<string, string | null>): string 
   return `${uri}${uri.includes('?') ? '&' : '?'}${query.toString()}`;
 }
 
-/** The granted scope for a resource, or null when the request asks for anything else. Absent means the resource's own scope. */
+/**
+ * The granted scope for a resource, or null when the request asks for anything else. The resource's own scope is
+ * always granted (absent means just that); on top of it what the resource offers (inbox:read for /app-api) and
+ * offline_access, in this order.
+ */
 function grantedScope(raw: string | undefined, kind: ResourceKind): string | null {
   const asked = new Set((raw ?? '').split(' ').filter(Boolean));
-  for (const s of asked) if (s !== kind && s !== OFFLINE_ACCESS) return null;
-  return [kind, ...(asked.has(OFFLINE_ACCESS) ? [OFFLINE_ACCESS] : [])].join(' ');
+  const extra = RESOURCE_SCOPES[kind];
+  for (const s of asked) if (s !== kind && s !== OFFLINE_ACCESS && !extra.includes(s)) return null;
+  return [kind, ...extra.filter((s) => asked.has(s)), ...(asked.has(OFFLINE_ACCESS) ? [OFFLINE_ACCESS] : [])].join(' ');
 }
 
 async function check(db: Db, auth: AuthSettings, query: Query): Promise<Check> {
@@ -112,7 +117,7 @@ export async function registerAuthorize(app: FastifyInstance, ctx: AuthContext &
   const consent = async (p: Pending, client: OAuthClient | undefined, name: string, replace: boolean | undefined, error: string | null) => {
     const nameTaken = (await findLiveConnectionByName(db, name)) !== undefined;
     return renderConsent({
-      pendingId: p.id, clientName: client?.clientName ?? null, redirectUri: p.redirectUri, resource: p.resource, name, nameTaken,
+      pendingId: p.id, clientName: client?.clientName ?? null, redirectUri: p.redirectUri, resource: p.resource, scope: p.scope, name, nameTaken,
       replace: replace ?? nameTaken, error,
     });
   };

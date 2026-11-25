@@ -161,14 +161,19 @@ export async function insertCode(
   return code;
 }
 
-/** A new access token (1 h, bound to the connection's resource) and refresh token (30 days). */
-export async function issueTokenPair(q: Q, connection: Pick<Connection, 'id' | 'resource'>, now: Date): Promise<IssuedPair> {
+/**
+ * A new access token (1 h, bound to the connection's resource, with `scope`: by default the connection's) and refresh
+ * token (30 days).
+ */
+export async function issueTokenPair(
+  q: Q, connection: Pick<Connection, 'id' | 'resource' | 'scope'>, now: Date, scope: string = connection.scope,
+): Promise<IssuedPair> {
   const accessToken = newSecret();
   const refreshToken = newSecret();
   // One transaction (a savepoint inside the caller's): never an access token without its refresh token.
   await q.transaction(async (tx) => {
     await tx.insert(oauthAccessTokens).values({
-      hash: hashSecret(accessToken), connectionId: connection.id, resource: connection.resource,
+      hash: hashSecret(accessToken), connectionId: connection.id, resource: connection.resource, scope,
       expiresAt: new Date(now.getTime() + ACCESS_TOKEN_TTL_SECONDS * 1000),
     });
     await tx.insert(oauthRefreshTokens).values({
@@ -181,9 +186,11 @@ export async function issueTokenPair(q: Q, connection: Pick<Connection, 'id' | '
 /** The connection of a live access token issued for this resource, under a live connection (looked up by hash). */
 export async function authenticateAccessToken(
   db: Db, raw: string, resource: ResourceKind, now: Date,
-): Promise<{ ok: true; connectionId: string; name: string } | { ok: false }> {
+): Promise<{ ok: true; connectionId: string; name: string; scopes: string[] } | { ok: false }> {
   const [row] = await db
-    .select({ connectionId: oauthConnections.id, name: oauthConnections.name, lastUsedAt: oauthConnections.lastUsedAt })
+    .select({
+      connectionId: oauthConnections.id, name: oauthConnections.name, lastUsedAt: oauthConnections.lastUsedAt, scope: oauthAccessTokens.scope,
+    })
     .from(oauthAccessTokens)
     .innerJoin(oauthConnections, eq(oauthConnections.id, oauthAccessTokens.connectionId))
     .where(
@@ -203,5 +210,5 @@ export async function authenticateAccessToken(
       .set({ lastUsedAt: now })
       .where(and(eq(oauthConnections.id, row.connectionId), or(isNull(oauthConnections.lastUsedAt), lte(oauthConnections.lastUsedAt, before))));
   }
-  return { ok: true, connectionId: row.connectionId, name: row.name };
+  return { ok: true, connectionId: row.connectionId, name: row.name, scopes: row.scope.split(' ').filter(Boolean) };
 }

@@ -173,3 +173,35 @@ describe('reserving the slug "author" (migration 0021)', () => {
     }
   });
 });
+
+describe('scope on access tokens (migration 0025)', () => {
+  it('gives every existing access token the scope of its connection, and requires one from then on', async () => {
+    const name = 'tabula_upgrade_token_scope';
+    await admin.unsafe(`DROP DATABASE IF EXISTS ${name}`);
+    await admin.unsafe(`CREATE DATABASE ${name}`);
+    const url = new URL(upgradeUrl);
+    url.pathname = `/${name}`;
+    const c = postgres(url.href, { max: 1, onnotice: () => {} });
+    try {
+      for (const m of migrations.filter((x) => x.file < '0025')) for (const s of m.statements) await c.unsafe(s);
+      const [client] = await c`INSERT INTO oauth_clients (client_name, redirect_uris) VALUES ('App', ARRAY['https://client.example.com/cb']) RETURNING id`;
+      const connection = async (connName: string, resource: string, scope: string) =>
+        (await c`
+          INSERT INTO oauth_connections (client_id, name, resource, scope, redirect_uri)
+          VALUES (${client!.id}, ${connName}, ${resource}, ${scope}, 'https://client.example.com/cb') RETURNING id`)[0]!.id as string;
+      const klara = await connection('klara-app', 'app', 'app offline_access');
+      const cli = await connection('tabula-cli', 'api', 'api');
+      await c`INSERT INTO oauth_access_tokens (hash, connection_id, resource, expires_at) VALUES ('h1', ${klara}, 'app', now() + interval '1 hour')`;
+      await c`INSERT INTO oauth_access_tokens (hash, connection_id, resource, expires_at) VALUES ('h2', ${cli}, 'api', now() + interval '1 hour')`;
+      for (const m of migrations.filter((x) => x.file >= '0025')) for (const s of m.statements) await c.unsafe(s);
+      expect(await c`SELECT hash, scope FROM oauth_access_tokens ORDER BY hash`).toEqual([
+        { hash: 'h1', scope: 'app offline_access' },
+        { hash: 'h2', scope: 'api' },
+      ]);
+      await expect(c`INSERT INTO oauth_access_tokens (hash, connection_id, resource, expires_at) VALUES ('h3', ${cli}, 'api', now())`).rejects.toThrow(/null value/);
+    } finally {
+      await c.end();
+      await admin.unsafe(`DROP DATABASE IF EXISTS ${name}`);
+    }
+  });
+});

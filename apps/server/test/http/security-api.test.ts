@@ -41,11 +41,18 @@ describe('GET /api/security', () => {
     expect(body).toMatchObject({ via: 'session', fresh: true, publicUrl: TEST_PUBLIC_URL });
     expect(body.passkeys).toEqual([{ id: expect.any(String), name: 'Laptop', createdAt: expect.any(String), lastUsedAt: null }]);
     expect(body.connections).toEqual([
-      expect.objectContaining({ name: 'tabula-cli', app: 'Unnamed app', target: 'this computer', resource: 'api' }),
-      expect.objectContaining({ name: 'claude-ai', app: 'Test client', target: 'client.example.com', resource: 'mcp', lastUsedAt: null }),
+      expect.objectContaining({ name: 'tabula-cli', app: 'Unnamed app', target: 'this computer', resource: 'api', scope: 'api' }),
+      expect.objectContaining({ name: 'claude-ai', app: 'Test client', target: 'client.example.com', resource: 'mcp', scope: 'mcp', lastUsedAt: null }),
     ]);
     expect(body.sessions.map((s: { device: string; current: boolean }) => [s.device, s.current]).sort()).toEqual([['Chrome on Windows', true], ['Safari on iPhone', false]]);
     expect(body).not.toHaveProperty('legacy');
+  });
+
+  it('shows the scope of a connection that may read the Inbox', async () => {
+    const me = await session();
+    await issueTestAccessToken(db, { resource: 'app', name: 'klara', scope: 'app inbox:read offline_access' });
+    const body = (await call('GET', '/security', { cookie: me.cookie })).json();
+    expect(body.connections).toEqual([expect.objectContaining({ name: 'klara', resource: 'app', scope: 'app inbox:read offline_access' })]);
   });
 
   it('is for the person only, never an app connection', async () => {
@@ -78,7 +85,7 @@ describe('GET /api/security', () => {
     const keys = (o: object) => Object.keys(o).sort();
     const body = (await call('GET', '/security', { cookie: me.cookie })).json();
     expect(keys(body.sessions[0])).toEqual(['createdAt', 'current', 'device', 'id', 'lastUsedAt']);
-    expect(keys(body.connections[0])).toEqual(['app', 'createdAt', 'id', 'lastUsedAt', 'name', 'resource', 'target']);
+    expect(keys(body.connections[0])).toEqual(['app', 'createdAt', 'id', 'lastUsedAt', 'name', 'resource', 'scope', 'target']);
     expect(keys(body.passkeys[0])).toEqual(['createdAt', 'id', 'lastUsedAt', 'name']);
   });
 });

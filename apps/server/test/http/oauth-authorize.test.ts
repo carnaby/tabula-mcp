@@ -45,6 +45,8 @@ describe('GET /oauth/authorize', () => {
       [{ scope: 'api' }, 'invalid_scope'],
       [{ resource: `${TEST_PUBLIC_URL}/api`, scope: 'mcp' }, 'invalid_scope'],
       [{ scope: 'admin' }, 'invalid_scope'],
+      [{ scope: 'mcp inbox:read' }, 'invalid_scope'],
+      [{ resource: `${TEST_PUBLIC_URL}/api`, scope: 'api inbox:read' }, 'invalid_scope'],
     ];
     for (const [overrides, error] of cases) {
       const res = await authorize(authorizeQuery(id, newPkce(), overrides));

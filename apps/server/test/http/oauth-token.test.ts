@@ -1,6 +1,7 @@
 import { eq, isNotNull, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { hashSecret } from '../../src/auth/secrets.js';
 import { oauthAccessTokens, oauthConnections, oauthRefreshTokens } from '../../src/db/schema.js';
 import { buildApp } from '../../src/http/app.js';
 import { TEST_PUBLIC_URL, testConfig, useTestDb } from '../helpers.js';
@@ -256,6 +257,21 @@ describe('refresh_token', () => {
     expect((await refresh(first.refresh_token, await registerClient(app))).json().error).toBe('invalid_grant');
     const narrowed = await refresh(first.refresh_token, flow.clientId, { scope: 'mcp' });
     expect(narrowed.json().scope).toBe('mcp');
+  });
+
+  it('keeps the resource scope when a refresh narrows, and stores on the token the scope it reports', async () => {
+    const flow = await obtainCode(app, db);
+    const first = (await exchange(flow)).json();
+    expect(first.scope).toBe('mcp offline_access');
+    const tokenScope = async (accessToken: string) =>
+      (await db.select().from(oauthAccessTokens).where(eq(oauthAccessTokens.hash, hashSecret(accessToken))))[0]!.scope;
+    expect(await tokenScope(first.access_token)).toBe('mcp offline_access');
+    const offline = (await refresh(first.refresh_token, flow.clientId, { scope: 'offline_access' })).json();
+    expect(offline.scope).toBe('mcp offline_access');
+    expect(await tokenScope(offline.access_token)).toBe('mcp offline_access');
+    const mcpOnly = (await refresh(offline.refresh_token, flow.clientId, { scope: 'mcp' })).json();
+    expect(mcpOnly.scope).toBe('mcp');
+    expect(await tokenScope(mcpOnly.access_token)).toBe('mcp');
   });
 
   it("a refresh token presented by another registered client issues nothing and stays the first client's", async () => {

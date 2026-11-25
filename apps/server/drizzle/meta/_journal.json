@@ -176,6 +176,13 @@
       "when": 1795442956746,
       "tag": "0024_app_idempotency",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1795615683597,
+      "tag": "0025_access_token_scope",
+      "breakpoints": true
     }
   ]
 }

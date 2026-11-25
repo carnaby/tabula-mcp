@@ -1,5 +1,5 @@
 import { REF_PREFIX, refOf } from '@tabula/shared/refs';
-import { and, asc, count, desc, eq, gte, inArray, type SQL, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, inArray, isNull, type SQL, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { messageEvents, messages } from '../db/schema.js';
 import { badRequest, conflict, forbidden, notFound } from './errors.js';
@@ -222,6 +222,32 @@ export async function inboxFeed(
   const truncated = rows.length > FEED_LIMIT;
   const items = rows.slice(0, FEED_LIMIT);
   return { items, truncated, nextSince: truncated ? items.at(-1)!.updatedAt : new Date(now.getTime() - FEED_OVERLAP_MS) };
+}
+
+/**
+ * Message headers for an app (App API inbox-read spec §3), newest change first: at most `limit` of them and whether
+ * more matched. `from: "author"` means the messages the owner sent through an app (no sender project). The caller
+ * shows each with messageSummaryView, never with its body.
+ */
+export async function listMessageHeaders(
+  db: Db,
+  f: { to?: string; from?: string; status?: MessageStatusFilter; waitingOn?: MessageWaitingOn; limit: number },
+): Promise<{ items: Message[]; truncated: boolean }> {
+  const sender = f.from === AUTHOR_SENDER ? isNull(messages.fromProject) : f.from ? eq(messages.fromProject, f.from) : undefined;
+  const rows = await db
+    .select()
+    .from(messages)
+    .where(
+      and(
+        f.to ? eq(messages.toProject, f.to) : undefined,
+        sender,
+        statusCondition(f.status ?? 'open'),
+        f.waitingOn ? eq(messages.waitingOn, f.waitingOn) : undefined,
+      ),
+    )
+    .orderBy(desc(messages.updatedAt), asc(messages.id))
+    .limit(f.limit + 1);
+  return { items: rows.slice(0, f.limit), truncated: rows.length > f.limit };
 }
 
 export async function messageCounts(db: Db): Promise<{ open: number; waiting_author: number }> {

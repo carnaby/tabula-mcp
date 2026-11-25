@@ -1,6 +1,6 @@
 import { displayClientName } from '../names.js';
 import { esc, page } from '../pages.js';
-import type { ResourceKind } from '../settings.js';
+import { INBOX_READ, type ResourceKind } from '../settings.js';
 import { isLoopbackRedirect } from './crypto.js';
 
 /** What the owner sees before an app gets a connection (spec §3.3). Everything from the client is escaped text. */
@@ -11,6 +11,8 @@ export type ConsentView = {
   /** The redirect presented and matched; it parses. */
   redirectUri: string;
   resource: ResourceKind;
+  /** The scope the request will be granted, e.g. "app inbox:read offline_access". */
+  scope: string;
   /** The connection name in the field: the suggestion, or what the owner typed. */
   name: string;
   /** A live connection already has this name: offer to replace it. */
@@ -26,6 +28,8 @@ const ACCESS: Record<ResourceKind, string> = {
   api: 'REST API (tabula CLI)',
   app: 'App API: send messages to projects, save thoughts, notes and reports',
 };
+/** What a scope on top of the resource's own adds, as the owner reads it. */
+const INBOX_READ_TEXT = 'Read the titles and status of Inbox messages in all projects (never their text)';
 
 export function renderConsent(v: ConsentView): string {
   const loopback = isLoopbackRedirect(v.redirectUri);
@@ -34,6 +38,7 @@ export function renderConsent(v: ConsentView): string {
     ? '<p class="warn">An app running on this computer is asking for access. Approve only if you are starting it yourself right now.</p>'
     : '';
   const access = ACCESS[v.resource];
+  const reads = v.scope.split(' ').includes(INBOX_READ) ? `<p>${esc(INBOX_READ_TEXT)}</p>` : '';
   const replace = v.nameTaken
     // The box carries the name it offers to replace: a ticked box replaces only the connection it named.
     ? `<label class="check"><input type="checkbox" name="replace" value="${esc(v.name)}"${v.replace ? ' checked' : ''}> Replace the connection “${esc(v.name)}” (it stops working at once)</label>`
@@ -45,7 +50,7 @@ export function renderConsent(v: ConsentView): string {
 <p class="muted">An app asks for access to your Tabula. Nothing happens until you decide.</p>
 <section><h2>Application</h2><p><strong>${esc(displayClientName(v.clientName))}</strong></p><p class="muted">The app chose this name itself; it is not verified.</p></section>
 <section><h2>Where the access goes</h2><p><strong>${esc(target)}</strong></p><p class="muted mono">${esc(v.redirectUri)}</p>${warning}</section>
-<section><h2>Access</h2><p>${esc(access)}</p></section>
+<section><h2>Access</h2><p>${esc(access)}</p>${reads}</section>
 <form method="post" action="/oauth/authorize">
 <input type="hidden" name="pending" value="${esc(v.pendingId)}">
 <label for="name">Connection name<input id="name" name="name" type="text" maxlength="40" value="${esc(v.name)}" required></label>

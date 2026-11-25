@@ -24,8 +24,8 @@ const form = (payload: Record<string, string>) =>
   });
 
 /** Consent and code exchange for /app-api: the tokens and the flow they came from. */
-async function connectApp(name = 'klara') {
-  const flow = await obtainCode(app, db, { query: APP_QUERY, name });
+async function connectApp(name = 'klara', query: Record<string, string> = APP_QUERY) {
+  const flow = await obtainCode(app, db, { query, name });
   const res = await form({
     grant_type: 'authorization_code', code: flow.code, redirect_uri: flow.redirectUri, client_id: flow.clientId, code_verifier: flow.pkce.verifier,
     resource: `${U}/app-api`,
@@ -38,7 +38,7 @@ describe('the OAuth resource app', () => {
   it('is described at the path of /app-api', async () => {
     const res = await app.inject({ method: 'GET', url: '/.well-known/oauth-protected-resource/app-api' });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ resource: `${U}/app-api`, authorization_servers: [U], scopes_supported: ['app'], bearer_methods_supported: ['header'] });
+    expect(res.json()).toEqual({ resource: `${U}/app-api`, authorization_servers: [U], scopes_supported: ['app', 'inbox:read'], bearer_methods_supported: ['header'] });
     expect((await app.inject({ method: 'GET', url: '/.well-known/oauth-protected-resource/app' })).statusCode).toBe(404);
   });
 
@@ -86,5 +86,50 @@ describe('the OAuth resource app', () => {
     const after = await projects(c.tokens.access_token);
     expect(after.statusCode).toBe(401);
     expect(after.json().error).toBe('unauthorized');
+  });
+});
+
+describe('the scope inbox:read', () => {
+  const READ_QUERY = { resource: `${U}/app-api`, scope: 'app inbox:read offline_access' };
+  const LINE = 'Read the titles and status of Inbox messages in all projects (never their text)';
+
+  it('is granted with the App API, named on the consent page, and carried by the tokens', async () => {
+    const clientId = await registerClient(app, { client_name: 'Klara' });
+    const cookie = await signedInCookie(db);
+    const consent = (query: Record<string, string>) =>
+      app.inject({ method: 'GET', url: `/oauth/authorize?${authorizeQuery(clientId, newPkce(), query)}`, headers: { cookie } });
+    expect((await consent(READ_QUERY)).body).toContain(LINE);
+    expect((await consent(APP_QUERY)).body).not.toContain(LINE);
+    const c = await connectApp('klara', READ_QUERY);
+    expect(c.tokens.scope).toBe('app inbox:read offline_access');
+    const [conn] = await db.select().from(oauthConnections);
+    expect(conn!.scope).toBe('app inbox:read offline_access');
+    expect(await authenticateAccessToken(db, c.tokens.access_token, 'app', new Date())).toMatchObject({
+      ok: true, scopes: ['app', 'inbox:read', 'offline_access'],
+    });
+  });
+
+  it('asked for alone, comes with the App API scope, once', async () => {
+    const c = await connectApp('klara', { resource: `${U}/app-api`, scope: 'inbox:read inbox:read' });
+    expect(c.tokens.scope).toBe('app inbox:read');
+  });
+
+  it('can be dropped by a refresh; the narrowed token keeps the App API', async () => {
+    const c = await connectApp('klara', READ_QUERY);
+    const messages = (token: string) => app.inject({ method: 'GET', url: '/app-api/v1/messages', headers: { authorization: `Bearer ${token}` } });
+    expect((await messages(c.tokens.access_token)).statusCode).toBe(200);
+    const narrowed = (await form({ grant_type: 'refresh_token', refresh_token: c.tokens.refresh_token, client_id: c.clientId, scope: 'app' })).json();
+    expect(narrowed.scope).toBe('app');
+    expect(await authenticateAccessToken(db, narrowed.access_token, 'app', new Date())).toMatchObject({ ok: true, scopes: ['app'] });
+    // Over HTTP: the narrowed token no longer reads the Inbox, but still writes.
+    const read = await messages(narrowed.access_token);
+    expect(read.statusCode).toBe(403);
+    expect(read.json().error).toBe('insufficient_scope');
+    const write = await app.inject({
+      method: 'POST', url: '/app-api/v1/thoughts', headers: { authorization: `Bearer ${narrowed.access_token}` }, payload: { title: 'T', body: 'B' },
+    });
+    expect(write.statusCode).toBe(201);
+    const readOnly = (await form({ grant_type: 'refresh_token', refresh_token: narrowed.refresh_token, client_id: c.clientId, scope: 'inbox:read' })).json();
+    expect(readOnly.scope).toBe('app inbox:read');
   });
 });

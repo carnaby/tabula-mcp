@@ -138,6 +138,33 @@ describe('message tools', () => {
     expect((await getMessage(db, m.id))!.version).toBe(1);
     expect((await tool('update_message', { id: refOf(m.id), as_project: 'beta', expected_version: 1, status: 'waiting', waiting_on: 'author' })).isError).toBe(false);
   });
+
+  it('sends a message from outside any project with sender, shown as external via the connection', async () => {
+    const m = JSON.parse((await tool('send_message', { to: 'beta', sender: 'claude.ai chat', type: 'request', title: 'Add a job type', body: 'Please.' })).all);
+    expect(await getMessage(db, m.id)).toMatchObject({ fromProject: null, sender: 'claude.ai chat', source: 'agent', createdBy: 'alpha-agent' });
+    const listed = JSON.parse((await tool('list_messages', { project: 'beta' })).blocks[1]!);
+    expect(listed.items[0]).toMatchObject({ id: m.id, from: 'external', via: 'alpha-agent', sender: 'claude.ai chat' });
+    expect(JSON.parse((await tool('get_message', { id: m.ref })).blocks[1]!)).toMatchObject({ from: 'external', via: 'alpha-agent', sender: 'claude.ai chat' });
+    const waits = await tool('update_message', { id: m.ref, as_project: 'beta', expected_version: 1, status: 'waiting', waiting_on: 'sender' });
+    expect(waits.isError).toBe(true);
+    expect(waits.all).toContain('waiting_on "author"');
+  });
+
+  it('needs exactly one of from and sender, and points an unknown from to sender', async () => {
+    const base = { to: 'beta', type: 'request', title: 'T', body: 'B' };
+    const neither = await tool('send_message', base);
+    expect(neither.isError).toBe(true);
+    expect(neither.all).toMatch(/^400: .*sender \(who you are/);
+    const both = await tool('send_message', { ...base, from: 'alpha', sender: 'claude.ai chat' });
+    expect(both.isError).toBe(true);
+    expect(both.all).toContain('not both');
+    for (const from of ['claude-ai-chat', 'global']) {
+      const r = await tool('send_message', { ...base, from });
+      expect(r.isError, from).toBe(true);
+      expect(r.all, from).toContain('leave out from and pass sender');
+    }
+    expect(JSON.parse((await tool('list_messages', { project: 'beta', status: 'all' })).blocks[1]!).total).toBe(0);
+  });
 });
 
 describe('separation from memory', () => {
@@ -191,6 +218,11 @@ describe('separation from memory', () => {
     expect(client.getInstructions()).toMatch(/Inbox messages/);
     expect(client.getInstructions()).toMatch(/declared/);
     expect(client.getInstructions()).toContain('never appear in recall or search, and get only points to get_message');
+    const send = tools.find((t) => t.name === 'send_message')!;
+    expect(send.description).toContain('sender');
+    expect(Object.keys((send.inputSchema as { properties: object }).properties)).toEqual(expect.arrayContaining(['from', 'sender']));
+    expect((send.inputSchema as { required?: string[] }).required ?? []).not.toContain('from');
+    expect(client.getInstructions()).toContain('"external"');
     await client.close();
   });
 });

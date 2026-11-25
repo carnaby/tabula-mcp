@@ -19,11 +19,11 @@ const blocks = (value: unknown): AgentBlock[] => [
 
 export async function agentSendMessage(
   ctx: AgentContext,
-  a: { to: string; from: string; type: MessageType; title: string; body: string; related_to?: string },
+  a: { to: string; from?: string; sender?: string; type: MessageType; title: string; body: string; related_to?: string },
 ): Promise<{ id: string; ref: string; status: MessageStatus; version: number }> {
   const m = await createMessage(
     ctx.db,
-    { to: a.to, from: a.from, type: a.type, title: a.title, body: a.body, relatedTo: a.related_to },
+    { to: a.to, from: a.from ?? null, sender: a.sender, type: a.type, title: a.title, body: a.body, relatedTo: a.related_to },
     { source: 'agent', label: ctx.agentLabel, model: ctx.model ?? null },
   );
   return { id: m.id, ref: refOf(m.id), status: m.status, version: m.version };

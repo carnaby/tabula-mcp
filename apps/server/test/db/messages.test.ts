@@ -2,8 +2,8 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { messages } from '../../src/db/schema.js';
 import {
-  createMessage, deleteMessage, findMessageByRef, getMessage, inboxFeed, listMessageEvents, type Message, type MessageActor, messageCounts,
-  messageDetailView, messageSummaryView, pageMessages, updateMessage,
+  createMessage, deleteMessage, findMessageByRef, getMessage, inboxFeed, listMessageEvents, listMessageHeaders, type Message, type MessageActor,
+  messageCounts, messageDetailView, messageSummaryView, pageMessages, updateMessage,
 } from '../../src/domain/messages.js';
 import { seedProject, useTestDb } from '../helpers.js';
 
@@ -269,5 +269,47 @@ describe('reading', () => {
     expect(await listMessageEvents(db, second.id)).toHaveLength(1);
     expect((await getMessage(db, second.id))!.relatedTo).toBeNull();
     await expect(deleteMessage(db, first.id)).rejects.toMatchObject({ code: 'not_found' });
+  });
+});
+
+describe('listMessageHeaders', () => {
+  const at = (m: Message, iso: string) => db.update(messages).set({ updatedAt: new Date(iso) }).where(eq(messages.id, m.id));
+
+  it('lists open messages of every project, newest change first, and says when more matched', async () => {
+    const a = await send({ title: 'First' });
+    const b = await send({ to: 'alpha', from: 'beta', title: 'Second' });
+    const c = await send({ title: 'Third' });
+    await move(c, { status: 'done' });
+    await at(a, '2026-11-01T10:00:00Z');
+    await at(b, '2026-11-02T10:00:00Z');
+    expect((await listMessageHeaders(db, { limit: 50 })).items.map((m) => m.title)).toEqual(['Second', 'First']);
+    expect(await listMessageHeaders(db, { limit: 1 })).toMatchObject({ items: [{ title: 'Second' }], truncated: true });
+    expect((await listMessageHeaders(db, { limit: 2 })).truncated).toBe(false);
+    expect((await listMessageHeaders(db, { status: 'all', limit: 50 })).items).toHaveLength(3);
+  });
+
+  it('orders messages changed at the same moment by id', async () => {
+    const a = await send({ title: 'A' });
+    const b = await send({ title: 'B' });
+    await at(a, '2026-11-01T10:00:00Z');
+    await at(b, '2026-11-01T10:00:00Z');
+    expect((await listMessageHeaders(db, { limit: 50 })).items.map((m) => m.id)).toEqual([a.id, b.id].sort());
+  });
+
+  it('filters by recipient, sender, the author as sender and who a waiting message waits on', async () => {
+    await send({ title: 'alpha to beta' });
+    await send({ to: 'alpha', from: 'beta', title: 'beta to alpha' });
+    await createMessage(db, { to: 'beta', from: null, type: 'request', title: 'from the author', body: 'B' }, { source: 'human', label: 'klara' });
+    const w = await send({ title: 'waits on the author' });
+    await move(w, { status: 'waiting', waitingOn: 'author' });
+    const titles = async (f: Partial<Parameters<typeof listMessageHeaders>[1]>) =>
+      (await listMessageHeaders(db, { limit: 50, ...f })).items.map((m) => m.title).sort();
+    expect(await titles({ to: 'alpha' })).toEqual(['beta to alpha']);
+    expect(await titles({ from: 'alpha' })).toEqual(['alpha to beta', 'waits on the author']);
+    expect(await titles({ from: 'author' })).toEqual(['from the author']);
+    expect(await titles({ to: 'beta', from: 'author' })).toEqual(['from the author']);
+    expect(await titles({ waitingOn: 'author' })).toEqual(['waits on the author']);
+    expect(await titles({ waitingOn: 'sender' })).toEqual([]);
+    expect(await titles({ status: 'done', waitingOn: 'author' })).toEqual([]);
   });
 });

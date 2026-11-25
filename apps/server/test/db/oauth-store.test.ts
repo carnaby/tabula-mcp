@@ -4,6 +4,7 @@ import {
   authenticateAccessToken, countClientsWithoutConnection, createClient, createConnection, createPending, findClient, findPending, insertCode,
   issueTokenPair, listLiveConnections, renameConnection, revokeConnection, takePending,
 } from '../../src/auth/oauth/store.js';
+import { hashSecret } from '../../src/auth/secrets.js';
 import { oauthAccessTokens, oauthCodes, oauthConnections, oauthRefreshTokens } from '../../src/db/schema.js';
 import { issueTestAccessToken, useTestDb } from '../helpers.js';
 
@@ -39,10 +40,24 @@ describe('OAuth store', () => {
     const conn = await connect('claude-code', 'mcp');
     const pair = await issueTokenPair(db, conn, new Date());
     expect(pair.expiresIn).toBe(3600);
-    expect(await authenticateAccessToken(db, pair.accessToken, 'mcp', new Date())).toEqual({ ok: true, connectionId: conn.id, name: 'claude-code' });
+    expect(await authenticateAccessToken(db, pair.accessToken, 'mcp', new Date())).toEqual({ ok: true, connectionId: conn.id, name: 'claude-code', scopes: ['mcp'] });
     expect(await authenticateAccessToken(db, pair.accessToken, 'api', new Date())).toEqual({ ok: false });
     expect(await authenticateAccessToken(db, pair.refreshToken, 'mcp', new Date())).toEqual({ ok: false });
     expect(await authenticateAccessToken(db, 'unknown', 'mcp', new Date())).toEqual({ ok: false });
+  });
+
+  it('stores the scope on the access token and reports it when the token is used', async () => {
+    const conn = await createConnection(db, {
+      clientId: (await app()).id, name: 'klara', resource: 'app', scope: 'app inbox:read offline_access', redirectUri: CB,
+    });
+    const full = await issueTokenPair(db, conn, new Date());
+    expect(await authenticateAccessToken(db, full.accessToken, 'app', new Date())).toEqual({
+      ok: true, connectionId: conn.id, name: 'klara', scopes: ['app', 'inbox:read', 'offline_access'],
+    });
+    const narrow = await issueTokenPair(db, conn, new Date(), 'app');
+    expect(await authenticateAccessToken(db, narrow.accessToken, 'app', new Date())).toMatchObject({ ok: true, scopes: ['app'] });
+    const [row] = await db.select().from(oauthAccessTokens).where(eq(oauthAccessTokens.hash, hashSecret(narrow.accessToken)));
+    expect(row!.scope).toBe('app');
   });
 
   it('refuses an expired token and every token of a revoked connection', async () => {

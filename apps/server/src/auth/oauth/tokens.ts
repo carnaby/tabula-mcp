@@ -64,7 +64,7 @@ export async function exchangeCode(
     const connection = await usableConnection(tx, code.connectionId, input.clientId);
     if (!connection) return refuse('invalid_grant');
     await tx.update(oauthCodes).set({ usedAt: now }).where(eq(oauthCodes.hash, hash));
-    const pair = await issueTokenPair(tx, connection, now);
+    const pair = await issueTokenPair(tx, connection, now, code.scope);
     return { ok: true, tokens: { ...pair, scope: code.scope } };
   }), now);
 }
@@ -91,9 +91,10 @@ export async function refreshTokens(
     const granted = connection.scope.split(' ').filter(Boolean);
     const asked = (input.scope ?? '').split(' ').filter(Boolean);
     if (!asked.every((s) => granted.includes(s))) return refuse('invalid_scope');
-    const scope = asked.length > 0 ? granted.filter((s) => asked.includes(s)).join(' ') : connection.scope;
+    // Narrowing drops only what was granted on top of the resource's own scope (inbox:read, offline_access).
+    const scope = asked.length > 0 ? granted.filter((s) => s === connection.resource || asked.includes(s)).join(' ') : connection.scope;
     await tx.update(oauthRefreshTokens).set({ replacedAt: now }).where(eq(oauthRefreshTokens.hash, hash));
-    const pair = await issueTokenPair(tx, connection, now);
+    const pair = await issueTokenPair(tx, connection, now, scope);
     return { ok: true, tokens: { ...pair, scope } };
   }), now);
 }

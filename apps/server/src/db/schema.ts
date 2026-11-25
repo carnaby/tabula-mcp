@@ -538,6 +538,8 @@ export const oauthAccessTokens = pgTable(
     connectionId: uuid('connection_id').notNull().references(() => oauthConnections.id, { onDelete: 'cascade' }),
     /** The audience: a token opens only the resource it was issued for (/mcp, /api or /app-api). */
     resource: oauthResource('resource').notNull(),
+    /** What the token may do: its connection's scope, or the narrower one a refresh asked for (always with the resource's own). */
+    scope: text('scope').notNull(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

@@ -62,16 +62,17 @@ export async function finishNextJob(db: Db, input: TranscriptInput): Promise<voi
 
 /** A live connection with an access token of a known value, made directly in the database (no consent page). */
 export async function issueTestAccessToken(
-  db: Db, opts: { resource: ResourceKind; name?: string; value?: string },
+  db: Db, opts: { resource: ResourceKind; name?: string; value?: string; scope?: string },
 ): Promise<{ value: string; connectionId: string }> {
   const redirectUri = 'https://client.example.com/callback';
+  const scope = opts.scope ?? opts.resource;
   const client = await createClient(db, { clientName: 'Test client', redirectUris: [redirectUri] });
   const connection = await createConnection(db, {
-    clientId: client.id, name: opts.name ?? `test-${opts.resource}`, resource: opts.resource, scope: opts.resource, redirectUri,
+    clientId: client.id, name: opts.name ?? `test-${opts.resource}`, resource: opts.resource, scope, redirectUri,
   });
   const value = opts.value ?? newSecret();
   await db.insert(oauthAccessTokens).values({
-    hash: hashSecret(value), connectionId: connection.id, resource: opts.resource, expiresAt: new Date(Date.now() + 24 * 3600_000),
+    hash: hashSecret(value), connectionId: connection.id, resource: opts.resource, scope, expiresAt: new Date(Date.now() + 24 * 3600_000),
   });
   return { value, connectionId: connection.id };
 }

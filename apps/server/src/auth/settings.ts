@@ -8,6 +8,10 @@ export type ResourceKind = 'mcp' | 'api' | 'app';
 export const RESOURCE_KINDS = ['mcp', 'api', 'app'] as const;
 /** The path of each resource under TABULA_PUBLIC_URL; RFC 9728 puts its metadata at /.well-known/oauth-protected-resource/<path>. */
 export const RESOURCE_PATHS: Record<ResourceKind, string> = { mcp: 'mcp', api: 'api', app: 'app-api' };
+/** Read the headers of every project's Inbox messages over the App API, never their text (inbox-read spec §2). */
+export const INBOX_READ = 'inbox:read';
+/** What a resource grants on top of its own scope when asked: only the App API offers more. */
+export const RESOURCE_SCOPES: Record<ResourceKind, readonly string[]> = { mcp: [], api: [], app: [INBOX_READ] };
 
 export type AuthSettings = {
   /** RFC 8414 issuer and the WebAuthn origin: TABULA_PUBLIC_URL, never derived from a request's Host header. */

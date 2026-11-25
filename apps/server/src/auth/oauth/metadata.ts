@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { type AuthSettings, RESOURCE_KINDS, RESOURCE_PATHS, type ResourceKind } from '../settings.js';
+import { type AuthSettings, RESOURCE_KINDS, RESOURCE_PATHS, RESOURCE_SCOPES, type ResourceKind } from '../settings.js';
 
 /*
  * The discovery documents (spec §3.1, Limen §2 points 2–3). Every value comes from TABULA_PUBLIC_URL, never from Host
@@ -11,7 +11,10 @@ const CACHE = 'public, max-age=300';
 export const OFFLINE_ACCESS = 'offline_access';
 
 export function protectedResourceMetadata(auth: AuthSettings, kind: ResourceKind) {
-  return { resource: auth.resources[kind], authorization_servers: [auth.issuer], scopes_supported: [kind], bearer_methods_supported: ['header'] };
+  return {
+    resource: auth.resources[kind], authorization_servers: [auth.issuer], scopes_supported: [kind, ...RESOURCE_SCOPES[kind]],
+    bearer_methods_supported: ['header'],
+  };
 }
 
 export function authorizationServerMetadata(auth: AuthSettings) {
@@ -28,7 +31,7 @@ export function authorizationServerMetadata(auth: AuthSettings) {
     code_challenge_methods_supported: ['S256'],
     token_endpoint_auth_methods_supported: ['none'],
     revocation_endpoint_auth_methods_supported: ['none'],
-    scopes_supported: [...RESOURCE_KINDS, OFFLINE_ACCESS],
+    scopes_supported: [...RESOURCE_KINDS, ...RESOURCE_KINDS.flatMap((k) => RESOURCE_SCOPES[k]), OFFLINE_ACCESS],
     authorization_response_iss_parameter_supported: true,
   };
 }

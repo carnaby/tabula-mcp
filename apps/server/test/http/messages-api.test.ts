@@ -185,4 +185,13 @@ describe('references and Home', () => {
     expect(waiting).toMatchObject([{ type: 'message_waiting', id: own.id, title: 'Renew it', project: 'beta', from: 'author', via: 'klara', version: 2 }]);
     expect((await call('GET', '/api/messages/counts')).json()).toMatchObject({ waiting_author: 1 });
   });
+
+  it('shows a message from an agent outside any project on Home as external when it waits on the author', async () => {
+    const ext = await createMessage(db, { to: 'beta', from: null, sender: 'claude.ai chat', type: 'request', title: 'Add a job type', body: 'B' }, { source: 'agent', label: 'claude-ai' });
+    expect((await call('PATCH', `/api/messages/${ext.id}`, { expected_version: 1, status: 'waiting', waiting_on: 'sender' })).statusCode).toBe(400);
+    await call('PATCH', `/api/messages/${ext.id}`, { expected_version: 1, status: 'waiting', waiting_on: 'author' });
+    const waiting = (await call('GET', '/api/dashboard')).json().waiting;
+    expect(waiting).toMatchObject([{ type: 'message_waiting', id: ext.id, from: 'external', via: 'claude-ai', sender: 'claude.ai chat' }]);
+    expect((await call('GET', `/api/messages/${ext.id}`)).json()).toMatchObject({ from: 'external', via: 'claude-ai', sender: 'claude.ai chat' });
+  });
 });

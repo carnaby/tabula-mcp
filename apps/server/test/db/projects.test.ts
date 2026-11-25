@@ -64,4 +64,9 @@ describe('projects', () => {
     await expect(createProject(db, { id: 'author', name: 'Author' })).rejects.toMatchObject({ code: 'bad_request' });
     await expect(db.insert(projects).values({ id: 'author', name: 'Author' })).rejects.toMatchObject({ cause: { code: '23514' } });
   });
+
+  it('refuses the reserved slug "external", in the domain and in the database', async () => {
+    await expect(createProject(db, { id: 'external', name: 'External' })).rejects.toMatchObject({ code: 'bad_request', message: expect.stringContaining('reserved') });
+    await expect(db.insert(projects).values({ id: 'external', name: 'External' })).rejects.toMatchObject({ cause: { code: '23514' } });
+  });
 });

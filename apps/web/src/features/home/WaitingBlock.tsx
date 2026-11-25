@@ -6,7 +6,7 @@ import { invalidate, useQuery } from '../../hooks/data';
 import { href } from '../../router';
 import type { Dashboard, Project, WaitingItem, WaitingTranscript } from '../../types';
 import { Badge, type BadgeTone, Button, ButtonLink, Icon, IconButton, type IconName, Skeleton, useConfirm, useToast } from '../../ui';
-import { isDeclared, senderText, senderTitle } from '../inbox/sender';
+import { isDeclared, isExternal, senderText, senderTitle } from '../inbox/sender';
 import { closeReportMessage } from '../reports/closeReport';
 import { ProjectTag } from './ProjectTag';
 import { PromptDialog } from './PromptDialog';
@@ -149,9 +149,10 @@ function WaitingRow({
           )}
           {w.type === 'transcription_failed' && <span className="t-subtle t-truncate" title={w.error ?? undefined}>{w.file_name}</span>}
           {w.type === 'message_waiting' && w.from && (
-            <span className="waiting-row__from t-subtle" title={senderTitle(w)}>
-              <span className="t-truncate">from {senderText({ from: w.from, via: w.via })}</span>
-              {isDeclared(w) && <> <span className="t-nowrap">(declared)</span></>}
+            <span className="waiting-row__from t-subtle" title={senderTitle({ from: w.from, via: w.via, sender: w.sender })}>
+              <span className="t-truncate">from {senderText({ from: w.from, via: w.via, sender: w.sender })}</span>
+              {isDeclared({ from: w.from }) && <> <span className="t-nowrap">(declared)</span></>}
+              {isExternal({ from: w.from }) && <> <Badge tone="info">External</Badge></>}
             </span>
           )}
           <time className="t-subtle t-nowrap" dateTime={w.since} title={fullDate(w.since)}>{age(w.since)}</time>

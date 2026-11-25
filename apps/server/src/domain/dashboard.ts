@@ -38,10 +38,12 @@ export type WaitingItem = {
   attachment_id?: string;
   file_name?: string;
   error?: string | null;
-  /** message_waiting: the project that declares it sent the message; `project` is the recipient. */
+  /** message_waiting: the project that declares it sent the message, or "author" / "external"; `project` is the recipient. */
   from?: string;
-  /** message_waiting from the owner: the app connection it was sent through. */
+  /** message_waiting without a sender project: the app connection it was sent through. */
   via?: string;
+  /** message_waiting from an agent outside any project ("from" is "external"): its own description, not verified. */
+  sender?: string;
 };
 
 export type DashboardWarning =
@@ -115,7 +117,7 @@ export async function dashboard(db: Db, now = new Date(), { transcriptionEnabled
     db
       .select({
         id: messages.id, title: messages.title, toProject: messages.toProject, fromProject: messages.fromProject,
-        createdBy: messages.createdBy, version: messages.version, updatedAt: messages.updatedAt,
+        createdBy: messages.createdBy, source: messages.source, sender: messages.sender, version: messages.version, updatedAt: messages.updatedAt,
       })
       .from(messages)
       .where(and(eq(messages.status, 'waiting'), eq(messages.waitingOn, 'author'))),

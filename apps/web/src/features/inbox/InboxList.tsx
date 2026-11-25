@@ -5,7 +5,7 @@ import { MESSAGE_STATUS_LABEL, MESSAGE_WAITING_LABEL, type MessageStatus, type M
 import { Alert, Badge, type BadgeTone, Button, EmptyState, Pagination, Select, Skeleton } from '../../ui';
 import { TimeAgo } from '../common';
 import { ListToolbar } from '../ListToolbar';
-import { isDeclared, senderText, senderTitle } from './sender';
+import { isDeclared, isExternal, senderText, senderTitle } from './sender';
 
 type Filters = { status: MessageStatusFilter; to: string; from: string; type: MessageType | '' };
 
@@ -72,6 +72,7 @@ export function InboxList({ projects }: { projects: Project[] | undefined }) {
               </div>
               <div className="report-card__meta">
                 <Badge tone="outline" title={senderTitle(m)}>from {senderText(m)}{isDeclared(m) && ' (declared)'}</Badge>
+                {isExternal(m) && <Badge tone="info" title={senderTitle(m)}>External</Badge>}
                 <span className="t-subtle">to</span>
                 <Badge tone="outline" icon="folder">{m.to}</Badge>
                 <Badge>{m.type === 'request' ? 'Request' : 'Report'}</Badge>

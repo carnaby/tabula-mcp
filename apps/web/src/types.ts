@@ -214,10 +214,12 @@ export type WaitingItem = {
   attachment_id?: string;
   file_name?: string;
   error?: string | null;
-  /** message_waiting: the project that declares it sent the message. */
+  /** message_waiting: the project that declares it sent the message, or "author" (you) / "external" (an agent outside any project). */
   from?: string;
-  /** message_waiting from you: the app connection it was sent through ("from" is then "author"). */
+  /** message_waiting without a sender project: the app connection it was sent through. */
   via?: string;
+  /** message_waiting from "external": the agent's own description of itself, not verified. */
+  sender?: string;
 };
 export type TrimStep = 'files-collapsed' | 'facts-omitted' | 'gotchas-first-sentence' | 'rules-first-sentence' | 'state-truncated';
 export type DashboardWarning =
@@ -277,7 +279,7 @@ export const MESSAGE_STATUS_LABEL: Record<MessageStatus, string> = {
 };
 export const MESSAGE_WAITING_LABEL: Record<MessageWaitingOn, string> = { author: 'you', sender: 'the sender' };
 export type MessageSummary = {
-  id: string; ref: string; to: string; from: string; via?: string; type: MessageType; title: string; status: MessageStatus;
+  id: string; ref: string; to: string; from: string; via?: string; sender?: string; type: MessageType; title: string; status: MessageStatus;
   waiting_on: MessageWaitingOn | null; related_to: string | null; version: number; created_at: string; updated_at: string;
 };
 export type MessageEvent = {

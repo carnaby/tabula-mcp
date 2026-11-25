@@ -436,7 +436,11 @@ export function buildMcpServer(ctx: McpContext): McpServer {
       description: D.send_message,
       inputSchema: z.object({
         to: z.string().describe('Slug of the project that receives the message.'),
-        from: z.string().describe('Slug of your own project.'),
+        from: z.string().optional().describe('Slug of your own project. Leave it out only when you work outside any Tabula project, and pass sender instead.'),
+        sender: z
+          .string()
+          .optional()
+          .describe('Only when you work outside any Tabula project (then leave out from): who you are, e.g. "claude.ai chat"; max 80 characters. Shown with the name of your app connection.'),
         type: z.enum(MESSAGE_TYPES).describe('"request": you ask for something. "report": you say what you did.'),
         title: z.string().describe('One sentence, max 200 characters.'),
         body: z.string().describe('Markdown, max 50 000 characters.'),

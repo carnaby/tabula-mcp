@@ -153,7 +153,11 @@ export const appApiRoutes: FastifyPluginAsync<AppApiDeps> = async (app, deps) =>
   const requireScope = (req: FastifyRequest, reply: FastifyReply, scope: string): void => {
     if (connectionOf(req).scopes.includes(scope)) return;
     reply.header('WWW-Authenticate', insufficientScope(deps.authCtx.auth, 'app', `app ${scope}`));
-    throw new AppApiError(403, 'insufficient_scope', `this connection may not read this; connect the app again with scope "app ${scope}"`);
+    throw new AppApiError(
+      403,
+      'insufficient_scope',
+      `this token lacks the scope "${scope}". If the connection was approved without it, connect the app again with scope "app ${scope}"; if a refresh with a narrower scope dropped it, refresh without "scope" to get it back.`,
+    );
   };
 
   // When the web UI is served, its wildcard GET (and HEAD) route at the root would answer an unknown GET here before

@@ -16,7 +16,7 @@ describe('safeEqual', () => {
 describe('apiEditor', () => {
   it('is the human only for the web UI', () => {
     expect(apiEditor(req({ kind: 'session', session: {} }))).toEqual({ source: 'human', label: 'human' });
-    expect(apiEditor(req({ kind: 'oauth', connectionId: 'c', name: 'tabula-cli' }))).toEqual({ source: 'agent', label: 'tabula-cli' });
+    expect(apiEditor(req({ kind: 'oauth', connectionId: 'c', name: 'tabula-cli', scopes: ['api'] }))).toEqual({ source: 'agent', label: 'tabula-cli' });
   });
 });
 

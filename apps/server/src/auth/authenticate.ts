@@ -7,10 +7,10 @@ import { authenticateAccessToken } from './oauth/store.js';
 import { authenticateSession, SESSION_TTL_MS, type UiSession } from './sessions.js';
 import { type AuthSettings, RESOURCE_PATHS, type ResourceKind } from './settings.js';
 
-/** Who a request authenticated as. */
+/** Who a request authenticated as; an OAuth connection with the scopes of the token it sent. */
 export type Principal =
   | { kind: 'session'; session: UiSession }
-  | { kind: 'oauth'; connectionId: string; name: string };
+  | { kind: 'oauth'; connectionId: string; name: string; scopes: string[] };
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -33,6 +33,14 @@ export function challenge(auth: AuthSettings, kind: ResourceKind, invalidToken: 
   return `Bearer ${params.join(', ')}`;
 }
 
+/**
+ * The 403 challenge (RFC 6750 §3.1) for a live token that lacks a scope: `scope` names everything the call needs,
+ * e.g. "app inbox:read". The parameters are in the order the inbox-read spec §2.2 gives.
+ */
+export function insufficientScope(auth: AuthSettings, kind: ResourceKind, scope: string): string {
+  return `Bearer error="insufficient_scope", scope="${scope}", resource_metadata="${auth.issuer}/.well-known/oauth-protected-resource/${RESOURCE_PATHS[kind]}"`;
+}
+
 /** A browser request that changes something with the session cookie must come from Tabula's own pages (spec §4.3). */
 export const sameOrigin = (req: FastifyRequest, auth: AuthSettings): boolean => req.headers.origin === auth.issuer;
 
@@ -49,7 +57,7 @@ export async function sessionFromCookie(ctx: Pick<AuthContext, 'db' | 'auth'>, r
 
 async function fromBearer(ctx: AuthContext, token: string, kind: ResourceKind): Promise<Principal | null> {
   const r = await authenticateAccessToken(ctx.db, token, kind, new Date());
-  return r.ok ? { kind: 'oauth', connectionId: r.connectionId, name: r.name } : null;
+  return r.ok ? { kind: 'oauth', connectionId: r.connectionId, name: r.name, scopes: r.scopes } : null;
 }
 
 const unauthorized = (reply: FastifyReply, ctx: AuthContext, kind: ResourceKind, invalidToken: boolean) =>

@@ -116,9 +116,19 @@ describe('the scope inbox:read', () => {
 
   it('can be dropped by a refresh; the narrowed token keeps the App API', async () => {
     const c = await connectApp('klara', READ_QUERY);
+    const messages = (token: string) => app.inject({ method: 'GET', url: '/app-api/v1/messages', headers: { authorization: `Bearer ${token}` } });
+    expect((await messages(c.tokens.access_token)).statusCode).toBe(200);
     const narrowed = (await form({ grant_type: 'refresh_token', refresh_token: c.tokens.refresh_token, client_id: c.clientId, scope: 'app' })).json();
     expect(narrowed.scope).toBe('app');
     expect(await authenticateAccessToken(db, narrowed.access_token, 'app', new Date())).toMatchObject({ ok: true, scopes: ['app'] });
+    // Over HTTP: the narrowed token no longer reads the Inbox, but still writes.
+    const read = await messages(narrowed.access_token);
+    expect(read.statusCode).toBe(403);
+    expect(read.json().error).toBe('insufficient_scope');
+    const write = await app.inject({
+      method: 'POST', url: '/app-api/v1/thoughts', headers: { authorization: `Bearer ${narrowed.access_token}` }, payload: { title: 'T', body: 'B' },
+    });
+    expect(write.statusCode).toBe(201);
     const readOnly = (await form({ grant_type: 'refresh_token', refresh_token: narrowed.refresh_token, client_id: c.clientId, scope: 'inbox:read' })).json();
     expect(readOnly.scope).toBe('app inbox:read');
   });

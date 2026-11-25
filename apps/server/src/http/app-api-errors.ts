@@ -5,9 +5,10 @@ import { DomainError, isNulRefusal, loggableError, NUL_REFUSED, UnsupportedMedia
 /**
  * The error codes of the App API (spec §6): the code is the contract, the message is not. `unavailable` (503, media
  * storage down) is an addition to the spec's list: `internal` would hide that a retry later can succeed.
+ * `insufficient_scope` (403) comes with the inbox-read spec: a live token without the scope a read needs.
  */
 export type AppErrorCode =
-  | 'unauthorized' | 'validation_failed' | 'project_not_found' | 'report_not_found' | 'not_found' | 'report_closed'
+  | 'unauthorized' | 'insufficient_scope' | 'validation_failed' | 'project_not_found' | 'report_not_found' | 'not_found' | 'report_closed'
   | 'request_in_progress' | 'too_large' | 'unsupported_media_type' | 'idempotency_key_reused' | 'unavailable' | 'internal';
 
 /** One refused input: `path` names the field or header, or is empty when the rule concerns the request as a whole. */

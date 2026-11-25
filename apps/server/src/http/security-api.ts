@@ -61,6 +61,7 @@ export const securityRoutes: FastifyPluginAsync<{ authCtx: AuthContext }> = asyn
         app: displayClientName(c.clientName),
         target: isLoopbackRedirect(c.redirectUri) ? 'this computer' : new URL(c.redirectUri).host,
         resource: c.resource,
+        scope: c.scope,
         createdAt: c.createdAt.toISOString(),
         lastUsedAt: iso(c.lastUsedAt),
       })),

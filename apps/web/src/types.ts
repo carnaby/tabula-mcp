@@ -294,6 +294,6 @@ export type SecurityOverview = {
   fresh: boolean;
   publicUrl: string;
   passkeys: Array<{ id: string; name: string; createdAt: string; lastUsedAt: string | null }>;
-  connections: Array<{ id: string; name: string; app: string; target: string; resource: 'mcp' | 'api' | 'app'; createdAt: string; lastUsedAt: string | null }>;
+  connections: Array<{ id: string; name: string; app: string; target: string; resource: 'mcp' | 'api' | 'app'; scope: string; createdAt: string; lastUsedAt: string | null }>;
   sessions: Array<{ id: string; device: string; createdAt: string; lastUsedAt: string; current: boolean }>;
 };

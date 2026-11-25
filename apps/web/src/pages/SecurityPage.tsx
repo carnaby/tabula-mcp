@@ -117,6 +117,9 @@ export function SecurityPage() {
           <div key={c.id} className="security-row">
             <strong className="t-mono">{c.name}</strong>
             <Badge tone="outline">{RESOURCE_LABEL[c.resource]}</Badge>
+            {c.scope.split(' ').includes('inbox:read') && (
+              <Badge tone="outline" title="May read the titles and status of Inbox messages in all projects, never their text">Inbox read</Badge>
+            )}
             <span className="t-subtle" title="The app chose its name itself; it is not verified.">{c.app} · {c.target}</span>
             <span className="t-subtle">connected <TimeAgo iso={c.createdAt} /> · <Used iso={c.lastUsedAt} never="never used" /></span>
             <span className="security-row__actions">

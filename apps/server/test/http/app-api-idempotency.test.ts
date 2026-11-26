@@ -3,9 +3,10 @@ import { request } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import postgres from 'postgres';
+import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from 'vitest';
 import { sweepAuth } from '../../src/auth/sweep.js';
 import { appIdempotency, oauthConnections, reportAttachments, thoughts } from '../../src/db/schema.js';
 import { claimIdempotencyKey, completeIdempotencyKey, releaseIdempotencyKey } from '../../src/domain/idempotency.js';
@@ -97,12 +98,22 @@ describe('Idempotency-Key on JSON writes', () => {
   });
 
   it('writes once when the same request arrives several times at once', async () => {
-    // Open the pool's connections first; otherwise the requests wait for new connections one by one and never overlap.
-    await Promise.all(Array.from({ length: 8 }, () => db.execute(sql`SELECT pg_sleep(0.05)`)));
-    const answers = await Promise.all(Array.from({ length: 6 }, () => postThought(thought, 'burst')));
-    expect(answers.every((a) => a.statusCode === 201 || a.statusCode === 409)).toBe(true);
-    // At least one arrived while the first still ran: the requests did overlap.
-    expect(answers.some((a) => a.statusCode === 409)).toBe(true);
+    // Hold the run that claims the key: a SHARE lock on thoughts blocks its insert, so the other requests surely arrive
+    // while it still runs. Waiting on timing alone did not overlap reliably in CI.
+    const locker = postgres(inject('databaseUrl'), { max: 1, onnotice: () => {} });
+    let answers: Awaited<ReturnType<typeof postThought>>[];
+    try {
+      await locker`BEGIN`;
+      await locker`LOCK TABLE thoughts IN SHARE MODE`;
+      let settled = 0;
+      const burst = Array.from({ length: 6 }, () => postThought(thought, 'burst').finally(() => { settled += 1; }));
+      await waitFor(async () => settled === 5);
+      await locker`COMMIT`;
+      answers = await Promise.all(burst);
+    } finally {
+      await locker.end();
+    }
+    expect(answers.map((a) => a.statusCode).sort()).toEqual([201, 409, 409, 409, 409, 409]);
     const fresh = answers.filter((a) => a.statusCode === 201 && a.headers['idempotent-replayed'] === undefined);
     expect(fresh).toHaveLength(1);
     for (const a of answers.filter((x) => x.statusCode === 201)) expect(a.json()).toEqual(fresh[0]!.json());

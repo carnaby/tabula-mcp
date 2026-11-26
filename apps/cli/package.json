@@ -13,9 +13,9 @@
     "test": "vitest run"
   },
   "devDependencies": {
-    "@types/node": "^26.6.2",
+    "@types/node": "^26.6.11",
     "typescript": "^7.0.2",
-    "vitest": "^5.1.0"
+    "vitest": "^5.1.2"
   },
   "nx": { "targets": { "test": { "cache": true } } }
 }

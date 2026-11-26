@@ -41,7 +41,9 @@ describe('a message from an agent outside any project', () => {
   it('keeps the description on one line and within 80 characters', async () => {
     expect((await external({ sender: '  claude.ai\n\tchat  ' })).sender).toBe('claude.ai chat');
     expect((await external({ sender: '😀'.repeat(80) })).sender).toBe('😀'.repeat(80));
-    for (const sender of ['', ' \n ', 'x'.repeat(81), `a${NUL}b`]) {
+    // Zero-width, bidirectional and separator characters would let a description pose as another one.
+    const invisible = [0x200b, 0x200e, 0x202e, 0x2066].map((c) => `claude${String.fromCharCode(c)}.ai`);
+    for (const sender of ['', ' \n ', 'x'.repeat(81), `a${NUL}b`, ...invisible]) {
       await expect(external({ sender }), JSON.stringify(sender)).rejects.toMatchObject({ code: 'bad_request' });
     }
   });

@@ -1,5 +1,6 @@
 import { REF_PREFIX, refOf } from '@tabula/shared/refs';
 import { and, asc, count, desc, eq, gte, inArray, isNull, type SQL, sql } from 'drizzle-orm';
+import { isDisplayableClientName } from '../auth/names.js';
 import type { Db } from '../db/client.js';
 import { messageEvents, messages } from '../db/schema.js';
 import { badRequest, conflict, DomainError, forbidden, notFound } from './errors.js';
@@ -83,6 +84,7 @@ export function normalizeSender(raw: string): string {
   rejectNul(raw, 'sender');
   const v = raw.replace(/\s+/g, ' ').trim();
   if (!v) throw badRequest('sender must not be empty');
+  if (!isDisplayableClientName(v)) throw badRequest('sender must not contain control, invisible or direction-changing characters');
   checkLimit(v, 'sender');
   return v;
 }
@@ -309,7 +311,9 @@ export const senderView = (
 ): { from: string; via?: string; sender?: string } => {
   if (m.fromProject !== null) return { from: m.fromProject };
   if (m.source === 'human') return { from: AUTHOR_SENDER, via: m.createdBy };
-  return { from: EXTERNAL_SENDER, via: m.createdBy, sender: m.sender ?? '' };
+  // The messages_sender check guarantees a description on every message of an agent without a project.
+  if (m.sender === null) throw new Error('an external message has no sender description');
+  return { from: EXTERNAL_SENDER, via: m.createdBy, sender: m.sender };
 };
 
 /** A message in a list: never its text. The narrow API promises exactly these fields. */

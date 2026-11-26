@@ -102,6 +102,14 @@ describe('what the narrow token opens', () => {
     expect(Date.parse(b.next_since)).not.toBeNaN();
   });
 
+  it('shows the app connection of a message of the author as via, and no sender description', async () => {
+    const own = await createMessage(db, { to: 'beta', from: null, type: 'request', title: 'Renew it', body: 'By Friday.' }, { source: 'human', label: 'klara' });
+    const item = (await call('GET', base)).json().items.find((m: { id: string }) => m.id === own.id);
+    expect(item).toMatchObject({ from: 'author', via: 'klara' });
+    expect(item).not.toHaveProperty('sender');
+    expect((await call('GET', `${base}/${own.id}`)).json()).toMatchObject({ from: 'author', via: 'klara' });
+  });
+
   it('filters by time', async () => {
     const future = new Date(Date.now() + 60_000).toISOString();
     expect((await call('GET', `${base}?since=${encodeURIComponent(future)}`)).json().items).toEqual([]);

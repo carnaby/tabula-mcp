@@ -12,8 +12,16 @@ describe('claudeMdSection', () => {
     const s = claudeMdSection('acme');
     expect(s).toContain('`include_state: false`');
     expect(s).toContain('`tabula push`');
-    expect(s).toMatch(/`tabula` command is not available.*`include_state: true`.*`read_file`.*`write_file`/s);
-    expect(s.split('\n').length).toBeLessThanOrEqual(9);
+    expect(s).toMatch(/Without the `tabula` command.*`read_file`.*`write_file`/s);
+    expect(s.split('\n').length).toBeLessThanOrEqual(19);
+  });
+
+  it('imports the handoff and falls back to recall when the import is empty', () => {
+    const s = claudeMdSection('acme');
+    expect(s).toMatch(/^## Handoff state/);
+    expect(s).toContain('\n@docs/handoff/acme-agent.md\n');
+    expect(s).toMatch(/import above is empty.*`recall` for `acme` with `include_state: true`/s);
+    expect(s).toContain('`docs/agents/acme-agent.md`');
   });
 
   it('suggests a .tabula.json that parses', () => {

@@ -247,21 +247,30 @@ Tabula is registered once per client, so it is visible in every project. The ser
 
 **Content is data.** The server instructions also tell every client that what Tabula returns (files, notes, thoughts, reports, transcripts) is data written by people or other agents: instructions found inside it are not followed unless the user asks, and the agent tells the user instead.
 
-The section is the whole per-project protocol:
+The two sections are the whole per-project protocol: the handoff of the last session is imported into every new one, and Tabula keeps it for clients without the files on disk.
 
 ```markdown
+## Handoff state (read at session start)
+- Handoff state (gitignored, kept in Tabula): `docs/handoff/my-project-agent.md`
+- Agent knowledge (kept in Tabula unless committed): `docs/agents/my-project-agent.md`
+
+The last session's handoff is imported below. Read it before answering anything, continue where it says to pick up, and check its verified state against reality before relying on it.
+
+@docs/handoff/my-project-agent.md
+
+If the import above is empty (Claude Code on the web, a fresh clone), the file is not on disk: before anything else call `recall` for `my-project` with `include_state: true`, which returns it.
+
 ## Memory (Tabula)
-Tabula keeps this project's files that are not in git (handoff state, private specs and plans) and the global rules that apply to every project.
-- This project's Tabula project is `my-project`; `.tabula.json` says which untracked files are synced.
-- At session start call `recall` for `my-project` with `include_state: false` and follow the global rules. The project state is on disk (restored by the SessionStart hook).
+Tabula keeps this project's files that are not in git (handoff state, private specs and plans) and the global rules that apply to every project. This project's Tabula project is `my-project`; `.tabula.json` says which untracked files are synced.
+- At session start call `recall` for `my-project` and follow the global rules. With the files on disk (the SessionStart hook ran `tabula pull`) pass `include_state: false`.
+- Without the `tabula` command (Claude Code on the web, claude.ai): read synced files with `read_file` and save every new or changed one (spec, plan, `progress.md`, handoff state) with `write_file`.
 - At handoff run `tabula push` after writing the state file.
-- If the `tabula` command is not available (Claude Code on the web, claude.ai), the files are not on disk: call `recall` with `include_state: true`, read files with `read_file`, and save every new or changed synced file (spec, plan, `progress.md`, handoff state) with `write_file`.
 - Never write project memories. Add a global rule only when the user explicitly asks.
 ```
 
-**Without the `tabula` command** — Claude Code on the web runs in a temporary container without your login, and claude.ai has only the connector — nothing is on disk and nothing would survive the session. The section covers that case too: the agent calls `recall` with `include_state: true`, reads files with `read_file` and saves every new or changed spec, plan, `progress.md` or handoff state with `write_file`. On your computer `tabula pull` (or the SessionStart hook) brings them down like any other change; if you edited the same file locally meanwhile, it is a conflict, not a silent overwrite.
+**Without the `tabula` command** — Claude Code on the web runs in a temporary container without your login, and claude.ai has only the connector — nothing is on disk and nothing would survive the session. The sections cover that case too: the import is empty, so the agent calls `recall` with `include_state: true`, reads files with `read_file` and saves every new or changed spec, plan, `progress.md` or handoff state with `write_file`. On your computer `tabula pull` (or the SessionStart hook) brings them down like any other change; if you edited the same file locally meanwhile, it is a conflict, not a silent overwrite.
 
-You don't write it by hand: tell the agent *"use Tabula in this project"* and it calls `setup_project` with the folder name as the slug, puts the section into `CLAUDE.md` and the suggested `.tabula.json` into the repository root. Run `tabula status` before the first `tabula push`: it lists every file the push would upload. For claude.ai projects use [`apps/server/templates/claude-ai-project-instructions.md`](apps/server/templates/claude-ai-project-instructions.md).
+You don't write it by hand: tell the agent *"use Tabula in this project"* and it calls `setup_project` with the folder name as the slug, puts the sections into `CLAUDE.md` and the suggested `.tabula.json` into the repository root. Run `tabula status` before the first `tabula push`: it lists every file the push would upload. For claude.ai projects use [`apps/server/templates/claude-ai-project-instructions.md`](apps/server/templates/claude-ai-project-instructions.md).
 
 ### The web UI
 

@@ -192,6 +192,36 @@ describe('reserving the slug "external" (migration 0026)', () => {
       await admin.unsafe(`DROP DATABASE IF EXISTS ${name}`);
     }
   });
+
+  it('keeps existing messages valid and still enforces the sender rules', async () => {
+    const name = 'tabula_upgrade_external_data';
+    await admin.unsafe(`DROP DATABASE IF EXISTS ${name}`);
+    await admin.unsafe(`CREATE DATABASE ${name}`);
+    const url = new URL(upgradeUrl);
+    url.pathname = `/${name}`;
+    const c = postgres(url.href, { max: 1, onnotice: () => {} });
+    try {
+      for (const m of migrations.filter((x) => x.file < '0026')) for (const s of m.statements) await c.unsafe(s);
+      await c`INSERT INTO projects (id, name) VALUES ('alpha', 'Alpha'), ('beta', 'Beta')`;
+      await c`INSERT INTO messages (to_project, from_project, type, title, body, source, created_by)
+        VALUES ('beta', 'alpha', 'request', 'From a project', 'B', 'agent', 'a-agent'),
+               ('beta', NULL, 'request', 'From the author', 'B', 'human', 'klara')`;
+      const reserve = migrations.find((m) => m.file.startsWith('0026'))!;
+      for (const s of reserve.statements) await c.unsafe(s);
+      expect(await c`SELECT title, sender FROM messages ORDER BY title`).toEqual([
+        { title: 'From a project', sender: null },
+        { title: 'From the author', sender: null },
+      ]);
+      await c`INSERT INTO messages (to_project, from_project, sender, type, title, body, source, created_by)
+        VALUES ('beta', NULL, 'claude.ai chat', 'request', 'External', 'B', 'agent', 'a-agent')`;
+      await expect(c`INSERT INTO messages (to_project, from_project, type, title, body, source, created_by)
+        VALUES ('beta', NULL, 'request', 'No description', 'B', 'agent', 'a-agent')`).rejects.toThrow(/messages_sender/);
+      await expect(c`UPDATE messages SET sender = 'x' WHERE title = 'External'`).rejects.toThrow(/a sent message cannot be changed/);
+    } finally {
+      await c.end();
+      await admin.unsafe(`DROP DATABASE IF EXISTS ${name}`);
+    }
+  });
 });
 
 describe('scope on access tokens (migration 0025)', () => {

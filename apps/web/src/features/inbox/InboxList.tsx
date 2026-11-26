@@ -72,7 +72,7 @@ export function InboxList({ projects }: { projects: Project[] | undefined }) {
               </div>
               <div className="report-card__meta">
                 <Badge tone="outline" title={senderTitle(m)}>from {senderText(m)}{isDeclared(m) && ' (declared)'}</Badge>
-                {isExternal(m) && <Badge tone="info" title={senderTitle(m)}>External</Badge>}
+                {isExternal(m) && <Badge tone="info">External</Badge>}
                 <span className="t-subtle">to</span>
                 <Badge tone="outline" icon="folder">{m.to}</Badge>
                 <Badge>{m.type === 'request' ? 'Request' : 'Report'}</Badge>

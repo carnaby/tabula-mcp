@@ -99,6 +99,16 @@ describe('unknown paths', () => {
     expect((await get('/app-api/v1/nope', {})).statusCode).toBe(401);
   });
 
+  it('ask for a token first, whatever the method', async () => {
+    for (const method of ['OPTIONS', 'POST', 'PUT', 'PATCH', 'DELETE'] as const) {
+      for (const url of ['/app-api/v1/nope', '/app-api/v2/projects', '/app-api']) {
+        const res = await app.inject({ method, url });
+        expect(res.statusCode, method + ' ' + url).toBe(401);
+        expect(res.json(), method + ' ' + url).toEqual({ error: 'unauthorized', message: expect.any(String) });
+      }
+    }
+  });
+
   it('stay in the API shape when the web UI is served, whose catch-all takes every other GET', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'tabula-web-'));
     writeFileSync(join(dir, 'index.html'), '<title>Tabula</title>');

@@ -8,11 +8,11 @@ import { noteForPeople, progressText } from './fornaxText';
 /** Text and Markdown files are read by Tabula itself; PDF and Office documents need Fornax. */
 const isTextFile = (mime: string) => ['text/plain', 'text/markdown'].includes(mime.split(';')[0].trim().toLowerCase());
 
-/** "Text · 3 pages · 1 tables · 1,234 characters": only what is known; cut when the text hit the limit. */
+/** "Text · 3 pages · 1 table · 1,234 characters": only what is known; cut when the text hit the limit. */
 function summary(d: Extract<DocumentState, { status: 'done' }>): string {
   const parts = ['Text'];
-  if (d.pages != null) parts.push(`${d.pages} pages`);
-  if (d.tables != null) parts.push(`${d.tables} tables`);
+  if (d.pages != null) parts.push(d.pages === 1 ? '1 page' : `${d.pages} pages`);
+  if (d.tables != null) parts.push(d.tables === 1 ? '1 table' : `${d.tables} tables`);
   parts.push(`${d.characters.toLocaleString()} characters`);
   if (d.truncated) parts.push('cut at 1,000,000 characters');
   return parts.join(' · ');

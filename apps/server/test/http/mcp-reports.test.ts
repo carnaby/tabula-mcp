@@ -431,7 +431,7 @@ describe('reports over MCP', () => {
       next: `call get_document with attachment_id "tabula:${doc.id.slice(0, 8)}" for all of its text`,
     });
     expect(text((await tool('get_document', { attachment_id: doc.id })).content))
-      .toMatch(new RegExp(`^\\[document Zmluva\\.pdf · report tabula:[0-9a-f]{8} · 3 pages · 1 tables · ${md.length} characters\\]\\n# Zmluva`));
+      .toMatch(new RegExp(`^\\[document Zmluva\\.pdf · report tabula:[0-9a-f]{8} · 3 pages · 1 table · ${md.length} characters\\]\\n# Zmluva`));
     expect(text((await tool('get_document', { attachment_id: doc.id, offset: md.length })).content)).toBe(`[offset ${md.length} is past the end of the document (${md.length} characters)]`);
   });
 

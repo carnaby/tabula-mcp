@@ -678,8 +678,8 @@ export async function agentGetDocument(ctx: AgentContext, input: { attachment_id
   const head = [
     `document ${a.fileName}`,
     `report ${refOf(a.reportId)}`,
-    ...(doc.pages !== null ? [`${doc.pages} pages`] : []),
-    ...(doc.tables !== null ? [`${doc.tables} tables`] : []),
+    ...(doc.pages !== null ? [doc.pages === 1 ? '1 page' : `${doc.pages} pages`] : []),
+    ...(doc.tables !== null ? [doc.tables === 1 ? '1 table' : `${doc.tables} tables`] : []),
     `${total} characters`,
     ...(doc.truncated ? [`truncated: only the first ${DOCUMENT_LIMITS.chars} characters were kept`] : []),
     ...(offset ? [`from character ${offset}`] : []),

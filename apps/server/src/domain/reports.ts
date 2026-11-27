@@ -176,10 +176,13 @@ export type ReportSort = (typeof REPORT_SORTS)[number];
 /** "open" = new and triaged: everything not closed yet. */
 export type ReportStatusFilter = ReportStatus | 'open' | 'all';
 
-/** A report whose recordings' transcripts match a prefix query. */
-const transcriptMatches = (tsq: string) => sql`EXISTS (
+/** A report whose recordings' transcripts or whose documents' texts match a prefix query (documents count as transcripts). */
+const transcriptMatches = (tsq: string) => sql`(EXISTS (
   SELECT 1 FROM report_transcripts t JOIN report_attachments a ON a.id = t.attachment_id
-  WHERE a.report_id = ${reports.id} AND t.search @@ to_tsquery('tabula', ${tsq}))`;
+  WHERE a.report_id = ${reports.id} AND t.search @@ to_tsquery('tabula', ${tsq}))
+  OR EXISTS (
+  SELECT 1 FROM report_documents d JOIN report_attachments a ON a.id = d.attachment_id
+  WHERE a.report_id = ${reports.id} AND d.search @@ to_tsquery('tabula', ${tsq})))`;
 
 /** `projectId` "none" (NO_PROJECT) lists the reports without a project; absent lists all. */
 export async function pageReports(

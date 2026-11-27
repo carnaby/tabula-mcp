@@ -298,7 +298,9 @@ export const reportAttachments = pgTable(
 );
 
 export const jobStatus = pgEnum('job_status', ['queued', 'running', 'done', 'failed']);
-export const jobKind = pgEnum('job_kind', ['transcribe']);
+export const jobKind = pgEnum('job_kind', ['transcribe', 'parse']);
+/** Where the text of a document came from: read by Fornax (PDF, Office) or taken from the file itself (text, Markdown). */
+export const documentSource = pgEnum('document_source', ['fornax', 'file']);
 
 /** A line changed after the worker wrote it: who changed it last, when, and the worker's own text and speaker (kept from the first edit). */
 export type SegmentEdit = { by: 'user' | 'agent'; at: string; original: { text: string; speaker?: string } };
@@ -314,8 +316,8 @@ export type SpeakerName = { name: string; by: 'user' | 'agent'; at: string };
 export type SpeakerNames = Record<string, SpeakerName>;
 
 /**
- * A recording to transcribe. Fornax (a separate GPU job queue) does the work: the sync uploads the recording, submits a
- * job and follows it until the transcript can be stored.
+ * A recording to transcribe or a document to read (kind parse). Fornax (a separate GPU job queue) does the work: the sync
+ * uploads the file, submits a job and follows it until the transcript or the text can be stored.
  */
 export const reportJobs = pgTable(
   'report_jobs',
@@ -373,6 +375,35 @@ export const reportTranscripts = pgTable(
     search: tsvector('search').generatedAlwaysAs(sql`to_tsvector('tabula'::regconfig, left("text", 100000))`),
   },
   (t) => [index('report_transcripts_search_idx').using('gin', t.search)],
+);
+
+/** Text of documents (PDF, Office, text, Markdown). Like transcripts it stays when the file is deleted after the report closes: the purge deletes the file, not the row. */
+export const reportDocuments = pgTable(
+  'report_documents',
+  {
+    attachmentId: uuid('attachment_id')
+      .primaryKey()
+      .references(() => reportAttachments.id, { onDelete: 'cascade' }),
+    text: text('text').notNull(),
+    /** The text was cut at the limit (or the file was read only in part). */
+    truncated: boolean('truncated').notNull().default(false),
+    source: documentSource('source').notNull(),
+    /** The reader that made the text (e.g. "docling 2.151.1"); null for a file read as it is. */
+    model: text('model'),
+    pages: integer('pages'),
+    tables: integer('tables'),
+    characters: integer('characters').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    search: tsvector('search').generatedAlwaysAs(sql`to_tsvector('tabula'::regconfig, left("text", 100000))`),
+  },
+  (t) => [
+    index('report_documents_search_idx').using('gin', t.search),
+    check('report_documents_text_len', sql`char_length(${t.text}) <= 1000000`),
+    check(
+      'report_documents_counts',
+      sql`${t.characters} >= 0 AND (${t.pages} IS NULL OR ${t.pages} >= 0) AND (${t.tables} IS NULL OR ${t.tables} >= 0)`,
+    ),
+  ],
 );
 
 /** Settings of the single user, one row per key (the Copy for Claude text). A missing row means the default. */

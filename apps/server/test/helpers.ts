@@ -1,4 +1,4 @@
-import { asc, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { afterAll, beforeEach, inject } from 'vitest';
 import { createClient, createConnection } from '../src/auth/oauth/store.js';
 import { hashSecret, newSecret } from '../src/auth/secrets.js';
@@ -11,7 +11,7 @@ import { storeTranscript, type TranscriptInput } from '../src/domain/jobs.js';
 export function useTestDb(): Db {
   const { db, close } = createDb(inject('databaseUrl'));
   beforeEach(async () => {
-    await db.execute(sql`TRUNCATE memories, notes, thoughts, project_files, project_file_revisions, reports, report_attachments, report_jobs, report_transcripts, messages, message_events, message_tokens, oauth_clients, oauth_pending, oauth_connections, oauth_codes, oauth_refresh_tokens, oauth_access_tokens, app_idempotency, passkeys, passkey_registrations, webauthn_challenges, ui_sessions CASCADE`);
+    await db.execute(sql`TRUNCATE memories, notes, thoughts, project_files, project_file_revisions, reports, report_attachments, report_jobs, report_transcripts, report_documents, messages, message_events, message_tokens, oauth_clients, oauth_pending, oauth_connections, oauth_codes, oauth_refresh_tokens, oauth_access_tokens, app_idempotency, passkeys, passkey_registrations, webauthn_challenges, ui_sessions CASCADE`);
     // The media signing key outlives a test like it outlives a restart: an app built in beforeAll keeps signing with it.
     await db.execute(sql`DELETE FROM settings WHERE key <> 'media_signing_key'`);
     await db.execute(sql`DELETE FROM projects WHERE id <> 'global'`);
@@ -53,7 +53,7 @@ export async function finishNextJob(db: Db, input: TranscriptInput): Promise<voi
   const [job] = await db
     .select({ id: reportJobs.id })
     .from(reportJobs)
-    .where(inArray(reportJobs.status, ['queued', 'running']))
+    .where(and(eq(reportJobs.kind, 'transcribe'), inArray(reportJobs.status, ['queued', 'running'])))
     .orderBy(asc(reportJobs.runAfter), asc(reportJobs.createdAt))
     .limit(1);
   if (!job) throw new Error('no transcription job waits');

@@ -70,12 +70,16 @@ export const transcriptLines = (segments: readonly TranscriptSegment[], labels?:
 
 /**
  * At most `limit` characters of `text` from `offset`, ending at a line break when one is in reach, and the offset of
- * the next part (null at the end). A line never exceeds the limit (segments are at most 2 000 characters).
+ * the next part (null at the end). A line never exceeds the limit (segments are at most 2 000 characters). A hard
+ * cut never splits a UTF-16 surrogate pair.
  */
 export function sliceLines(text: string, offset: number, limit: number): { text: string; next: number | null } {
   const from = Math.max(0, Math.min(Math.trunc(offset), text.length));
   if (from + limit >= text.length) return { text: text.slice(from), next: null };
   const cut = text.lastIndexOf('\n', from + limit);
   if (cut > from) return { text: text.slice(from, cut), next: cut + 1 };
-  return { text: text.slice(from, from + limit), next: from + limit };
+  let end = from + limit;
+  const last = text.charCodeAt(end - 1);
+  if (end > from + 1 && last >= 0xd800 && last <= 0xdbff) end -= 1;
+  return { text: text.slice(from, end), next: end };
 }

@@ -65,7 +65,30 @@ describe('fornaxClient', () => {
     const { client, job } = await submittedParse();
     const md = '# Zápis\n\n- [ ] a & b\n> quote\n';
     fake.setJob(job.id, { state: 'succeeded', files: new Map([['document.md', md]]) });
-    expect(await client.outputText(job.id, 'document.md')).toBe(md);
+    expect(await client.outputText(job.id, 'document.md', 1024)).toEqual({ text: md, truncated: false });
+  });
+
+  it('reads only the first bytes of a text output: a leading BOM and a character broken by the cut are dropped', async () => {
+    // BOM, "a", "é" (two bytes), "b": 7 bytes.
+    const bytes = Buffer.from([0xef, 0xbb, 0xbf, 0x61, 0xc3, 0xa9, 0x62]);
+    let cancelled = 0;
+    // `endless`: the body never ends after these bytes, so only a reader that stops at the limit answers.
+    const answering = (endless: boolean) => fornaxClient(cfg(), async () => new Response(
+      new ReadableStream({
+        start(ctl) {
+          ctl.enqueue(new Uint8Array(bytes));
+          if (!endless) ctl.close();
+        },
+        cancel() {
+          cancelled++;
+        },
+      }),
+      { status: 200 },
+    ));
+    expect(await answering(false).outputText('j_1', 'document.md', 7)).toEqual({ text: 'aéb', truncated: false });
+    expect(await answering(true).outputText('j_1', 'document.md', 6)).toEqual({ text: 'aé', truncated: true });
+    expect(await answering(true).outputText('j_1', 'document.md', 5)).toEqual({ text: 'a', truncated: true });
+    expect(cancelled).toBe(2);
   });
 
   it('lists the outputs of a job with their meta, and takes an answer without them', async () => {

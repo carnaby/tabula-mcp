@@ -665,6 +665,33 @@ describe('the Fornax sync with documents', () => {
     expect((await jobOf(long.id)).status).toBe('done');
   });
 
+  it('reads only the first 4 MB of a larger document.md: stored cut and marked, and not fetched again', async () => {
+    const d = await parsing();
+    const sync = newSync();
+    await sync.syncOnce(at(0));
+    const id = (await jobOf(d.id)).fornaxJobId!;
+    const chunk = Buffer.from('line\n'.repeat(13_107)); // 65 535 bytes
+    // 8 MB of lines, then the connection breaks off: a reader that stops at 4 MB never reaches the break.
+    async function* huge() {
+      for (let i = 0; i < 128; i++) yield chunk;
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      throw new Error('connection lost');
+    }
+    fake.setJob(id, {
+      state: 'succeeded', files: new Map<string, unknown>([['document.md', huge]]),
+      outputs: [{ name: 'document.md', kind: 'file', size: chunk.length * 128, meta: META }],
+    });
+    await sync.syncOnce(at(1000));
+    const cut = (await getDocumentText(db, d.id))!;
+    expect(cut).toMatchObject({ truncated: true, source: 'fornax', pages: 0, tables: 1 });
+    expect(cut.characters).toBeLessThanOrEqual(1_000_000);
+    expect(cut.characters).toBe(cut.text.length);
+    expect(cut.text.endsWith('line')).toBe(true);
+    expect(await jobOf(d.id)).toMatchObject({ status: 'done', error: null });
+    await sync.syncOnce(at(2000));
+    expect(fake.requests.filter((r) => r.path === `/api/jobs/${id}/outputs/document.md`)).toHaveLength(1);
+  });
+
   it('fails a document larger than Fornax takes without uploading it', async () => {
     fake.parseMaxMb = 1 / 1024; // 1 KB
     const d = await parsing({ body: Buffer.concat([Buffer.from('%PDF-1.7\n'), Buffer.alloc(2048, 0x20)]) });

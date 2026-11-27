@@ -60,7 +60,7 @@ export function fornaxClient(cfg: FornaxConfig, fetchImpl: typeof fetch = fetch)
   async function call(
     method: string,
     path: string,
-    init: { body?: BodyInit; headers?: Record<string, string>; timeoutMs?: number; signal?: AbortSignal; duplex?: boolean; as?: 'json' | 'text' } = {},
+    init: { body?: BodyInit; headers?: Record<string, string>; timeoutMs?: number; signal?: AbortSignal; duplex?: boolean; maxTextBytes?: number } = {},
   ): Promise<unknown> {
     const timeout = AbortSignal.timeout(init.timeoutMs ?? CALL_TIMEOUT_MS);
     const signal = init.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
@@ -83,12 +83,36 @@ export function fornaxClient(cfg: FornaxConfig, fetchImpl: typeof fetch = fetch)
     if (!res.ok) throw await failure(res);
     // The body arrives after the headers: it can still time out, break off, or be a proxy's page instead of JSON.
     try {
-      return init.as === 'text' ? await res.text() : await res.json();
+      return init.maxTextBytes !== undefined ? await readText(res, init.maxTextBytes) : await res.json();
     } catch (e) {
       if (init.signal?.aborted) throw e;
       if (timeout.aborted) throw new FornaxError('Fornax did not answer in time', null, false);
       if (e instanceof SyntaxError) throw new FornaxError('Fornax answered with something other than JSON', null, false);
       throw new FornaxError('the answer from Fornax broke off', null, false);
+    }
+  }
+
+  /**
+   * The body as UTF-8 text, of its first `maxBytes` bytes only: the rest is never downloaded (`truncated`). A character
+   * broken by the cut is dropped, and so is a leading BOM, as when Tabula reads a text file itself.
+   */
+  async function readText(res: Response, maxBytes: number): Promise<{ text: string; truncated: boolean }> {
+    const decoder = new TextDecoder('utf-8');
+    if (!res.body) return { text: '', truncated: false };
+    const reader = res.body.getReader();
+    let text = '';
+    let read = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return { text: text + decoder.decode(), truncated: false };
+      if (value.byteLength > maxBytes - read) {
+        // No final decode(): an incomplete UTF-8 sequence at the cut stays in the decoder and is dropped.
+        text += decoder.decode(value.subarray(0, maxBytes - read), { stream: true });
+        await reader.cancel().catch(() => {});
+        return { text, truncated: true };
+      }
+      read += value.byteLength;
+      text += decoder.decode(value, { stream: true });
     }
   }
 
@@ -188,9 +212,13 @@ export function fornaxClient(cfg: FornaxConfig, fetchImpl: typeof fetch = fetch)
       return call('GET', `/api/jobs/${encodeURIComponent(id)}/outputs/${encodeURIComponent(name)}`, signal ? { signal } : {});
     },
 
-    /** An output of a finished job as text, exactly as it came (UTF-8). */
-    async outputText(id: string, name: string, signal?: AbortSignal): Promise<string> {
-      return (await call('GET', `/api/jobs/${encodeURIComponent(id)}/outputs/${encodeURIComponent(name)}`, { as: 'text', ...(signal ? { signal } : {}) })) as string;
+    /**
+     * An output of a finished job as text, exactly as it came (UTF-8, a leading BOM dropped), but only its first
+     * `maxBytes` bytes: `truncated` when there was more, which is not downloaded.
+     */
+    async outputText(id: string, name: string, maxBytes: number, signal?: AbortSignal): Promise<{ text: string; truncated: boolean }> {
+      const path = `/api/jobs/${encodeURIComponent(id)}/outputs/${encodeURIComponent(name)}`;
+      return (await call('GET', path, { maxTextBytes: maxBytes, ...(signal ? { signal } : {}) })) as { text: string; truncated: boolean };
     },
 
     /** The size limit (`max_mb`) of an input of a job type from GET /api/types; null when the type is not offered or has no such limit. */

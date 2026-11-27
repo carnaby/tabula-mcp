@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
+import { Readable } from 'node:stream';
 import Fastify from 'fastify';
 
 /**
@@ -32,7 +33,10 @@ export type FakeJob = {
   /** Changes with every setJob, like the hash of the real server. */
   change: string;
   note: string | null;
-  /** Output name to parsed JSON; a string is sent as it is, as Markdown text. */
+  /**
+   * Output name to parsed JSON; a string is sent as it is, as Markdown text; a function is called for each request and
+   * what it yields (bytes or strings) is streamed as Markdown text.
+   */
   files: Map<string, unknown>;
 };
 
@@ -99,7 +103,9 @@ export async function startFakeFornax(opts: { token?: string } = {}): Promise<Fa
   let changes = 0;
   const nextChange = () => createHash('sha256').update(String(++changes)).digest('hex').slice(0, 16);
 
-  const app = Fastify({ logger: false });
+  // A client that stops reading a body mid-way leaves a fresh connection without a request, which closing would
+  // otherwise wait for until the keep-alive timeout (72 s).
+  const app = Fastify({ logger: false, forceCloseConnections: true });
   // Uploads arrive as a stream of any content type.
   app.addContentTypeParser('*', (_req, payload, done) => done(null, payload));
 
@@ -212,6 +218,9 @@ export async function startFakeFornax(opts: { token?: string } = {}): Promise<Fa
     if (!job || !job.files.has(req.params.name)) return reply.code(404).send(notFound(`output ${req.params.name} not found`));
     const out = job.files.get(req.params.name);
     if (typeof out === 'string') return reply.header('content-type', 'text/markdown; charset=utf-8').send(out);
+    if (typeof out === 'function') {
+      return reply.header('content-type', 'text/markdown; charset=utf-8').send(Readable.from((out as () => AsyncIterable<Buffer | string>)()));
+    }
     return reply.header('content-type', 'application/json').send(JSON.stringify(out));
   });
 

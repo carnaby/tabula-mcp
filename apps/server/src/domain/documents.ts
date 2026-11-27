@@ -159,7 +159,7 @@ export async function enqueueParse(db: Db, attachmentId: string, now = new Date(
 export async function storeParsedDocument(
   tx: Tx,
   jobId: string,
-  input: Omit<DocumentInput, 'source' | 'truncated'>,
+  input: Omit<DocumentInput, 'source'>,
   now = new Date(),
 ): Promise<{ characters: number }> {
   const [job] = await tx.select().from(reportJobs).where(eq(reportJobs.id, jobId)).for('update');

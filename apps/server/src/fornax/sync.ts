@@ -2,7 +2,7 @@ import { and, asc, eq, inArray, isNotNull, isNull, lte, notInArray } from 'drizz
 import { z } from 'zod';
 import type { Db } from '../db/client.js';
 import { projects, reportAttachments, reportJobs, reports } from '../db/schema.js';
-import { storeParsedDocument } from '../domain/documents.js';
+import { DOCUMENT_LIMITS, storeParsedDocument } from '../domain/documents.js';
 import { DomainError, loggableError } from '../domain/errors.js';
 import {
   cleanError, DOCUMENT_GONE, type JobKind, MAX_ATTEMPTS, MEDIA_GONE, type Progress, retryDelayMs, storeTranscript, type TranscriptInput,
@@ -338,12 +338,15 @@ export function createFornaxSync(deps: { db: Db; store: MediaStore; client: Forn
     }
   }
 
-  /** The text of a document: document.md as it came, with the counts and the model from its meta in Fornax's answer. */
+  /**
+   * The text of a document: document.md as it came, with the counts and the model from its meta in Fornax's answer.
+   * Only its first DOCUMENT_LIMITS.fileBytes are downloaded, as for a text file (more is cut when it is stored anyway).
+   */
   async function finishDocument(job: Followed, seen: FornaxJob, now: Date, signal?: AbortSignal): Promise<void> {
     const output = KINDS.parse.output;
-    let text: string;
+    let read: { text: string; truncated: boolean };
     try {
-      text = await client.outputText(job.fornaxJobId, output, signal);
+      read = await client.outputText(job.fornaxJobId, output, DOCUMENT_LIMITS.fileBytes, signal);
     } catch (e) {
       if (e instanceof FornaxError && e.permanent) return failFollowed(job, `the text of the document could not be fetched from Fornax: ${e.message}`, now);
       // Fornax unreachable: the next poll tries again.
@@ -354,7 +357,7 @@ export function createFornaxSync(deps: { db: Db; store: MediaStore; client: Forn
       const stored = await db.transaction(async (tx) => {
         const [row] = await tx.select({ id: reportJobs.id }).from(reportJobs).where(stillFollowed(job)).for('update');
         if (!row) return null;
-        return storeParsedDocument(tx, job.id, { text, ...meta }, now);
+        return storeParsedDocument(tx, job.id, { ...read, ...meta }, now);
       });
       // Never the text itself: only how long it is.
       if (stored) log.info({ job: job.id, fornax: job.fornaxJobId, characters: stored.characters }, 'stored the text of a document from Fornax');

@@ -45,6 +45,21 @@ async function recording(reportId: string, o: { job?: JobState; transcribed?: bo
   return id;
 }
 
+/** A document of a report with its parse job as asked. */
+async function parseJob(reportId: string, o: { job?: JobState; purged?: boolean; fileName?: string } = {}) {
+  const id = randomUUID();
+  await db.insert(reportAttachments).values({
+    id, reportId, kind: 'document', mime: 'application/pdf', size: 10, sha256: 'x', fileName: o.fileName ?? 'Zmluva.pdf', storageKey: `${reportId}/${id}.pdf`,
+    createdBy: 'human', purgedAt: o.purged ? new Date() : null,
+  });
+  if (o.job) {
+    await db.insert(reportJobs).values({
+      attachmentId: id, kind: 'parse', status: o.job.status, runAfter: o.job.runAfter ?? new Date(), finishedAt: o.job.finishedAt ?? null, error: o.job.error ?? null,
+    });
+  }
+  return id;
+}
+
 describe('dashboard: waiting for you', () => {
   it('lists new and triaged reports and failed transcriptions of open reports, oldest first', async () => {
     await seedProject(db, 'demo');
@@ -158,6 +173,52 @@ describe('dashboard: waiting for you', () => {
     await recording(r.id, { job: { status: 'failed', finishedAt: ago(5) }, purged: true });
     await recording(r.id, { job: { status: 'done' }, transcribed: true });
     expect((await dashboard(db)).waiting).toEqual([expect.objectContaining({ type: 'new_report', transcript: 'done' })]);
+  });
+});
+
+describe('dashboard: documents', () => {
+  it('lists a failed reading of a document of an open report, not of a closed report or a deleted file', async () => {
+    await seedProject(db, 'demo');
+    const failedAt = ago(1);
+    const open = await report({ title: 'Open one', created: ago(5) });
+    const doc = await parseJob(open.id, { job: { status: 'failed', finishedAt: failedAt, error: 'boom' } });
+    await parseJob(open.id, { job: { status: 'failed', finishedAt: ago(2), error: 'gone' }, purged: true, fileName: 'Deleted.pdf' });
+    const closed = await report({ title: 'Closed one', status: 'done', created: ago(50), updated: ago(10), version: 2 });
+    await parseJob(closed.id, { job: { status: 'failed', finishedAt: ago(5), error: 'old' } });
+
+    const d = await dashboard(db);
+    expect(d.waiting.filter((w) => w.type === 'document_failed')).toEqual([
+      expect.objectContaining({ id: open.id, attachment_id: doc, file_name: 'Zmluva.pdf', error: 'boom', since: failedAt.toISOString(), transcript: null }),
+    ]);
+  });
+
+  it('leaves the transcript state of a report to its recordings', async () => {
+    await seedProject(db, 'demo');
+    const r = await report({ title: 'Mixed', created: ago(5) });
+    await recording(r.id, { job: { status: 'done' }, transcribed: true });
+    await parseJob(r.id, { job: { status: 'failed', finishedAt: ago(1), error: 'boom' } });
+    const d = await dashboard(db);
+    expect(d.waiting.find((w) => w.type === 'new_report')).toMatchObject({ transcript: 'done' });
+  });
+
+  it('counts documents that waited for the worker more than 24 hours in the Fornax warning', async () => {
+    await seedProject(db, 'demo');
+    const r = await report({ title: 'Meeting', created: ago(40) });
+    await recording(r.id, { job: { status: 'queued', runAfter: ago(25) } });
+    await parseJob(r.id, { job: { status: 'queued', runAfter: ago(23) } });
+    expect((await dashboard(db)).warnings.filter((w) => w.type === 'recordings_waiting')).toEqual([
+      expect.objectContaining({ count: 1 }),
+    ]);
+    const oldest = ago(26);
+    await parseJob(r.id, { job: { status: 'queued', runAfter: oldest } });
+    await parseJob(r.id, { job: { status: 'queued', runAfter: ago(50) }, purged: true });
+    const closed = await report({ title: 'Closed', status: 'done', created: ago(80), updated: ago(70), version: 2 });
+    await parseJob(closed.id, { job: { status: 'queued', runAfter: ago(60) } });
+    expect((await dashboard(db)).warnings.filter((w) => w.type === 'recordings_waiting')).toEqual([
+      { type: 'recordings_waiting', project: null, count: 2, oldest: oldest.toISOString() },
+    ]);
+    const off = await dashboard(db, new Date(), { transcriptionEnabled: false });
+    expect(off.warnings.filter((w) => w.type === 'recordings_waiting')).toEqual([]);
   });
 });
 

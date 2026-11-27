@@ -1,8 +1,9 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, ApiError } from '../../api';
 import { timeAgo } from '../../format';
-import type { Attachment, SpeakerName, TranscriptProgress, TranscriptSegment, TranscriptState, WorkerStatus } from '../../types';
+import type { Attachment, SpeakerName, TranscriptSegment, TranscriptState, WorkerStatus } from '../../types';
 import { Alert, Button, cx, Icon, Popover, Select, Spinner, Textarea, useConfirm, useToast } from '../../ui';
+import { noteForPeople, progressText } from './fornaxText';
 import { clock } from './Recorder';
 import { SpeakerChip } from './Speakers';
 
@@ -205,23 +206,6 @@ function LineEditor({
       </div>
     </li>
   );
-}
-
-/**
- * Fornax's note on a waiting job in words for people: without its leading "waiting:" (the line says it already) and
- * without the advice for agents that asking again changes nothing.
- */
-function noteForPeople(note: string | null | undefined): string | null {
-  if (!note) return null;
-  return note.replace(/^waiting\s*[:,]\s*/i, '').replace(/[,;]?\s*asking again changes nothing\.?$/i, '').trim() || null;
-}
-
-/** " 42 % · transcribing 01:23 / 10:00": how far Fornax is, with its message when it is short. */
-function progressText(p: TranscriptProgress): string {
-  const parts: string[] = [];
-  if (p.progress != null) parts.push(`${p.progress} %`);
-  if (p.progressMessage && p.progressMessage.length <= 60) parts.push(p.progressMessage);
-  return parts.length ? ` ${parts.join(' · ')}` : '';
 }
 
 /** "Transcribe again" of a recording: whether it is allowed now, and the confirmed action. Used by the card's menu. */

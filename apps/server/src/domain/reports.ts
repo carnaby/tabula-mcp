@@ -5,6 +5,7 @@ import { reportAttachments, reports } from '../db/schema.js';
 import { downscaleImage, extractFrame, type FfmpegPaths, hasAudioStream, NoFrameError, probeDurationMs, remuxWebm } from '../media/ffmpeg.js';
 import type { MediaStore, StoredFile } from '../media/store.js';
 import { badRequest, conflict, notFound, unavailable } from './errors.js';
+import { documentReader, enqueueParse, storeFileText } from './documents.js';
 import { enqueueTranscription, failPendingJobs } from './jobs.js';
 import { matchesPrefix, type Page, type PageQuery, pageWindow, prefixTsQuery } from './paging.js';
 import { dateTitle } from '@tabula/shared/report-title';
@@ -175,10 +176,13 @@ export type ReportSort = (typeof REPORT_SORTS)[number];
 /** "open" = new and triaged: everything not closed yet. */
 export type ReportStatusFilter = ReportStatus | 'open' | 'all';
 
-/** A report whose recordings' transcripts match a prefix query. */
-const transcriptMatches = (tsq: string) => sql`EXISTS (
+/** A report whose recordings' transcripts or whose documents' texts match a prefix query (documents count as transcripts). */
+const transcriptMatches = (tsq: string) => sql`(EXISTS (
   SELECT 1 FROM report_transcripts t JOIN report_attachments a ON a.id = t.attachment_id
-  WHERE a.report_id = ${reports.id} AND t.search @@ to_tsquery('tabula', ${tsq}))`;
+  WHERE a.report_id = ${reports.id} AND t.search @@ to_tsquery('tabula', ${tsq}))
+  OR EXISTS (
+  SELECT 1 FROM report_documents d JOIN report_attachments a ON a.id = d.attachment_id
+  WHERE a.report_id = ${reports.id} AND d.search @@ to_tsquery('tabula', ${tsq})))`;
 
 /** `projectId` "none" (NO_PROJECT) lists the reports without a project; absent lists all. */
 export async function pageReports(
@@ -294,6 +298,7 @@ export async function addAttachment(
   upload: StoredFile,
   fileName: string | undefined,
   editor: Editor,
+  opts: { fornax?: boolean; onError?: (e: unknown, attachmentId: string) => void } = {},
 ): Promise<Attachment> {
   let file = upload;
   try {
@@ -330,6 +335,14 @@ export async function addAttachment(
     }
     // After the row is safe: a failure here must not delete the stored file.
     if (transcribe) await enqueueTranscription(db, row.id);
+    // Reading a document is best effort: the upload is done, and the next start of the server fills in what is missing.
+    try {
+      const reader = documentReader(row);
+      if (reader === 'file') await storeFileText(db, store, row);
+      else if (reader === 'fornax' && opts.fornax) await enqueueParse(db, row.id);
+    } catch (e) {
+      opts.onError?.(e, row.id);
+    }
     return row;
   } catch (e) {
     await store.discard(file.tmpPath);
@@ -456,7 +469,7 @@ export async function attachmentImage(db: Db, store: MediaStore, paths: FfmpegPa
   const a = await requireAttachment(db, id);
   if (a.kind === 'frame') return { attachment: a, image: await readAll(store, a.storageKey), mime: 'image/jpeg' };
   if (a.kind === 'document') {
-    throw badRequest(`attachment ${id} is a document (${a.fileName}); its content cannot be read yet: there is no image or text of it`);
+    throw badRequest(`attachment ${id} is a document (${a.fileName}); read its text with get_document`);
   }
   if (a.kind !== 'image') {
     throw badRequest(`attachment ${id} is ${a.kind === 'audio' ? 'an audio recording' : 'a video'}; use get_frame for a still from a video`);

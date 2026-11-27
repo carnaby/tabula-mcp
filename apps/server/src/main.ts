@@ -5,6 +5,7 @@ import { configWarnings, loadConfig } from './config.js';
 import { createDb } from './db/client.js';
 import { runMigrations } from './db/migrate.js';
 import { loggableError } from './domain/errors.js';
+import { backfillDocuments } from './domain/documents.js';
 import { purgeClosedMedia } from './domain/reports.js';
 import { fornaxClient } from './fornax/client.js';
 import { createFornaxSync } from './fornax/sync.js';
@@ -81,3 +82,16 @@ process.on('SIGINT', shutdown);
 
 await app.listen({ port: config.port, host: config.host });
 sync?.start();
+
+// Documents uploaded before reading existed, or whose reading failed to start: text files are read, PDF and Office
+// documents are queued for Fornax. Needs the media files, so not while the storage is unusable.
+if (!mediaProblem) {
+  void backfillDocuments(db, store, {
+    fornax: sync !== null,
+    onError: (err, attachment) => app.log.error({ err: loggableError(err), attachment }, 'could not read a document at start; it can be read with Read text in the app'),
+  })
+    .then(({ texts, queued }) => {
+      if (texts > 0 || queued > 0) app.log.info({ texts, queued }, 'filled in the text of documents uploaded before');
+    })
+    .catch((e) => app.log.error({ err: loggableError(e) }, 'could not fill in the text of documents uploaded before'));
+}

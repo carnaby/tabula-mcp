@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
+import { Readable } from 'node:stream';
 import Fastify from 'fastify';
 
 /**
@@ -24,7 +25,7 @@ export type FakeJob = {
   error: string | null;
   type_unavailable: boolean;
   position: number | null;
-  outputs: { name: string; kind: string; size: number }[] | null;
+  outputs: { name: string; kind: string; size: number; mime?: string; sha256?: string; meta?: Record<string, unknown> }[] | null;
   log: string | null;
   created_at: string;
   started_at: string | null;
@@ -32,7 +33,10 @@ export type FakeJob = {
   /** Changes with every setJob, like the hash of the real server. */
   change: string;
   note: string | null;
-  /** Output name to parsed JSON. */
+  /**
+   * Output name to parsed JSON; a string is sent as it is, as Markdown text; a function is called for each request and
+   * what it yields (bytes or strings) is streamed as Markdown text.
+   */
   files: Map<string, unknown>;
 };
 
@@ -46,8 +50,13 @@ export type FakeFornax = {
   jobs: Map<string, FakeJob>;
   files: Map<string, FakeFile>;
   requests: FakeRequest[];
-  /** Whether the worker is online and whether `transcribe` is among the offered types (GET /api/types). */
-  worker: { online: boolean; offered: boolean };
+  /**
+   * Whether the worker is online, whether `transcribe` and `document-parse` are among the offered types (GET /api/types),
+   * and the `max_mb` of the document input. Read on every request, so a test can change them while the fake runs.
+   */
+  worker: { online: boolean; offered: boolean; parses: boolean; parseMaxMb: number };
+  /** Same as `worker.parseMaxMb`. */
+  parseMaxMb: number;
   /**
    * Patch a job and give it a new change value. Output files: `setJob(id, { files: new Map([['transcript.json', {...}]]) })`.
    * `sameChange`: keep the change value, as the real server does when only the note changes (its change hash leaves the
@@ -75,17 +84,28 @@ const TRANSCRIBE_TYPE = {
   max_runtime_s: 7200,
 };
 
+export const DOCUMENT_PARSE_TYPE = {
+  name: 'document-parse',
+  version: '1',
+  description: 'Text and structure of a document',
+  inputs: { document: { required: true, extensions: ['.pdf', '.docx', '.xlsx', '.pptx', '.md'], max_mb: 200 } },
+  params: { type: 'object', properties: { ocr: { type: 'string', enum: ['auto', 'always'] } } },
+  max_runtime_s: 10800,
+};
+
 export async function startFakeFornax(opts: { token?: string } = {}): Promise<FakeFornax> {
   const token = opts.token ?? 'f'.repeat(32);
   const jobs = new Map<string, FakeJob>();
   const files = new Map<string, FakeFile>();
   const requests: FakeRequest[] = [];
   const rules = new Map<string, number | 'network' | 'proxy-404' | 'pending'>();
-  const worker = { online: true, offered: true };
+  const worker = { online: true, offered: true, parses: true, parseMaxMb: 200 };
   let changes = 0;
   const nextChange = () => createHash('sha256').update(String(++changes)).digest('hex').slice(0, 16);
 
-  const app = Fastify({ logger: false });
+  // A client that stops reading a body mid-way leaves a fresh connection without a request, which closing would
+  // otherwise wait for until the keep-alive timeout (72 s).
+  const app = Fastify({ logger: false, forceCloseConnections: true });
   // Uploads arrive as a stream of any content type.
   app.addContentTypeParser('*', (_req, payload, done) => done(null, payload));
 
@@ -111,7 +131,10 @@ export async function startFakeFornax(opts: { token?: string } = {}): Promise<Fa
     return view;
   };
   const typesView = () => ({
-    types: worker.offered ? [TRANSCRIBE_TYPE] : [],
+    types: [
+      ...(worker.offered ? [TRANSCRIBE_TYPE] : []),
+      ...(worker.parses ? [{ ...DOCUMENT_PARSE_TYPE, inputs: { document: { ...DOCUMENT_PARSE_TYPE.inputs.document, max_mb: worker.parseMaxMb } } }] : []),
+    ],
     worker: { online: worker.online, last_seen: worker.online ? new Date().toISOString() : null, waiting: null },
   });
 
@@ -140,12 +163,15 @@ export async function startFakeFornax(opts: { token?: string } = {}): Promise<Fa
   app.post<{ Body: Record<string, unknown> }>('/api/jobs', async (req, reply) => {
     const b = req.body ?? {};
     if (typeof b.type !== 'string') return reply.code(400).send({ error: 'bad_request', message: 'type is required' });
-    if (b.type !== 'transcribe' || !worker.offered) {
+    const offered = b.type === 'transcribe' ? worker.offered : b.type === 'document-parse' ? worker.parses : false;
+    if (!offered) {
       return reply.code(422).send({ error: 'invalid', message: `job type ${b.type} is not offered now; list_job_types shows what is` });
     }
+    const inputName = b.type === 'transcribe' ? 'audio' : 'document';
     const inputs = (b.inputs ?? {}) as Record<string, string>;
-    if (!inputs.audio) return reply.code(422).send({ error: 'invalid', message: 'input audio is required' });
-    if (!files.has(inputs.audio)) return reply.code(404).send(notFound(`file ${inputs.audio} not found`));
+    const fileId = inputs[inputName];
+    if (!fileId) return reply.code(422).send({ error: 'invalid', message: `input ${inputName} is required` });
+    if (!files.has(fileId)) return reply.code(404).send(notFound(`file ${fileId} not found`));
     const job: FakeJob = {
       id: `j_${randomUUID().slice(0, 8)}`,
       type: b.type,
@@ -190,7 +216,12 @@ export async function startFakeFornax(opts: { token?: string } = {}): Promise<Fa
   app.get<{ Params: { id: string; name: string } }>('/api/jobs/:id/outputs/:name', async (req, reply) => {
     const job = jobs.get(req.params.id);
     if (!job || !job.files.has(req.params.name)) return reply.code(404).send(notFound(`output ${req.params.name} not found`));
-    return reply.header('content-type', 'application/json').send(JSON.stringify(job.files.get(req.params.name)));
+    const out = job.files.get(req.params.name);
+    if (typeof out === 'string') return reply.header('content-type', 'text/markdown; charset=utf-8').send(out);
+    if (typeof out === 'function') {
+      return reply.header('content-type', 'text/markdown; charset=utf-8').send(Readable.from((out as () => AsyncIterable<Buffer | string>)()));
+    }
+    return reply.header('content-type', 'application/json').send(JSON.stringify(out));
   });
 
   await app.listen({ port: 0, host: '127.0.0.1' });
@@ -203,6 +234,12 @@ export async function startFakeFornax(opts: { token?: string } = {}): Promise<Fa
     files,
     requests,
     worker,
+    get parseMaxMb() {
+      return worker.parseMaxMb;
+    },
+    set parseMaxMb(mb: number) {
+      worker.parseMaxMb = mb;
+    },
     setJob(id, patch, opts = {}) {
       const job = jobs.get(id);
       if (!job) throw new Error(`fake Fornax has no job ${id}`);

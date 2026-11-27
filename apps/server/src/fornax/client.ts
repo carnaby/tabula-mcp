@@ -13,6 +13,8 @@ export type FornaxJob = {
   note: string | null;
   /** Fornax reports a fraction 0..1 and a message: `done` is the fraction and `total` is 1. */
   progress: { done?: number; total?: number; message?: string } | null;
+  /** The outputs the answer lists (null when it has no such field); `meta` is null when it is not an object. */
+  outputs: Array<{ name: string; meta: Record<string, unknown> | null }> | null;
 };
 
 /**
@@ -46,6 +48,7 @@ type WireJob = {
   note?: string | null;
   progress?: number | null;
   progress_message?: string | null;
+  outputs?: unknown;
 };
 
 export function fornaxClient(cfg: FornaxConfig, fetchImpl: typeof fetch = fetch) {
@@ -57,7 +60,7 @@ export function fornaxClient(cfg: FornaxConfig, fetchImpl: typeof fetch = fetch)
   async function call(
     method: string,
     path: string,
-    init: { body?: BodyInit; headers?: Record<string, string>; timeoutMs?: number; signal?: AbortSignal; duplex?: boolean } = {},
+    init: { body?: BodyInit; headers?: Record<string, string>; timeoutMs?: number; signal?: AbortSignal; duplex?: boolean; maxTextBytes?: number } = {},
   ): Promise<unknown> {
     const timeout = AbortSignal.timeout(init.timeoutMs ?? CALL_TIMEOUT_MS);
     const signal = init.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
@@ -80,12 +83,36 @@ export function fornaxClient(cfg: FornaxConfig, fetchImpl: typeof fetch = fetch)
     if (!res.ok) throw await failure(res);
     // The body arrives after the headers: it can still time out, break off, or be a proxy's page instead of JSON.
     try {
-      return await res.json();
+      return init.maxTextBytes !== undefined ? await readText(res, init.maxTextBytes) : await res.json();
     } catch (e) {
       if (init.signal?.aborted) throw e;
       if (timeout.aborted) throw new FornaxError('Fornax did not answer in time', null, false);
       if (e instanceof SyntaxError) throw new FornaxError('Fornax answered with something other than JSON', null, false);
       throw new FornaxError('the answer from Fornax broke off', null, false);
+    }
+  }
+
+  /**
+   * The body as UTF-8 text, of its first `maxBytes` bytes only: the rest is never downloaded (`truncated`). A character
+   * broken by the cut is dropped, and so is a leading BOM, as when Tabula reads a text file itself.
+   */
+  async function readText(res: Response, maxBytes: number): Promise<{ text: string; truncated: boolean }> {
+    const decoder = new TextDecoder('utf-8');
+    if (!res.body) return { text: '', truncated: false };
+    const reader = res.body.getReader();
+    let text = '';
+    let read = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return { text: text + decoder.decode(), truncated: false };
+      if (value.byteLength > maxBytes - read) {
+        // No final decode(): an incomplete UTF-8 sequence at the cut stays in the decoder and is dropped.
+        text += decoder.decode(value.subarray(0, maxBytes - read), { stream: true });
+        await reader.cancel().catch(() => {});
+        return { text, truncated: true };
+      }
+      read += value.byteLength;
+      text += decoder.decode(value, { stream: true });
     }
   }
 
@@ -130,6 +157,9 @@ export function fornaxClient(cfg: FornaxConfig, fetchImpl: typeof fetch = fetch)
             ...(w.progress_message != null ? { message: w.progress_message } : {}),
           }
         : null,
+      outputs: Array.isArray(w.outputs)
+        ? w.outputs.flatMap((o: unknown) => (isObject(o) && typeof o.name === 'string' ? [{ name: o.name, meta: isObject(o.meta) ? o.meta : null }] : []))
+        : null,
     };
   };
 
@@ -147,10 +177,11 @@ export function fornaxClient(cfg: FornaxConfig, fetchImpl: typeof fetch = fetch)
       return { id: answer.id };
     },
 
-    async submit(input: { params: Record<string, unknown>; fileId: string }, signal?: AbortSignal): Promise<FornaxJob> {
+    /** Submits a job; a transcription unless `type` and `input` (the name of the input) say otherwise. */
+    async submit(input: { params: Record<string, unknown>; fileId: string; type?: string; input?: string }, signal?: AbortSignal): Promise<FornaxJob> {
       const body = await call('POST', '/api/jobs', {
         body: JSON.stringify({
-          type: 'transcribe', params: input.params, inputs: { audio: input.fileId }, priority: cfg.priority, group: 'tabula',
+          type: input.type ?? 'transcribe', params: input.params, inputs: { [input.input ?? 'audio']: input.fileId }, priority: cfg.priority, group: 'tabula',
         }),
         headers: { 'content-type': 'application/json' },
         ...(signal ? { signal } : {}),
@@ -179,6 +210,26 @@ export function fornaxClient(cfg: FornaxConfig, fetchImpl: typeof fetch = fetch)
     /** An output of a finished job, parsed as JSON. */
     async output(id: string, name: string, signal?: AbortSignal): Promise<unknown> {
       return call('GET', `/api/jobs/${encodeURIComponent(id)}/outputs/${encodeURIComponent(name)}`, signal ? { signal } : {});
+    },
+
+    /**
+     * An output of a finished job as text, exactly as it came (UTF-8, a leading BOM dropped), but only its first
+     * `maxBytes` bytes: `truncated` when there was more, which is not downloaded.
+     */
+    async outputText(id: string, name: string, maxBytes: number, signal?: AbortSignal): Promise<{ text: string; truncated: boolean }> {
+      const path = `/api/jobs/${encodeURIComponent(id)}/outputs/${encodeURIComponent(name)}`;
+      return (await call('GET', path, { maxTextBytes: maxBytes, ...(signal ? { signal } : {}) })) as { text: string; truncated: boolean };
+    },
+
+    /** The size limit (`max_mb`) of an input of a job type from GET /api/types; null when the type is not offered or has no such limit. */
+    async inputLimitMb(type: string, input: string, signal?: AbortSignal): Promise<number | null> {
+      const body = await call('GET', '/api/types', signal ? { signal } : {});
+      if (!isObject(body)) throw unexpected();
+      const t = Array.isArray(body.types) ? body.types.find((x: unknown) => isObject(x) && x.name === type) : undefined;
+      const inputs = isObject(t) ? t.inputs : undefined;
+      const spec = isObject(inputs) ? inputs[input] : undefined;
+      const mb = isObject(spec) ? spec.max_mb : undefined;
+      return typeof mb === 'number' && Number.isFinite(mb) && mb > 0 ? mb : null;
     },
 
     /** Whether the Fornax worker is online and offers `transcribe` (GET /api/types). */

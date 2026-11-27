@@ -7,6 +7,7 @@ import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { type Diarization, reportAttachments, reportJobs } from '../../src/db/schema.js';
+import { storeParsedDocument } from '../../src/domain/documents.js';
 import { buildApp } from '../../src/http/app.js';
 import { MediaStore } from '../../src/media/store.js';
 import { finishNextJob, issueTestAccessToken, seedProject, TEST_MCP_TOKEN, TEST_TOKEN, testConfig, useTestDb, useTestTokens } from '../helpers.js';
@@ -49,8 +50,8 @@ async function tool(name: string, args: Record<string, unknown>, origin = base) 
 const text = (c: Content) => c.find((x) => x.type === 'text')!.text!;
 const json = (c: Content) => JSON.parse(text(c));
 
-async function uploadFile(reportId: string, body: Buffer, type: string, name: string) {
-  const res = await fetch(`${base}/api/reports/${reportId}/attachments`, {
+async function uploadFile(reportId: string, body: Buffer, type: string, name: string, origin = base) {
+  const res = await fetch(`${origin}/api/reports/${reportId}/attachments`, {
     method: 'POST', body: new Uint8Array(body), headers: { Authorization: `Bearer ${TEST_TOKEN}`, 'content-type': type, 'x-file-name': name },
   });
   expect(res.status).toBe(201);
@@ -374,24 +375,130 @@ describe('reports over MCP', () => {
     });
   });
 
-  it('lists a document in get_report and says view_attachment cannot read it yet', async () => {
+  it('lists a document in get_report with the state of its text and points view_attachment to get_document', async () => {
     const { id } = json((await tool('create_report', { project: 'demo', title: 'Contract' })).content);
     const pdf = Buffer.concat([Buffer.from('%PDF-1.7\n', 'latin1'), Buffer.alloc(200, 0x20)]);
     const doc = await uploadFile(id, pdf, 'application/pdf', 'Zmluva.pdf');
     const report = json((await tool('get_report', { id })).content);
     expect(report.attachments).toMatchObject([{ id: doc.id, kind: 'document', mime: 'application/pdf', file_name: 'Zmluva.pdf', size: pdf.length }]);
+    expect(report.attachments[0]).toMatchObject({ kind: 'document', document: { status: 'queued', note: expect.stringMatching(/^waiting for Fornax/) } });
     expect(report.attachments[0]).not.toHaveProperty('transcript');
     const viewed = await tool('view_attachment', { id: doc.id });
     expect(viewed.isError).toBe(true);
-    expect(text(viewed.content)).toMatch(/is a document .*its content cannot be read yet/);
+    expect(text(viewed.content)).toMatch(/is a document \(Zmluva\.pdf\); read its text with get_document/);
     const got = await tool('get', { id: doc.id });
     expect(got.isError).toBe(false);
     expect(text(got.content)).toMatch(/· document of report /);
-    expect(JSON.parse(got.content[1]!.text!)).toMatchObject({ kind: 'document', note: expect.stringMatching(/cannot be read yet/) });
+    expect(JSON.parse(got.content[1]!.text!)).toMatchObject({ kind: 'document', document: { status: 'queued' }, next: expect.stringContaining('get_document') });
     expect(text((await tool('get_transcript', { attachment_id: doc.id })).content)).toMatch(/^400: .*is a document; only video and audio/);
     expect(text((await tool('get_frame', { video_id: doc.id, at: '0:01' })).content)).toMatch(/is a document, not a video/);
     await db.update(reportAttachments).set({ purgedAt: new Date() }).where(eq(reportAttachments.id, doc.id));
     expect(text((await tool('get', { id: doc.id })).content)).toMatch(/· file deleted · Zmluva\.pdf$/);
+  });
+
+  const PDF_BYTES = Buffer.concat([Buffer.from('%PDF-1.7\n', 'latin1'), Buffer.alloc(100, 0x20)]);
+  const ODT_BYTES = Buffer.concat([Buffer.from([0x50, 0x4b, 3, 4]), Buffer.alloc(100)]);
+  const ODT_MIME = 'application/vnd.oasis.opendocument.text';
+
+  it('shows the first 100 lines of the first three documents in get_report, and the rest with get_document', async () => {
+    const { id } = json((await tool('create_report', { project: 'demo', title: 'Docs' })).content);
+    const long = Array.from({ length: 300 }, (_, i) => `riadok ${i}`).join('\n');
+    const docs = [];
+    for (const n of [1, 2, 3, 4]) docs.push(await uploadFile(id, Buffer.from(long), 'text/markdown', `d${n}.md`));
+    const report = json((await tool('get_report', { id })).content);
+    const [first, , , fourth] = report.attachments.map((a: { document: Record<string, unknown> }) => a.document);
+    expect(first).toMatchObject({ status: 'done', characters: long.length, more: expect.stringMatching(/call get_document with attachment_id "tabula:[0-9a-f]{8}" and offset \d+/) });
+    expect((first.text as string).split('\n')).toHaveLength(100);
+    expect(fourth).not.toHaveProperty('text');
+    expect(fourth.more).toMatch(/get_document/);
+    const offset = Number(/offset (\d+)/.exec(first.more as string)![1]);
+    const rest = text((await tool('get_document', { attachment_id: docs[0]!.id, offset })).content);
+    expect(rest).toMatch(/^\[document d1\.md · report tabula:[0-9a-f]{8} · \d+ characters · from character \d+\]\nriadok 100\n/);
+    expect(rest).toMatch(/riadok 299$/);
+  });
+
+  it('shows pages and tables of a PDF read by Fornax, and get adds the beginning and where to read the rest', async () => {
+    const { id } = json((await tool('create_report', { project: 'demo', title: 'Contract' })).content);
+    const doc = await uploadFile(id, PDF_BYTES, 'application/pdf', 'Zmluva.pdf');
+    const [job] = await db.select().from(reportJobs).where(eq(reportJobs.attachmentId, doc.id));
+    const md = '# Zmluva\n\n| a | b |\n|---|---|\n';
+    await db.transaction((tx) => storeParsedDocument(tx, job!.id, { text: md, model: 'docling 2.151.1', pages: 3, tables: 1 }));
+    const d = json((await tool('get_report', { id })).content).attachments[0].document;
+    expect(d).toEqual({ status: 'done', pages: 3, tables: 1, characters: md.length, text: md });
+    const got = await tool('get', { id: doc.id });
+    expect(JSON.parse(got.content[1]!.text!)).toMatchObject({
+      document: { status: 'done', text: md },
+      next: `call get_document with attachment_id "tabula:${doc.id.slice(0, 8)}" for all of its text`,
+    });
+    expect(text((await tool('get_document', { attachment_id: doc.id })).content))
+      .toMatch(new RegExp(`^\\[document Zmluva\\.pdf · report tabula:[0-9a-f]{8} · 3 pages · 1 table · ${md.length} characters\\]\\n# Zmluva`));
+    expect(text((await tool('get_document', { attachment_id: doc.id, offset: md.length })).content)).toBe(`[offset ${md.length} is past the end of the document (${md.length} characters)]`);
+  });
+
+  it('says why a document has no text: empty, unreadable type, no Fornax', async () => {
+    const { id } = json((await tool('create_report', { project: 'demo', title: 'Why' })).content);
+    const empty = await uploadFile(id, PDF_BYTES, 'application/pdf', 'scan.pdf');
+    const [job] = await db.select().from(reportJobs).where(eq(reportJobs.attachmentId, empty.id));
+    await db.transaction((tx) => storeParsedDocument(tx, job!.id, { text: '', model: null, pages: 2, tables: null }));
+    await uploadFile(id, ODT_BYTES, ODT_MIME, 'a.odt');
+    const documents = json((await tool('get_report', { id })).content).attachments.map((a: { document: unknown }) => a.document);
+    expect(documents[0]).toEqual({ status: 'done', pages: 2, characters: 0, note: 'no text found in the document' });
+    expect(documents[1]).toEqual({
+      status: 'none',
+      note: 'its content cannot be read: Tabula reads PDF, Office (DOCX, XLSX, PPTX), text and Markdown documents, not this type; the url downloads the file',
+    });
+    expect(text((await tool('get_document', { attachment_id: empty.id })).content)).toMatch(/\n\(no text found in the document\)$/);
+
+    // A server without Fornax: a PDF has no job, and the note says so whatever a job may say.
+    const bare = await buildApp({ config: { ...config, fornax: undefined }, db, store: new MediaStore(mediaDir, config.media.maxBytes) });
+    await bare.listen({ port: 0, host: '127.0.0.1' });
+    const bareOrigin = `http://127.0.0.1:${(bare.server.address() as AddressInfo).port}`;
+    try {
+      const other = json((await tool('create_report', { project: 'demo', title: 'No Fornax' })).content);
+      const pdf = await uploadFile(other.id, PDF_BYTES, 'application/pdf', 'x.pdf', bareOrigin);
+      const note = /needs Fornax, which is not enabled on this server \(no TABULA_FORNAX_URL\)/;
+      expect(json((await tool('get_report', { id: other.id }, bareOrigin)).content).attachments[0].document).toMatchObject({ status: 'none', note: expect.stringMatching(note) });
+      await db.insert(reportJobs).values({ attachmentId: pdf.id, kind: 'parse', status: 'failed', error: 'boom' }).onConflictDoNothing();
+      expect(json((await tool('get_report', { id: other.id }, bareOrigin)).content).attachments[0].document).toMatchObject({ status: 'none', note: expect.stringMatching(note) });
+      expect(text((await tool('get_document', { attachment_id: pdf.id }, bareOrigin)).content))
+        .toMatch(/^404: .*has no text yet: its content cannot be read: reading PDF and Office documents needs Fornax/);
+    } finally {
+      await bare.close();
+    }
+  });
+
+  it('shows the state of a document that is being read or failed', async () => {
+    const { id } = json((await tool('create_report', { project: 'demo', title: 'States' })).content);
+    const pdf = await uploadFile(id, PDF_BYTES, 'application/pdf', 'a.pdf');
+    await db.update(reportJobs).set({ status: 'running', progress: 40 }).where(eq(reportJobs.attachmentId, pdf.id));
+    expect(json((await tool('get_report', { id })).content).attachments[0].document)
+      .toEqual({ status: 'running', note: 'it is being read right now (40 % done); ask again in a minute' });
+    await db.update(reportJobs).set({ status: 'failed', error: 'the document is broken' }).where(eq(reportJobs.attachmentId, pdf.id));
+    expect(text((await tool('get_document', { attachment_id: pdf.id })).content))
+      .toMatch(/^404: .*has no text yet: reading the document failed \(the document is broken\); the user can retry it in the Tabula app/);
+  });
+
+  it('get_document answers each kind of attachment with what to use instead', async () => {
+    const { id } = json((await tool('create_report', { project: 'demo', title: 'Kinds' })).content);
+    const audio = await uploadFile(id, silentWav(1), 'audio/wav', 'voice.wav');
+    const photo = await uploadFile(id, PNG, 'image/png', 'p.png');
+    const odt = await uploadFile(id, ODT_BYTES, ODT_MIME, 'a.odt');
+    const pdf = await uploadFile(id, PDF_BYTES, 'application/pdf', 'a.pdf');
+    expect(text((await tool('get_document', { attachment_id: audio.id })).content)).toMatch(/is an audio recording; read its transcript with get_transcript/);
+    expect(text((await tool('get_document', { attachment_id: photo.id })).content)).toMatch(/is a photo; look at it with view_attachment/);
+    expect(text((await tool('get_document', { attachment_id: odt.id })).content)).toMatch(/is a document Tabula cannot read \(application\/vnd\.oasis\.opendocument\.text\)/);
+    expect(text((await tool('get_document', { attachment_id: pdf.id })).content)).toMatch(/^404: .*has no text yet: waiting for Fornax/);
+  });
+
+  it('pages a long single line without splitting a character', async () => {
+    const { id } = json((await tool('create_report', { project: 'demo', title: 'Long line' })).content);
+    const body = `${'x'.repeat(49_999)}😀${'y'.repeat(10)}`;
+    const doc = await uploadFile(id, Buffer.from(body), 'text/markdown', 'line.md');
+    const first = text((await tool('get_document', { attachment_id: doc.id })).content);
+    expect(first).toMatch(/\[… part ends at character 49999 of 50011 — call get_document again with offset: 49999\]$/);
+    expect(first).not.toContain('😀');
+    const second = text((await tool('get_document', { attachment_id: doc.id, offset: 49_999 })).content);
+    expect(second.split('\n')[1]).toBe(`😀${'y'.repeat(10)}`);
   });
 
   it('get_transcript explains why there is no transcript', async () => {

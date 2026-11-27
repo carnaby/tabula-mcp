@@ -5,6 +5,7 @@ import type { Attachment, TranscriptState, WorkerStatus } from '../../types';
 import { Badge, Button, Icon, IconButton, IconLink, Textarea, useConfirm, useToast } from '../../ui';
 import { Author, authorOf } from '../common';
 import { CopyRefButton } from '../CopyRefButton';
+import { DocumentText } from './DocumentText';
 import { clock } from './Recorder';
 import { RecordingMenu, Transcript } from './Transcript';
 import type { Upload } from './uploads';
@@ -312,6 +313,7 @@ export function Attachments({
           {d.url && <IconLink href={d.url} icon="download" label={`Download ${d.fileName}`} size="sm" download={d.fileName} />}
           <CopyRefButton id={d.id} size="sm" />
           <IconButton size="sm" icon="trash" label="Delete" onClick={() => void remove(d)} />
+          <DocumentText a={d} worker={worker} onChange={(s) => onChanged((list) => list.map((x) => (x.id === d.id ? { ...x, document: s } : x)))} />
         </div>
       ))}
       {loose.length > 0 && (

@@ -17,9 +17,9 @@ function body(w: DashboardWarning, name: (id: string) => string, copy: { disable
     case 'recordings_waiting':
       return (
         <>
-          <Icon name="mic" />
+          <Icon name="inbox" />
           <div className="warning__body">
-            <strong>{w.count === 1 ? '1 recording waits' : `${w.count} recordings wait`} for the Fornax worker</strong>
+            <strong>{w.count === 1 ? '1 file waits' : `${w.count} files wait`} for the Fornax worker</strong>
             <p>
               The oldest since {fullDate(w.oldest)}.
             </p>

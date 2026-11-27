@@ -1,4 +1,4 @@
-import { and, count, eq, inArray, isNull, ne } from 'drizzle-orm';
+import { and, count, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import {
   type Diarization, reportAttachments, reportJobs, reports, reportTranscripts, type SpeakerNames, type TranscriptSegment,
@@ -13,6 +13,10 @@ export const MAX_ATTEMPTS = 3;
 export const retryDelayMs = (attempts: number): number => 60_000 * 4 ** Math.max(0, attempts - 1);
 
 export const MEDIA_GONE = 'the recording was deleted before it was transcribed';
+export const DOCUMENT_GONE = 'the document was deleted before it was read';
+
+/** What a job does: transcribe a recording, or parse (read the text of) a document. */
+export type JobKind = 'transcribe' | 'parse';
 
 export type Job = typeof reportJobs.$inferSelect;
 
@@ -29,7 +33,7 @@ export async function enqueueTranscription(db: Db, attachmentId: string, now = n
 }
 
 /** A job that starts over: a new upload and a new Fornax job, with all its attempts again. */
-const startOver = (now: Date) => ({
+export const startOver = (now: Date) => ({
   status: 'queued' as const, attempts: 0, error: null, fornaxJobId: null, fornaxChange: null, note: null, progress: null,
   progressMessage: null, submitting: false, runAfter: now, startedAt: null, finishedAt: null, updatedAt: now,
 });
@@ -130,14 +134,18 @@ export async function transcribeAgain(db: Db, attachmentId: string, now = new Da
 }
 
 /**
- * Recordings deleted before Fornax finished them: their jobs fail with the reason instead of waiting forever. A job
- * Fornax still works on is no longer followed, and a transcript that comes for it later is not stored.
+ * Recordings and documents deleted before Fornax finished them: their jobs fail with the reason instead of waiting
+ * forever. A job Fornax still works on is no longer followed, and a result that comes for it later is not stored.
  */
 export async function failPendingJobs(db: Pick<Db, 'update'>, attachmentIds: string[], now = new Date()): Promise<void> {
   if (!attachmentIds.length) return;
   await db
     .update(reportJobs)
-    .set({ status: 'failed', error: MEDIA_GONE, note: null, submitting: false, finishedAt: now, updatedAt: now })
+    .set({
+      status: 'failed',
+      error: sql`CASE WHEN ${reportJobs.kind} = 'parse' THEN ${DOCUMENT_GONE}::text ELSE ${MEDIA_GONE}::text END`,
+      note: null, submitting: false, finishedAt: now, updatedAt: now,
+    })
     .where(and(inArray(reportJobs.attachmentId, attachmentIds), inArray(reportJobs.status, ['queued', 'running'])));
 }
 
@@ -187,6 +195,24 @@ export type TranscriptState =
       again: TranscribingAgain | null;
     };
 
+/** The state of a job that is not done: waiting (with the back-off), running (with progress) or failed. */
+export type PendingState = Exclude<TranscriptState, { status: 'none' | 'done' }>;
+
+export function pendingState(
+  j: {
+    status: 'queued' | 'running' | 'failed'; attempts: number; error: string | null; runAfter: Date; note: string | null;
+    progress: number | null; progressMessage: string | null;
+  },
+  now: Date,
+): PendingState {
+  const retryAt = j.status === 'queued' && j.runAfter > now ? j.runAfter.toISOString() : null;
+  const base = { attempts: j.attempts, error: j.error, retryAt };
+  if (j.status === 'failed') return { status: 'failed', ...base };
+  // Progress belongs to a running job only; a job back in the queue starts from nothing.
+  if (j.status === 'running') return { status: 'running', ...base, note: j.note, progress: j.progress, progressMessage: j.progressMessage };
+  return { status: 'queued', ...base, note: j.note };
+}
+
 /** The transcript, or the state of its job, for each recording that has either; recordings without both are absent. */
 export async function transcriptStates(db: Db, attachmentIds: readonly string[], now = new Date()): Promise<Map<string, TranscriptState>> {
   const states = new Map<string, TranscriptState>();
@@ -199,7 +225,7 @@ export async function transcriptStates(db: Db, attachmentIds: readonly string[],
         runAfter: reportJobs.runAfter, note: reportJobs.note, progress: reportJobs.progress, progressMessage: reportJobs.progressMessage,
       })
       .from(reportJobs)
-      .where(inArray(reportJobs.attachmentId, ids)),
+      .where(and(inArray(reportJobs.attachmentId, ids), eq(reportJobs.kind, 'transcribe'))),
     db
       .select({
         attachmentId: reportTranscripts.attachmentId, language: reportTranscripts.language, model: reportTranscripts.model,
@@ -212,21 +238,12 @@ export async function transcriptStates(db: Db, attachmentIds: readonly string[],
   const pending = new Map<string, TranscribingAgain>();
   for (const j of jobs) {
     if (j.status === 'done') continue;
-    const retryAt = j.status === 'queued' && j.runAfter > now ? j.runAfter.toISOString() : null;
-    // Progress belongs to a running job only; a job back in the queue starts from nothing.
-    const progress: Progress = j.status === 'running'
-      ? { progress: j.progress, progressMessage: j.progressMessage }
+    const s = pendingState({ ...j, status: j.status }, now);
+    const progress: Progress = s.status === 'running'
+      ? { progress: s.progress, progressMessage: s.progressMessage }
       : { progress: null, progressMessage: null };
-    pending.set(j.attachmentId, { status: j.status, error: j.error, retryAt, note: j.status === 'failed' ? null : j.note, ...progress });
-    const base = { attempts: j.attempts, error: j.error, retryAt };
-    states.set(
-      j.attachmentId,
-      j.status === 'failed'
-        ? { status: j.status, ...base }
-        : j.status === 'running'
-          ? { status: j.status, ...base, note: j.note, ...progress }
-          : { status: j.status, ...base, note: j.note },
-    );
+    pending.set(j.attachmentId, { status: s.status, error: s.error, retryAt: s.retryAt, note: s.status === 'failed' ? null : s.note, ...progress });
+    states.set(j.attachmentId, s);
   }
   // A transcript wins over its job's state: it is what the user wants to see.
   for (const t of done) {

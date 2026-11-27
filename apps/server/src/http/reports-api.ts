@@ -7,6 +7,7 @@ import {
   type Attachment, createReport, deleteAttachment, deleteReport, frameAt, listAttachments, openReportCounts,
   pageReports, parseTimestamp, REPORT_SORTS, REPORT_STATUSES, requireAttachment, requireReport, setFrameNote, updateReport,
 } from '../domain/reports.js';
+import { documentReader, documentStates, getDocumentText, retryDocument } from '../domain/documents.js';
 import { editSegmentAsUser, restoreSegment, SegmentChangedError } from '../domain/transcript-edits.js';
 import { isRecording, retryTranscription, transcribeAgain, transcriptionStatus, transcriptStates } from '../domain/jobs.js';
 import { fornaxClient } from '../fornax/client.js';
@@ -44,12 +45,17 @@ export const attachmentView = (a: Attachment, key: string, ttl = UI_LINK_TTL) =>
   url: a.purgedAt ? null : signMediaPath(key, a.id, ttl),
 });
 
-/** Attachments as the UI gets them: video and audio carry their transcript or its state; photos and frames null. */
+/** Attachments as the UI gets them: video and audio carry their transcript or its state, readable documents their text state; the rest null. */
 async function withTranscripts(db: Db, list: Attachment[], key: string) {
-  const states = await transcriptStates(db, list.filter(isRecording).map((a) => a.id));
+  const [states, docs] = await Promise.all([
+    transcriptStates(db, list.filter(isRecording).map((a) => a.id)),
+    documentStates(db, list.filter((a) => documentReader(a) !== null).map((a) => a.id)),
+  ]);
   return list.map((a) => ({
     ...attachmentView(a, key),
     transcript: isRecording(a) ? (states.get(a.id) ?? { status: 'none' as const }) : null,
+    // null: not a readable document; { status: 'none' }: readable, but no text and no job yet.
+    document: documentReader(a) !== null ? (docs.get(a.id) ?? { status: 'none' as const }) : null,
   }));
 }
 
@@ -137,6 +143,21 @@ export const reportRoutes: FastifyPluginAsync<MediaDeps> = async (app, { db, con
     const { id } = parse(idParams, req.params);
     await retryTranscription(db, id);
     return (await transcriptStates(db, [id])).get(id) ?? { status: 'none' };
+  });
+
+  /** "Try again" / "Read text" for a document: a text file is read anew, a PDF or Office document is queued for Fornax. */
+  app.post('/attachments/:id/document/retry', async (req) => {
+    const { id } = parse(idParams, req.params);
+    return retryDocument(db, store, id, { fornax: config.fornax !== undefined });
+  });
+
+  /** The stored text of a document (kept after its file is purged). */
+  app.get('/attachments/:id/document', async (req) => {
+    const { id } = parse(idParams, req.params);
+    await requireAttachment(db, id);
+    const doc = await getDocumentText(db, id);
+    if (!doc) throw notFound(`attachment ${id} has no text yet`);
+    return doc;
   });
 
   /** The user's names of a transcript's speakers: { "S1": "Eva", "S2": "" } (an empty name clears one). */

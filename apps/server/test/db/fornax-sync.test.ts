@@ -5,9 +5,10 @@ import { join } from 'node:path';
 import type { Readable } from 'node:stream';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { projects, reportAttachments, reportJobs, reports, reportTranscripts } from '../../src/db/schema.js';
+import { projects, reportAttachments, reportDocuments, reportJobs, reports, reportTranscripts } from '../../src/db/schema.js';
+import { enqueueParse, getDocumentText, retryDocument } from '../../src/domain/documents.js';
 import {
-  enqueueTranscription, failPendingJobs, MAX_ATTEMPTS, MEDIA_GONE, retryTranscription, transcribeAgain, transcriptStates,
+  DOCUMENT_GONE, enqueueTranscription, failPendingJobs, MAX_ATTEMPTS, MEDIA_GONE, retryTranscription, transcribeAgain, transcriptStates,
 } from '../../src/domain/jobs.js';
 import { type FornaxClient, fornaxClient, FornaxError } from '../../src/fornax/client.js';
 import { createFornaxSync, FORNAX_CANCELED, FORNAX_FORGOT } from '../../src/fornax/sync.js';
@@ -560,5 +561,283 @@ describe('the running Fornax sync', () => {
     await sync.stop();
     expect(Date.now() - t).toBeLessThan(3000);
     expect((await jobOf(b.id)).status).toBe('queued');
+  });
+});
+
+const PDF = Buffer.from(`%PDF-1.7\n${' '.repeat(64)}`);
+const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+/** A report of Apollo with a PDF (or DOCX) document on disk, queued for reading in Fornax. */
+async function parsing(opts: { body?: Buffer; ext?: 'pdf' | 'docx'; queue?: boolean } = {}) {
+  const ext = opts.ext ?? 'pdf';
+  const body = opts.body ?? PDF;
+  const [r] = await db.insert(reports).values({ projectId: 'apollo', title: 'Contract', source: 'human', editedBy: 'human' }).returning();
+  const id = randomUUID();
+  const storageKey = `${r!.id}/${id}.${ext}`;
+  await store.writeBuffer(storageKey, body);
+  const [a] = await db
+    .insert(reportAttachments)
+    .values({
+      id, reportId: r!.id, kind: 'document', mime: ext === 'pdf' ? 'application/pdf' : DOCX_MIME, size: body.length, sha256: 'x',
+      fileName: `contract.${ext}`, storageKey, createdBy: 'human',
+    })
+    .returning();
+  if (opts.queue !== false) await enqueueParse(db, id);
+  return a!;
+}
+
+/** The meta of document.md as Fornax sends it. */
+const META = { path: 'text', kind: 'md', pages: 0, tables: 1, characters: 736, seconds: 20.4, peak_vram_mib: 0, docling: '2.151.1' };
+type FakeOutputs = Array<{ name: string; kind: string; size: number; meta?: Record<string, unknown> }> | null;
+const parsed = (md: string, outputs: FakeOutputs = [{ name: 'document.md', kind: 'file', size: md.length, meta: META }]) => ({
+  state: 'succeeded' as const, files: new Map<string, unknown>([['document.md', md]]), outputs,
+});
+
+describe('the Fornax sync with documents', () => {
+  it('uploads a queued document as document-parse with ocr auto, the priority and the group', async () => {
+    const d = await parsing();
+    const docx = await parsing({ ext: 'docx' });
+    await newSync().syncOnce(at(0));
+    const fj = await fornaxJob(d.id);
+    expect(fj).toMatchObject({ type: 'document-parse', params: { ocr: 'auto' }, priority: 'high', group: 'tabula' });
+    expect(Object.keys(fj.inputs)).toEqual(['document']);
+    const file = fake.files.get(fj.inputs.document!)!;
+    expect(file.name).toMatch(/\.pdf$/);
+    expect(file.body.equals(PDF)).toBe(true);
+    expect(fake.files.get((await fornaxJob(docx.id)).inputs.document!)!.name).toMatch(/\.docx$/);
+    expect(await jobOf(d.id)).toMatchObject({ kind: 'parse', status: 'queued', attempts: 1, submitting: false, error: null });
+    expect(logged.filter((l) => l.msg === 'submitted a document to Fornax')).toHaveLength(2);
+  });
+
+  it('stores the text of document.md with pages, tables and the model, and never logs the text', async () => {
+    const d = await parsing();
+    const sync = newSync();
+    await sync.syncOnce(at(0));
+    fake.setJob((await jobOf(d.id)).fornaxJobId!, parsed('# Zmluva\n\n| a | b |\n'));
+    await sync.syncOnce(at(1000));
+    expect(await getDocumentText(db, d.id)).toMatchObject({
+      text: '# Zmluva\n\n| a | b |\n', source: 'fornax', model: 'docling 2.151.1', pages: 0, tables: 1, truncated: false, characters: 20,
+    });
+    expect(await jobOf(d.id)).toMatchObject({ status: 'done', error: null, note: null, finishedAt: at(1000) });
+    expect(logged.find((l) => l.msg === 'stored the text of a document from Fornax')?.obj).toMatchObject({ characters: 20 });
+    expect(JSON.stringify(logged)).not.toContain('Zmluva');
+  });
+
+  it('stores the text without pages, tables and model when the meta is missing or malformed', async () => {
+    const noOutputs = await parsing();
+    const malformed = await parsing();
+    const otherOutput = await parsing();
+    const outOfRange = await parsing();
+    const sync = newSync();
+    await sync.syncOnce(at(0));
+    fake.setJob((await jobOf(noOutputs.id)).fornaxJobId!, parsed('a', null));
+    fake.setJob(
+      (await jobOf(malformed.id)).fornaxJobId!,
+      parsed('b', [{ name: 'document.md', kind: 'file', size: 1, meta: { pages: '3', tables: -1, docling: 5 } }]),
+    );
+    fake.setJob((await jobOf(otherOutput.id)).fornaxJobId!, parsed('c', [{ name: 'log.txt', kind: 'file', size: 1, meta: META }]));
+    fake.setJob(
+      (await jobOf(outOfRange.id)).fornaxJobId!,
+      parsed('d', [{ name: 'document.md', kind: 'file', size: 1, meta: { pages: 1.5, tables: 2 ** 31, docling: `2.1${String.fromCharCode(10)}` } }]),
+    );
+    await sync.syncOnce(at(1000));
+    for (const [d, text] of [[noOutputs, 'a'], [malformed, 'b'], [otherOutput, 'c'], [outOfRange, 'd']] as const) {
+      expect(await getDocumentText(db, d.id)).toMatchObject({ text, source: 'fornax', model: null, pages: null, tables: null });
+      expect((await jobOf(d.id)).status).toBe('done');
+    }
+  });
+
+  it('stores an empty text as done with 0 characters, and a text over the limit cut and marked', async () => {
+    const empty = await parsing();
+    const long = await parsing();
+    const sync = newSync();
+    await sync.syncOnce(at(0));
+    fake.setJob((await jobOf(empty.id)).fornaxJobId!, parsed(''));
+    fake.setJob((await jobOf(long.id)).fornaxJobId!, parsed('line\n'.repeat(250_000)));
+    await sync.syncOnce(at(1000));
+    expect(await getDocumentText(db, empty.id)).toMatchObject({ text: '', characters: 0, truncated: false });
+    expect((await jobOf(empty.id)).status).toBe('done');
+    const cut = (await getDocumentText(db, long.id))!;
+    expect(cut.truncated).toBe(true);
+    expect(cut.characters).toBeLessThanOrEqual(1_000_000);
+    expect(cut.characters).toBe(cut.text.length);
+    expect(cut.text.endsWith('line')).toBe(true);
+    expect((await jobOf(long.id)).status).toBe('done');
+  });
+
+  it('reads only the first 4 MB of a larger document.md: stored cut and marked, and not fetched again', async () => {
+    const d = await parsing();
+    const sync = newSync();
+    await sync.syncOnce(at(0));
+    const id = (await jobOf(d.id)).fornaxJobId!;
+    const chunk = Buffer.from('line\n'.repeat(13_107)); // 65 535 bytes
+    // 8 MB of lines, then the connection breaks off: a reader that stops at 4 MB never reaches the break.
+    async function* huge() {
+      for (let i = 0; i < 128; i++) yield chunk;
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      throw new Error('connection lost');
+    }
+    fake.setJob(id, {
+      state: 'succeeded', files: new Map<string, unknown>([['document.md', huge]]),
+      outputs: [{ name: 'document.md', kind: 'file', size: chunk.length * 128, meta: META }],
+    });
+    await sync.syncOnce(at(1000));
+    const cut = (await getDocumentText(db, d.id))!;
+    expect(cut).toMatchObject({ truncated: true, source: 'fornax', pages: 0, tables: 1 });
+    expect(cut.characters).toBeLessThanOrEqual(1_000_000);
+    expect(cut.characters).toBe(cut.text.length);
+    expect(cut.text.endsWith('line')).toBe(true);
+    expect(await jobOf(d.id)).toMatchObject({ status: 'done', error: null });
+    await sync.syncOnce(at(2000));
+    expect(fake.requests.filter((r) => r.path === `/api/jobs/${id}/outputs/document.md`)).toHaveLength(1);
+  });
+
+  it('fails a document larger than Fornax takes without uploading it', async () => {
+    fake.parseMaxMb = 1 / 1024; // 1 KB
+    const d = await parsing({ body: Buffer.concat([Buffer.from('%PDF-1.7\n'), Buffer.alloc(2048, 0x20)]) });
+    await newSync().syncOnce(at(0));
+    expect(await jobOf(d.id)).toMatchObject({
+      status: 'failed', submitting: false, attempts: 0, finishedAt: at(0), error: expect.stringMatching(/^the document is larger than Fornax takes \(/),
+    });
+    expect((await jobOf(d.id)).error).toBe(`the document is larger than Fornax takes (${1 / 1024} MB)`);
+    expect(fake.files.size).toBe(0);
+    expect(fake.jobs.size).toBe(0);
+  });
+
+  it('uploads the document when the size limit cannot be read', async () => {
+    const d = await parsing();
+    fake.fail('/api/types', 503);
+    await newSync().syncOnce(at(0));
+    expect(await jobOf(d.id)).toMatchObject({ status: 'queued', fornaxJobId: expect.any(String) });
+    expect(fake.files.size).toBe(1);
+  });
+
+  it('gives the document back without an attempt when stopped while asking for the size limit', async () => {
+    const d = await parsing();
+    let asked = 0;
+    // The size limit never comes on its own: the call ends only when the sync stops.
+    const hanging: FornaxClient = {
+      ...client,
+      inputLimitMb: (_type: string, _input: string, signal?: AbortSignal) => {
+        asked++;
+        return new Promise((_resolve, reject) => signal?.addEventListener('abort', () => reject(signal.reason), { once: true }));
+      },
+    };
+    const sync = newSync(hanging, { tickMs: 50, retryMs: 50, waitS: 1 });
+    sync.start();
+    await vi.waitFor(() => expect(asked).toBe(1), { timeout: 5000 });
+    const t = Date.now();
+    await sync.stop();
+    expect(Date.now() - t).toBeLessThan(3000);
+    expect(await jobOf(d.id)).toMatchObject({ status: 'queued', submitting: false, attempts: 0, fornaxJobId: null, error: null });
+    expect(fake.files.size).toBe(0);
+    expect(logged.filter((l) => l.level !== 'info')).toEqual([]);
+  });
+
+  it('speaks of the document when its file is gone or its text cannot be fetched', async () => {
+    const missing = await parsing();
+    await store.remove(missing.storageKey);
+    const unfetched = await parsing();
+    const sync = newSync();
+    await sync.syncOnce(at(0));
+    expect(await jobOf(missing.id)).toMatchObject({ status: 'failed', error: DOCUMENT_GONE, fornaxJobId: null });
+    expect(DOCUMENT_GONE).toBe('the document was deleted before it was read');
+
+    fake.setJob((await jobOf(unfetched.id)).fornaxJobId!, { state: 'succeeded', files: new Map(), outputs: [] });
+    await sync.syncOnce(at(1000));
+    expect(await jobOf(unfetched.id)).toMatchObject({
+      status: 'failed', error: expect.stringMatching(/^the text of the document could not be fetched from Fornax: /),
+    });
+    expect(await getDocumentText(db, unfetched.id)).toBeUndefined();
+  });
+
+  it('says when the document file could not be read', async () => {
+    const d = await parsing();
+    // A directory in place of the file: stat works, reading fails.
+    await store.remove(d.storageKey);
+    mkdirSync(store.path(d.storageKey));
+    const reading: FornaxClient = {
+      ...client,
+      uploadFile: async (_name: string, body: Readable | ReadableStream) => {
+        try {
+          for await (const _chunk of body as Readable) {
+            // drain
+          }
+        } catch {
+          throw new FornaxError('Fornax is unreachable', null, false);
+        }
+        throw new Error('the directory was read');
+      },
+    };
+    await newSync(reading).syncOnce(at(0));
+    const job = await jobOf(d.id);
+    expect(job).toMatchObject({ status: 'queued', attempts: 1, runAfter: at(60_000) });
+    expect(job.error).toMatch(/^the document file could not be read \(E[A-Z]+\)$/);
+    expect(logged.some((l) => l.msg === 'could not submit a document to Fornax; trying again later')).toBe(true);
+  });
+
+  it('keeps a finished document when its text cannot be fetched yet, and stores it later', async () => {
+    const d = await parsing();
+    const sync = newSync();
+    await sync.syncOnce(at(0));
+    const id = (await jobOf(d.id)).fornaxJobId!;
+    fake.setJob(id, parsed('text'));
+    fake.fail(`/api/jobs/${id}/outputs/document.md`, 503);
+    await sync.syncOnce(at(1000));
+    expect((await jobOf(d.id)).status).toBe('queued');
+    expect(logged.some((l) => l.msg === 'could not follow the reading of a document in Fornax; asking again later')).toBe(true);
+    fake.fail(`/api/jobs/${id}/outputs/document.md`, null);
+    await sync.syncOnce(at(2000));
+    expect((await jobOf(d.id)).status).toBe('done');
+  });
+
+  it('does not store a text for a document deleted meanwhile', async () => {
+    const d = await parsing();
+    const sync = newSync();
+    await sync.syncOnce(at(0));
+    const id = (await jobOf(d.id)).fornaxJobId!;
+    await failPendingJobs(db, [d.id], at(500));
+    fake.setJob(id, parsed('text'));
+    await sync.syncOnce(at(1000));
+    expect(await jobOf(d.id)).toMatchObject({ status: 'failed', error: DOCUMENT_GONE, finishedAt: at(500) });
+    expect(await db.select().from(reportDocuments)).toEqual([]);
+  });
+
+  it('keeps recordings and documents apart in one queue', async () => {
+    const rec = await recording();
+    const d = await parsing();
+    const sync = newSync();
+    await sync.syncOnce(at(0));
+    expect((await fornaxJob(rec.id)).type).toBe('transcribe');
+    expect((await fornaxJob(d.id)).type).toBe('document-parse');
+    fake.setJob((await jobOf(rec.id)).fornaxJobId!, succeeded());
+    fake.setJob((await jobOf(d.id)).fornaxJobId!, parsed('text'));
+    await sync.syncOnce(at(1000));
+    expect(await db.select().from(reportTranscripts)).toHaveLength(1);
+    expect(await getDocumentText(db, d.id)).toMatchObject({ text: 'text' });
+    expect(await getDocumentText(db, rec.id)).toBeUndefined();
+    expect(await jobOf(rec.id)).toMatchObject({ kind: 'transcribe', status: 'done' });
+    expect(await jobOf(d.id)).toMatchObject({ kind: 'parse', status: 'done' });
+  });
+
+  it('starts over with a new upload and job on Try again of a failed document', async () => {
+    const d = await parsing();
+    const sync = newSync();
+    await sync.syncOnce(at(0));
+    const first = (await jobOf(d.id)).fornaxJobId!;
+    fake.setJob(first, { state: 'failed', error: 'docling could not open the file' });
+    await sync.syncOnce(at(1000));
+    expect(await jobOf(d.id)).toMatchObject({ status: 'failed', error: 'docling could not open the file', finishedAt: at(1000) });
+    await retryDocument(db, store, d.id, { fornax: true }, at(2000));
+    expect(await jobOf(d.id)).toMatchObject({ status: 'queued', attempts: 0, error: null, fornaxJobId: null, fornaxChange: null, note: null });
+    await sync.syncOnce(at(2000));
+    const second = (await jobOf(d.id)).fornaxJobId!;
+    expect(second).not.toBe(first);
+    expect(fake.files.size).toBe(2);
+    expect(fake.jobs.get(second)!.type).toBe('document-parse');
+    fake.setJob(second, parsed('text'));
+    await sync.syncOnce(at(3000));
+    expect(await jobOf(d.id)).toMatchObject({ status: 'done' });
+    expect(await getDocumentText(db, d.id)).toMatchObject({ text: 'text' });
   });
 });

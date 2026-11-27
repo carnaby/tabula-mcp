@@ -17,6 +17,12 @@ async function submitted(params: Record<string, unknown> = { diarize: true }) {
   return { client, job: await client.submit({ params, fileId: id }) };
 }
 
+async function submittedParse() {
+  const client = fornaxClient(cfg());
+  const { id } = await client.uploadFile('a.pdf', Readable.from([Buffer.from('%PDF-')]), 5);
+  return { client, job: await client.submit({ type: 'document-parse', input: 'document', params: { ocr: 'auto' }, fileId: id }) };
+}
+
 describe('fornaxClient', () => {
   it('streams the upload with the name and returns the file id', async () => {
     const client = fornaxClient(cfg());
@@ -46,6 +52,59 @@ describe('fornaxClient', () => {
     const j2 = await low.submit({ params: {}, fileId: f.id });
     expect(fake.jobs.get(j2.id)!.priority).toBe('low');
     expect(client).toBeDefined();
+  });
+
+  it('submits a document-parse job with its input name', async () => {
+    const client = fornaxClient(cfg());
+    const { id } = await client.uploadFile('a.pdf', Readable.from([Buffer.from('%PDF-')]), 5);
+    const job = await client.submit({ type: 'document-parse', input: 'document', params: { ocr: 'auto' }, fileId: id });
+    expect(fake.jobs.get(job.id)).toMatchObject({ type: 'document-parse', inputs: { document: id }, params: { ocr: 'auto' }, priority: 'high', group: 'tabula' });
+  });
+
+  it('returns an output as text, exactly', async () => {
+    const { client, job } = await submittedParse();
+    const md = '# Zápis\n\n- [ ] a & b\n> quote\n';
+    fake.setJob(job.id, { state: 'succeeded', files: new Map([['document.md', md]]) });
+    expect(await client.outputText(job.id, 'document.md', 1024)).toEqual({ text: md, truncated: false });
+  });
+
+  it('reads only the first bytes of a text output: a leading BOM and a character broken by the cut are dropped', async () => {
+    // BOM, "a", "é" (two bytes), "b": 7 bytes.
+    const bytes = Buffer.from([0xef, 0xbb, 0xbf, 0x61, 0xc3, 0xa9, 0x62]);
+    let cancelled = 0;
+    // `endless`: the body never ends after these bytes, so only a reader that stops at the limit answers.
+    const answering = (endless: boolean) => fornaxClient(cfg(), async () => new Response(
+      new ReadableStream({
+        start(ctl) {
+          ctl.enqueue(new Uint8Array(bytes));
+          if (!endless) ctl.close();
+        },
+        cancel() {
+          cancelled++;
+        },
+      }),
+      { status: 200 },
+    ));
+    expect(await answering(false).outputText('j_1', 'document.md', 7)).toEqual({ text: 'aéb', truncated: false });
+    expect(await answering(true).outputText('j_1', 'document.md', 6)).toEqual({ text: 'aé', truncated: true });
+    expect(await answering(true).outputText('j_1', 'document.md', 5)).toEqual({ text: 'a', truncated: true });
+    expect(cancelled).toBe(2);
+  });
+
+  it('lists the outputs of a job with their meta, and takes an answer without them', async () => {
+    const { client, job } = await submittedParse();
+    expect((await client.job(job.id))!.outputs).toBeNull();
+    const meta = { path: 'text', kind: 'md', pages: 0, tables: 1, characters: 736, seconds: 20.4, peak_vram_mib: 0, docling: '2.151.1' };
+    fake.setJob(job.id, { state: 'succeeded', outputs: [{ name: 'document.md', kind: 'file', size: 736, meta }, { name: 'document.json', kind: 'file', size: 9, meta: 'x' as never }] });
+    expect((await client.job(job.id))!.outputs).toEqual([{ name: 'document.md', meta }, { name: 'document.json', meta: null }]);
+  });
+
+  it('tells the size limit of an input from /api/types, null when the type is not offered', async () => {
+    const client = fornaxClient(cfg());
+    expect(await client.inputLimitMb('document-parse', 'document')).toBe(200);
+    expect(await client.inputLimitMb('transcribe', 'audio')).toBe(2048);
+    fake.worker.parses = false;
+    expect(await client.inputLimitMb('document-parse', 'document')).toBeNull();
   });
 
   it('maps progress and the change value of a job', async () => {

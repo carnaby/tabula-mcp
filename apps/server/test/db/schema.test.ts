@@ -1,6 +1,6 @@
 import { sql } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { memories, notes, projectFileRevisions, projectFiles, projects, reportAttachments, reportJobs, reports, reportTranscripts } from '../../src/db/schema.js';
+import { memories, notes, projectFileRevisions, projectFiles, projects, reportAttachments, reportDocuments, reportJobs, reports, reportTranscripts } from '../../src/db/schema.js';
 import { seedProject, useTestDb } from '../helpers.js';
 
 const db = useTestDb();
@@ -35,7 +35,8 @@ describe('schema', () => {
     const rows = await db.execute<{ indexname: string }>(sql`
       SELECT indexname FROM pg_indexes WHERE schemaname = 'public' AND indexdef LIKE '%USING gin (search)%' ORDER BY indexname`);
     expect([...rows].map((r) => r.indexname)).toEqual([
-      'memories_search_idx', 'notes_search_idx', 'project_files_search_idx', 'report_transcripts_search_idx', 'reports_search_idx',
+      'memories_search_idx', 'notes_search_idx', 'project_files_search_idx', 'report_documents_search_idx',
+      'report_transcripts_search_idx', 'reports_search_idx',
       'thoughts_search_idx',
     ]);
   });
@@ -107,5 +108,28 @@ describe('schema', () => {
     await db.delete(reportAttachments);
     expect(await db.select().from(reportJobs)).toEqual([]);
     expect(await db.select({ id: reportTranscripts.attachmentId }).from(reportTranscripts)).toEqual([]);
+  });
+
+  it('stores a document text with its search vector, refuses a longer one, and deletes it with the attachment', async () => {
+    await seedProject(db, 'demo');
+    const [r] = await db.insert(reports).values({ projectId: 'demo', title: 'T', source: 'human', editedBy: 'human' }).returning();
+    const [a, b] = await db
+      .insert(reportAttachments)
+      .values(['a.pdf', 'b.pdf'].map((fileName) => ({
+        reportId: r!.id, kind: 'document' as const, mime: 'application/pdf', size: 1, sha256: fileName, fileName,
+        storageKey: `${r!.id}/${fileName}`, createdBy: 'human',
+      })))
+      .returning();
+    await db.insert(reportDocuments).values({ attachmentId: a!.id, text: 'Zmluva o dielo', source: 'fornax', characters: 14, pages: 2, tables: 0, model: 'docling 2.151.1' });
+    const [v] = await db.execute<{ search: string }>(sql`SELECT search::text AS search FROM report_documents`);
+    expect(v!.search).toContain("'zmluva'");
+    await expect(db.insert(reportDocuments).values({ attachmentId: b!.id, text: 'x'.repeat(1_000_001), source: 'file', characters: 1_000_001 }))
+      .rejects.toMatchObject({ cause: { code: '23514' } });
+    await expect(db.insert(reportDocuments).values({ attachmentId: b!.id, text: 'x', source: 'file', characters: 1, pages: -1 }))
+      .rejects.toMatchObject({ cause: { code: '23514' } });
+    await db.insert(reportJobs).values({ attachmentId: a!.id, kind: 'parse' });
+    await expect(db.insert(reportJobs).values({ attachmentId: a!.id, kind: 'parse' })).rejects.toMatchObject({ cause: { code: '23505' } });
+    await db.delete(reportAttachments);
+    expect(await db.select().from(reportDocuments)).toEqual([]);
   });
 });

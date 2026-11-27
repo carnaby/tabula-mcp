@@ -3,7 +3,7 @@ import { z } from 'zod';
 import {
   type AgentContext, agentDeprecate, agentFindNotes, agentFindThoughts, agentGet, agentListFiles, agentListProjects,
   agentDeleteFile, agentReadFile, agentRecall, agentRemember, agentSaveThought, agentSearch, agentUpdateThought, agentWriteFile,
-  agentCreateReport, agentEditTranscript, agentGetFrame, agentGetReport, agentGetTranscript, agentListReports, agentNameSpeakers, agentUpdateReport, agentViewAttachment, type AgentImage,
+  agentCreateReport, agentEditTranscript, agentGetFrame, agentGetReport, agentGetDocument, agentGetTranscript, agentListReports, agentNameSpeakers, agentUpdateReport, agentViewAttachment, type AgentImage,
   type AgentBlock, type AgentFileRead,
 } from '../agent/operations.js';
 import { agentGetMessage, agentListMessages, agentSendMessage, agentUpdateMessage } from '../agent/messages.js';
@@ -390,6 +390,18 @@ export function buildMcpServer(ctx: McpContext): McpServer {
       }),
     },
     (a) => run(() => agentGetTranscript(ctx, a)),
+  );
+
+  server.registerTool(
+    'get_document',
+    {
+      description: D.get_document,
+      inputSchema: z.object({
+        attachment_id: attachmentId,
+        offset: z.number().int().min(0).default(0).describe("Character offset; the previous reply's last line names it."),
+      }),
+    },
+    (a) => run(() => agentGetDocument(ctx, a)),
   );
 
   server.registerTool(

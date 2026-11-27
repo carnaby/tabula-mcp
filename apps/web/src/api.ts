@@ -1,7 +1,7 @@
 import type {
   FileRevision, FileRevisionContent, Memory, MemoryKind, MemorySort, Note, NoteSort, Page, Project, RecallPreview, RefTarget, SearchHit, Source, Thought,
   ProjectFile, ProjectFileContent, ThoughtRevision, ThoughtSort,
-  ActivityPage, ActivityType, Attachment, Dashboard, TranscriptState, WorkerStatus, ReportDetail, Report, ReportSort, ReportStatus, ReportSummary,
+  ActivityPage, ActivityType, Attachment, Dashboard, DocumentState, DocumentTextView, TranscriptState, WorkerStatus, ReportDetail, Report, ReportSort, ReportStatus, ReportSummary,
   MessageCounts, MessageDetail, MessagePatch, MessageStatusFilter, MessageSummary, MessageToken, MessageType, SecurityOverview,
 } from './types';
 
@@ -128,6 +128,8 @@ export const api = {
   saveFrame: (videoId: string, atSeconds: number) => request<Attachment>('POST', `/attachments/${videoId}/frame`, { at: atSeconds }),
   setFrameNote: (id: string, note: string | null) => request<Attachment>('PATCH', `/attachments/${id}`, { note }),
   retryTranscript: (attachmentId: string) => request<TranscriptState>('POST', `/attachments/${attachmentId}/transcript/retry`),
+  retryDocument: (attachmentId: string) => request<DocumentState>('POST', `/attachments/${attachmentId}/document/retry`),
+  documentText: (attachmentId: string, signal?: S) => request<DocumentTextView>('GET', `/attachments/${attachmentId}/document`, undefined, signal),
   setSpeakers: (attachmentId: string, names: Record<string, string>) => request<TranscriptState>('PUT', `/attachments/${attachmentId}/speakers`, names),
   speakerNames: (reportId: string, signal?: S) => request<{ names: string[] }>('GET', `/reports/${reportId}/speaker-names`, undefined, signal),
   transcribeAgain: (attachmentId: string) => request<TranscriptState>('POST', `/attachments/${attachmentId}/transcribe`),

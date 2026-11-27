@@ -20,13 +20,13 @@ export const RECORDING_WAIT_MS = 24 * 3600 * 1000;
 export type WaitingTranscript = 'running' | 'queued' | 'failed' | 'done';
 
 export type WaitingItem = {
-  type: 'new_report' | 'triaged' | 'transcription_failed' | 'message_waiting';
+  type: 'new_report' | 'triaged' | 'transcription_failed' | 'document_failed' | 'message_waiting';
   /** The report's or message's id and reference. */
   id: string;
   ref: string;
   title: string;
   project: string | null;
-  /** Since when it waits (ISO): created (new), last changed (triaged), when the transcription failed. */
+  /** Since when it waits (ISO): created (new), last changed (triaged), when the transcription or the reading of a document failed. */
   since: string;
   /** The report's version, for Mark done (expected_version). */
   version: number;
@@ -34,7 +34,7 @@ export type WaitingItem = {
   /** Video, audio and documents of the report still on disk: what closing deletes, so the close confirmation names them. */
   media: number;
   transcript: WaitingTranscript | null;
-  /** transcription_failed: the recording, its file name and the error. */
+  /** transcription_failed, document_failed: the recording or document, its file name and the error. */
   attachment_id?: string;
   file_name?: string;
   error?: string | null;
@@ -49,6 +49,7 @@ export type WaitingItem = {
 export type DashboardWarning =
   | { type: 'recall_trimmed'; project: string; steps: TrimStep[]; tokens: number }
   | { type: 'large_file'; project: string; id: string; ref: string; path: string; size: number; limit: number }
+  /** Recordings and documents that wait for Fornax more than a day (the type name is kept for compatibility). */
   | { type: 'recordings_waiting'; project: null; count: number; oldest: string };
 
 export type DashboardProject = {
@@ -78,7 +79,7 @@ const RANK: Record<WaitingTranscript, number> = { done: 1, failed: 2, queued: 3,
 /** What the Home page shows besides the timeline. */
 export async function dashboard(db: Db, now = new Date(), { transcriptionEnabled = true, tz = SERVER_TZ }: { transcriptionEnabled?: boolean; tz?: string } = {}): Promise<Dashboard> {
   const zone = checkTimeZone(tz);
-  const [open, recordings, documents, large, projectList, openCounts, activity, waitingMessages] = await Promise.all([
+  const [open, recordings, documents, parsed, large, projectList, openCounts, activity, waitingMessages] = await Promise.all([
     db
       .select({
         id: reports.id, projectId: reports.projectId, title: reports.title, status: reports.status, version: reports.version,
@@ -105,6 +106,16 @@ export async function dashboard(db: Db, now = new Date(), { transcriptionEnabled
       .innerJoin(reports, eq(reports.id, reportAttachments.reportId))
       .where(and(inArray(reports.status, [...OPEN]), eq(reportAttachments.kind, 'document'), isNull(reportAttachments.purgedAt)))
       .groupBy(reportAttachments.reportId),
+    // Documents of open reports with their reading job (Fornax): failed ones are offered Try again, waiting ones feed the warning.
+    db
+      .select({
+        id: reportAttachments.id, reportId: reportAttachments.reportId, fileName: reportAttachments.fileName, purgedAt: reportAttachments.purgedAt,
+        job: reportJobs.status, error: reportJobs.error, runAfter: reportJobs.runAfter, finishedAt: reportJobs.finishedAt, jobUpdatedAt: reportJobs.updatedAt,
+      })
+      .from(reportAttachments)
+      .innerJoin(reports, eq(reports.id, reportAttachments.reportId))
+      .innerJoin(reportJobs, and(eq(reportJobs.attachmentId, reportAttachments.id), eq(reportJobs.kind, 'parse')))
+      .where(and(inArray(reports.status, [...OPEN]), eq(reportAttachments.kind, 'document'), isNull(reportAttachments.purgedAt))),
     db
       .select({ id: projectFiles.id, projectId: projectFiles.projectId, path: projectFiles.path, size: projectFiles.size })
       .from(projectFiles)
@@ -136,6 +147,13 @@ export async function dashboard(db: Db, now = new Date(), { transcriptionEnabled
     else recordingsOf.set(a.reportId, [a]);
   }
 
+  const failedDocsOf = new Map<string, typeof parsed>();
+  for (const a of parsed) {
+    if (a.job !== 'failed') continue;
+    const list = failedDocsOf.get(a.reportId);
+    if (list) list.push(a);
+    else failedDocsOf.set(a.reportId, [a]);
+  }
   const documentsOf = new Map(documents.map((d) => [d.reportId, d.n]));
   const waiting: WaitingItem[] = [];
   for (const r of open) {
@@ -159,6 +177,12 @@ export async function dashboard(db: Db, now = new Date(), { transcriptionEnabled
         attachment_id: a.id, file_name: a.fileName, error: a.error,
       });
     }
+    for (const a of failedDocsOf.get(r.id) ?? []) {
+      waiting.push({
+        ...base, type: 'document_failed', since: (a.finishedAt ?? a.jobUpdatedAt).toISOString(),
+        attachment_id: a.id, file_name: a.fileName, error: a.error,
+      });
+    }
   }
   for (const m of waitingMessages) {
     waiting.push({
@@ -170,8 +194,8 @@ export async function dashboard(db: Db, now = new Date(), { transcriptionEnabled
 
   const warnings: DashboardWarning[] = [];
   const cutoff = now.getTime() - RECORDING_WAIT_MS;
-  const stuck = recordings.filter((a) => a.job === 'queued' && !a.purgedAt && a.runAfter !== null && a.runAfter.getTime() < cutoff);
-  // Without Fornax nothing is expected to transcribe: a waiting recording is no alarm.
+  const stuck = [...recordings, ...parsed].filter((a) => a.job === 'queued' && !a.purgedAt && a.runAfter !== null && a.runAfter.getTime() < cutoff);
+  // Without Fornax nothing is expected to read: a waiting recording or document is no alarm.
   if (transcriptionEnabled && stuck.length) {
     const oldest = Math.min(...stuck.map((a) => a.runAfter!.getTime()));
     warnings.push({ type: 'recordings_waiting', project: null, count: stuck.length, oldest: new Date(oldest).toISOString() });

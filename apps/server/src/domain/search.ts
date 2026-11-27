@@ -98,7 +98,7 @@ export type QuickHit = {
   updated_at: string;
 };
 
-/** The UI's global search box: prefix match over memories, notes, thoughts, project files, reports and their transcripts, best match first. */
+/** The UI's global search box: prefix match over memories, notes, thoughts, project files, reports and the texts of their recordings and documents, best match first. */
 export async function quickSearch(db: Db, p: { q: string; limit?: number }): Promise<QuickHit[]> {
   const tsq = prefixTsQuery(p.q);
   if (!tsq) return [];
@@ -135,7 +135,12 @@ export async function quickSearch(db: Db, p: { q: string; limit?: number }): Pro
         FROM reports r CROSS JOIN q
         LEFT JOIN LATERAL (
           SELECT string_agg(left(t.text, 20000), ' ') AS text, max(ts_rank(t.search, q.tsq)) / 2 AS rank
-          FROM report_transcripts t JOIN report_attachments a ON a.id = t.attachment_id
+          FROM (
+            -- Documents count as transcripts: the texts of both kinds are matched the same way.
+            SELECT attachment_id, text, search FROM report_transcripts
+            UNION ALL
+            SELECT attachment_id, text, search FROM report_documents
+          ) t JOIN report_attachments a ON a.id = t.attachment_id
           WHERE a.report_id = r.id AND t.search @@ q.tsq
         ) tx ON true
         WHERE r.search @@ q.tsq OR tx.text IS NOT NULL

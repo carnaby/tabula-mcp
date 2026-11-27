@@ -3,9 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { Readable } from 'node:stream';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { reportAttachments, reportJobs, reports } from '../../src/db/schema.js';
-import { purgeClosedMedia } from '../../src/domain/reports.js';
+import { backfillDocuments } from '../../src/domain/documents.js';
+import { addAttachment, purgeClosedMedia } from '../../src/domain/reports.js';
 import { buildApp } from '../../src/http/app.js';
 import { MediaStore } from '../../src/media/store.js';
 import { seedProject, TEST_APP_TOKEN, TEST_TOKEN, testConfig, useTestAppToken, useTestDb, useTestTokens } from '../helpers.js';
@@ -53,7 +55,10 @@ describe('documents as report attachments', () => {
     // The same types over the other path: a PDF through /app-api, a DOCX through /api.
     expect((await viaApp(r, PDF, 'application/pdf', 'Zmluva 2.pdf')).json()).toMatchObject({ kind: 'document', mime: 'application/pdf' });
     expect((await viaApi(r, DOCX, DOCX_TYPE, 'Ponuka 2.docx')).json()).toMatchObject({ kind: 'document', mime: DOCX_TYPE, fileName: 'Ponuka 2.docx' });
-    expect(await db.select().from(reportJobs)).toEqual([]);
+    const jobs = await db.select().from(reportJobs);
+    expect(jobs.map((j) => j.kind)).toEqual(['parse', 'parse', 'parse', 'parse']); // 2 PDF + 2 DOCX, no Markdown, no transcribe
+    const view = (await app.inject({ method: 'GET', url: `/api/reports/${r}`, headers: api })).json();
+    expect(view.attachments.find((a: { id: string }) => a.id === pdf.json().id).document).toMatchObject({ status: 'queued' });
     const listed = (await app.inject({ method: 'GET', url: '/api/reports?project=demo', headers: api })).json();
     expect(listed.items[0].counts).toEqual({ image: 0, video: 0, audio: 0, frame: 0, document: 5 });
   });
@@ -123,5 +128,98 @@ describe('documents as report attachments', () => {
     const rows = await db.select().from(reportAttachments);
     expect(rows.find((x) => x.id === doc.id)!.purgedAt).not.toBeNull();
     expect(rows.find((x) => x.id === photo.id)!.purgedAt).toBeNull();
+  });
+
+  it('reads a Markdown or text file at upload and serves its exact text', async () => {
+    const r = await newReport();
+    const md = (await viaApp(r, MD, 'text/markdown', 'notes.md')).json();
+    const view = (await app.inject({ method: 'GET', url: `/api/reports/${r}`, headers: api })).json();
+    expect(view.attachments[0].document).toMatchObject({ status: 'done', source: 'file', characters: MD.toString('utf8').length, pages: null });
+    const text = await app.inject({ method: 'GET', url: `/api/attachments/${md.id}/document`, headers: api });
+    expect(text.statusCode).toBe(200);
+    expect(text.json()).toMatchObject({ text: MD.toString('utf8'), truncated: false, source: 'file' });
+  });
+
+  it('leaves ODT and photos without a document state', async () => {
+    const r = await newReport();
+    const odt = await viaApi(r, DOCX, 'application/vnd.oasis.opendocument.text', 'a.odt');
+    expect(odt.statusCode).toBe(201);
+    expect((await viaApi(r, PNG, 'image/png', 'p.png')).statusCode).toBe(201);
+    const view = (await app.inject({ method: 'GET', url: `/api/reports/${r}`, headers: api })).json();
+    expect(view.attachments).toHaveLength(2);
+    for (const a of view.attachments) expect(a.document).toBeNull();
+    expect(await db.select().from(reportJobs)).toEqual([]);
+  });
+
+  it('queues no Fornax job without Fornax, and Try again says why', async () => {
+    const noFornax = await buildApp({ config: { ...config, fornax: undefined }, db, store });
+    try {
+      const r = await newReport();
+      const up = await noFornax.inject({
+        method: 'POST', url: `/api/reports/${r}/attachments`, payload: PDF,
+        headers: { ...api, 'content-type': 'application/pdf', 'x-file-name': 'a.pdf' },
+      });
+      expect(up.statusCode).toBe(201);
+      expect(up.json().document).toEqual({ status: 'none' });
+      expect(await db.select().from(reportJobs)).toEqual([]);
+      const retry = await noFornax.inject({ method: 'POST', url: `/api/attachments/${up.json().id}/document/retry`, headers: api });
+      expect(retry.statusCode).toBe(409);
+      expect(retry.json().message).toContain('TABULA_FORNAX_URL');
+    } finally {
+      await noFornax.close();
+    }
+  });
+
+  it('Try again restarts a failed reading of a PDF', async () => {
+    const r = await newReport();
+    const pdf = (await viaApi(r, PDF, 'application/pdf', 'a.pdf')).json();
+    await db.update(reportJobs).set({ status: 'failed', error: 'boom', attempts: 3 }).where(eq(reportJobs.attachmentId, pdf.id));
+    const retry = await app.inject({ method: 'POST', url: `/api/attachments/${pdf.id}/document/retry`, headers: api });
+    expect(retry.statusCode).toBe(200);
+    expect(retry.json()).toMatchObject({ status: 'queued', attempts: 0 });
+    const again = await app.inject({ method: 'POST', url: `/api/attachments/${pdf.id}/document/retry`, headers: api });
+    expect(again.statusCode).toBe(409);
+  });
+
+  it('keeps a stored text after the file is purged', async () => {
+    const r = await newReport();
+    const md = (await viaApi(r, MD, 'text/markdown', 'notes.md')).json();
+    await db.update(reports).set({ status: 'done', closedAt: new Date(Date.now() - 3600_000) }).where(eq(reports.id, r));
+    expect(await purgeClosedMedia(db, store, 0, new Date())).toBe(1);
+    const text = await app.inject({ method: 'GET', url: `/api/attachments/${md.id}/document`, headers: api });
+    expect(text.statusCode).toBe(200);
+    expect(text.json().text).toBe(MD.toString('utf8'));
+  });
+
+  it('answers 404 for the text of a document without one', async () => {
+    const r = await newReport();
+    const pdf = (await viaApi(r, PDF, 'application/pdf', 'a.pdf')).json();
+    const res = await app.inject({ method: 'GET', url: `/api/attachments/${pdf.id}/document`, headers: api });
+    expect(res.statusCode).toBe(404);
+    expect(res.json().message).toContain('has no text yet');
+  });
+
+  it('still answers 201 when the text of an upload cannot be stored, and backfill fills it in later', async () => {
+    const r = await newReport();
+    const spy = vi.spyOn(store, 'size').mockRejectedValueOnce(new Error('disk gone'));
+    const up = await viaApi(r, MD, 'text/markdown', 'n.md');
+    spy.mockRestore();
+    expect(up.statusCode).toBe(201);
+    expect(up.json().document).toEqual({ status: 'none' });
+    expect((await app.inject({ method: 'GET', url: `/api/attachments/${up.json().id}/document`, headers: api })).statusCode).toBe(404);
+    expect(await backfillDocuments(db, store, { fornax: true })).toEqual({ texts: 1, queued: 0 });
+    expect((await app.inject({ method: 'GET', url: `/api/attachments/${up.json().id}/document`, headers: api })).statusCode).toBe(200);
+  });
+
+  it('reports a failed text store to onError and still returns the row', async () => {
+    const r = await newReport();
+    const errors: Array<[unknown, string]> = [];
+    const upload = await store.receive(Readable.from([MD]), 'text/markdown');
+    vi.spyOn(store, 'size').mockRejectedValueOnce(new Error('disk gone'));
+    const row = await addAttachment(db, store, config.media, r, upload, 'n.md', { source: 'human', label: 'test' }, { onError: (e, id) => errors.push([e, id]) });
+    expect(row.kind).toBe('document');
+    expect(errors).toHaveLength(1);
+    expect((errors[0]![0] as Error).message).toBe('disk gone');
+    expect(errors[0]![1]).toBe(row.id);
   });
 });

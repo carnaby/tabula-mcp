@@ -43,7 +43,7 @@ export type SyncTiming = {
   /** How long one long poll waits for the job to change, in seconds (Fornax allows up to 30). */
   waitS: number;
 };
-/** How long a recording waits after Fornax did not accept the token. */
+/** How long a job waits to be submitted again after Fornax did not accept the token. */
 const AUTH_RETRY_MS = 60_000;
 const TIMING: SyncTiming = { tickMs: 5000, retryMs: 10_000, waitS: 25 };
 

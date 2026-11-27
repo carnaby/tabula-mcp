@@ -1,7 +1,9 @@
-import { eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
-import { reportDocuments } from '../db/schema.js';
+import { reportAttachments, reportDocuments, reportJobs } from '../db/schema.js';
 import type { MediaStore } from '../media/store.js';
+import { badRequest, conflict, notFound } from './errors.js';
+import { type PendingState, pendingState, startOver } from './jobs.js';
 import type { Attachment } from './reports.js';
 import type { Tx } from './speakers.js';
 import { sliceLines } from './transcripts.js';
@@ -143,4 +145,142 @@ export async function documentPrefixes(
     .from(reportDocuments)
     .where(inArray(reportDocuments.attachmentId, [...attachmentIds]));
   return new Map(rows.map((r) => [r.id, r.prefix]));
+}
+
+/** Queue Fornax reading of a PDF or Office document; one already queued, running, failed or done is left alone. */
+export async function enqueueParse(db: Db, attachmentId: string, now = new Date()): Promise<void> {
+  await db.insert(reportJobs).values({ attachmentId, kind: 'parse', runAfter: now }).onConflictDoNothing();
+}
+
+/**
+ * Store the text Fornax read and finish the job, inside the caller's transaction (the sync checks there, under the same
+ * lock, that the job is still the one Fornax finished). An empty text is stored too: the document was read, it has none.
+ */
+export async function storeParsedDocument(
+  tx: Tx,
+  jobId: string,
+  input: Omit<DocumentInput, 'source' | 'truncated'>,
+  now = new Date(),
+): Promise<{ characters: number }> {
+  const [job] = await tx.select().from(reportJobs).where(eq(reportJobs.id, jobId)).for('update');
+  if (!job) throw notFound(`job ${jobId} does not exist (the document was deleted?)`);
+  const { characters } = await storeDocumentText(tx, job.attachmentId, { ...input, source: 'fornax' }, now);
+  await tx
+    .update(reportJobs)
+    .set({ status: 'done', error: null, note: null, submitting: false, finishedAt: now, updatedAt: now })
+    .where(eq(reportJobs.id, jobId));
+  return { characters };
+}
+
+export type DocumentState =
+  | { status: 'none' }
+  | PendingState
+  | {
+      status: 'done'; source: DocumentReader; model: string | null; pages: number | null; tables: number | null;
+      characters: number; truncated: boolean; createdAt: string;
+    };
+
+/** The text, or the state of its reading, for each document that has either; documents with neither are absent. */
+export async function documentStates(db: Db, attachmentIds: readonly string[], now = new Date()): Promise<Map<string, DocumentState>> {
+  const states = new Map<string, DocumentState>();
+  if (!attachmentIds.length) return states;
+  const ids = [...attachmentIds];
+  const [jobs, texts] = await Promise.all([
+    db
+      .select({
+        attachmentId: reportJobs.attachmentId, status: reportJobs.status, attempts: reportJobs.attempts, error: reportJobs.error,
+        runAfter: reportJobs.runAfter, note: reportJobs.note, progress: reportJobs.progress, progressMessage: reportJobs.progressMessage,
+      })
+      .from(reportJobs)
+      .where(and(inArray(reportJobs.attachmentId, ids), eq(reportJobs.kind, 'parse'))),
+    db
+      .select({
+        attachmentId: reportDocuments.attachmentId, source: reportDocuments.source, model: reportDocuments.model, pages: reportDocuments.pages,
+        tables: reportDocuments.tables, characters: reportDocuments.characters, truncated: reportDocuments.truncated,
+        createdAt: reportDocuments.createdAt,
+      })
+      .from(reportDocuments)
+      .where(inArray(reportDocuments.attachmentId, ids)),
+  ]);
+  for (const j of jobs) {
+    if (j.status !== 'done') states.set(j.attachmentId, pendingState({ ...j, status: j.status }, now));
+  }
+  // A text wins over its job's state: it is what the user wants to see.
+  for (const t of texts) {
+    states.set(t.attachmentId, {
+      status: 'done', source: t.source, model: t.model, pages: t.pages, tables: t.tables, characters: t.characters,
+      truncated: t.truncated, createdAt: t.createdAt.toISOString(),
+    });
+  }
+  return states;
+}
+
+const FORNAX_NEEDED = 'reading PDF and Office documents needs Fornax, which is not enabled on this server (no TABULA_FORNAX_URL)';
+const FILE_GONE = 'the document was deleted after the report was closed; it can no longer be read';
+
+/**
+ * The UI's "Try again" for a document: a text file is read anew from its file; a PDF or Office document without a
+ * text gets a Fornax job, or has its failed one started over. Returns the state the UI shows next.
+ */
+export async function retryDocument(
+  db: Db,
+  store: MediaStore,
+  attachmentId: string,
+  opts: { fornax: boolean },
+  now = new Date(),
+): Promise<DocumentState> {
+  const [a] = await db.select().from(reportAttachments).where(eq(reportAttachments.id, attachmentId));
+  if (!a) throw notFound(`attachment ${attachmentId} does not exist`);
+  const reader = documentReader(a);
+  if (reader === null) throw badRequest('only PDF, Office (DOCX, XLSX, PPTX), text and Markdown documents are read');
+  if (a.purgedAt) throw conflict(FILE_GONE);
+  if (reader === 'file') {
+    if (!(await storeFileText(db, store, a, now))) throw conflict(FILE_GONE);
+  } else {
+    if (!opts.fornax) throw conflict(FORNAX_NEEDED);
+    const [text] = await db.select({ id: reportDocuments.attachmentId }).from(reportDocuments).where(eq(reportDocuments.attachmentId, a.id));
+    if (text) throw conflict('the document has been read already');
+    const queued = await db
+      .insert(reportJobs)
+      .values({ attachmentId: a.id, kind: 'parse', runAfter: now })
+      .onConflictDoUpdate({ target: [reportJobs.attachmentId, reportJobs.kind], set: startOver(now), setWhere: eq(reportJobs.status, 'failed') })
+      .returning({ id: reportJobs.id });
+    if (queued.length === 0) throw conflict('the document is already waiting for Fornax or being read');
+  }
+  return (await documentStates(db, [a.id], now)).get(a.id) ?? { status: 'none' };
+}
+
+/**
+ * Documents uploaded before reading existed: the text of TXT and MD files is stored from disk, PDF and Office
+ * documents on disk get a Fornax job (only when Fornax is on). Documents with a text, or a job of any state, are
+ * left alone, so it can run at every start. A document that cannot be handled goes to onError and the rest go on.
+ */
+export async function backfillDocuments(
+  db: Db,
+  store: MediaStore,
+  opts: { fornax: boolean; onError?: (e: unknown, attachmentId: string) => void },
+  now = new Date(),
+): Promise<{ texts: number; queued: number }> {
+  const rows = await db
+    .select({ a: reportAttachments, jobId: reportJobs.id })
+    .from(reportAttachments)
+    .leftJoin(reportDocuments, eq(reportDocuments.attachmentId, reportAttachments.id))
+    .leftJoin(reportJobs, and(eq(reportJobs.attachmentId, reportAttachments.id), eq(reportJobs.kind, 'parse')))
+    .where(and(eq(reportAttachments.kind, 'document'), isNull(reportAttachments.purgedAt), isNull(reportDocuments.attachmentId)));
+  let texts = 0;
+  let queued = 0;
+  for (const { a, jobId } of rows) {
+    try {
+      const reader = documentReader(a);
+      if (reader === 'file') {
+        if (await storeFileText(db, store, a, now)) texts += 1;
+      } else if (reader === 'fornax' && opts.fornax && jobId === null && (await store.size(a.storageKey)) !== null) {
+        await enqueueParse(db, a.id, now);
+        queued += 1;
+      }
+    } catch (e) {
+      opts.onError?.(e, a.id);
+    }
+  }
+  return { texts, queued };
 }

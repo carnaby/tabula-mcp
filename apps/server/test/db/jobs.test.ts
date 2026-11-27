@@ -172,4 +172,23 @@ describe('transcription jobs', () => {
     await setJob(r.id, IN_FORNAX);
     expect(await transcriptionStatus(db)).toEqual({ queued: 1, running: 1, failed: 0 });
   });
+
+  it('counts documents waiting for Fornax with the recordings', async () => {
+    await queued();
+    const [r] = await db.insert(reports).values({ projectId: 'demo', title: 'Minutes', source: 'human', editedBy: 'human' }).returning();
+    const id = randomUUID();
+    await db.insert(reportAttachments).values({
+      id, reportId: r!.id, kind: 'document', mime: 'application/pdf', size: 10, sha256: 'x', fileName: 'minutes.pdf',
+      storageKey: `${r!.id}/${id}.pdf`, createdBy: 'human',
+    });
+    await db.insert(reportJobs).values({ attachmentId: id, kind: 'parse' });
+    await setJob(id, IN_FORNAX);
+    expect(await transcriptionStatus(db)).toEqual({ queued: 1, running: 1, failed: 0 });
+  });
+
+  it('does not show the state of a document reading as a transcript', async () => {
+    const a = await recording();
+    await db.insert(reportJobs).values({ attachmentId: a.id, kind: 'parse' });
+    expect((await transcriptStates(db, [a.id])).get(a.id)).toBeUndefined();
+  });
 });

@@ -222,8 +222,8 @@ export function fornaxClient(cfg: FornaxConfig, fetchImpl: typeof fetch = fetch)
     },
 
     /** The size limit (`max_mb`) of an input of a job type from GET /api/types; null when the type is not offered or has no such limit. */
-    async inputLimitMb(type: string, input: string): Promise<number | null> {
-      const body = await call('GET', '/api/types');
+    async inputLimitMb(type: string, input: string, signal?: AbortSignal): Promise<number | null> {
+      const body = await call('GET', '/api/types', signal ? { signal } : {});
       if (!isObject(body)) throw unexpected();
       const t = Array.isArray(body.types) ? body.types.find((x: unknown) => isObject(x) && x.name === type) : undefined;
       const inputs = isObject(t) ? t.inputs : undefined;

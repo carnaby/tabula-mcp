@@ -712,6 +712,28 @@ describe('the Fornax sync with documents', () => {
     expect(fake.files.size).toBe(1);
   });
 
+  it('gives the document back without an attempt when stopped while asking for the size limit', async () => {
+    const d = await parsing();
+    let asked = 0;
+    // The size limit never comes on its own: the call ends only when the sync stops.
+    const hanging: FornaxClient = {
+      ...client,
+      inputLimitMb: (_type: string, _input: string, signal?: AbortSignal) => {
+        asked++;
+        return new Promise((_resolve, reject) => signal?.addEventListener('abort', () => reject(signal.reason), { once: true }));
+      },
+    };
+    const sync = newSync(hanging, { tickMs: 50, retryMs: 50, waitS: 1 });
+    sync.start();
+    await vi.waitFor(() => expect(asked).toBe(1), { timeout: 5000 });
+    const t = Date.now();
+    await sync.stop();
+    expect(Date.now() - t).toBeLessThan(3000);
+    expect(await jobOf(d.id)).toMatchObject({ status: 'queued', submitting: false, attempts: 0, fornaxJobId: null, error: null });
+    expect(fake.files.size).toBe(0);
+    expect(logged.filter((l) => l.level !== 'info')).toEqual([]);
+  });
+
   it('speaks of the document when its file is gone or its text cannot be fetched', async () => {
     const missing = await parsing();
     await store.remove(missing.storageKey);

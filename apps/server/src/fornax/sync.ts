@@ -217,8 +217,10 @@ export function createFornaxSync(deps: { db: Db; store: MediaStore; client: Forn
   /** The size limit of a document in Fornax, in MB; null (upload anyway) when there is none or it cannot be read. */
   async function documentLimitMb(job: Claimed): Promise<number | null> {
     try {
-      return await client.inputLimitMb(KINDS.parse.type, KINDS.parse.input);
+      return await client.inputLimitMb(KINDS.parse.type, KINDS.parse.input, stopping.signal);
     } catch (e) {
+      // Stopped: no failure of Fornax; the caller gives the job back.
+      if (stopping.signal.aborted) return null;
       log.warn({ job: job.id, err: loggableError(e) }, 'could not read the size limit of documents in Fornax; uploading the document anyway');
       return null;
     }
@@ -233,6 +235,7 @@ export function createFornaxSync(deps: { db: Db; store: MediaStore; client: Forn
     if (job.kind === 'parse') {
       // Fornax would refuse a larger document only after the whole upload.
       const maxMb = await documentLimitMb(job);
+      if (stopping.signal.aborted) return release(job, clock());
       if (maxMb !== null && size > maxMb * 1024 * 1024) return failClaimed(job, `the document is larger than Fornax takes (${maxMb} MB)`, clock());
     }
     let submitted: FornaxJob;

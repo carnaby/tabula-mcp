@@ -102,6 +102,8 @@ function Editor({
 
   // While a recording waits for the worker or is being transcribed (again), look for its transcript every 10 s.
   const pending = attachments.some((a) => {
+    const doc = a.document;
+    if (doc?.status === 'queued' || doc?.status === 'running') return true;
     const t = a.transcript;
     if (t?.status === 'queued' || t?.status === 'running') return true;
     // A finished transcript being replaced: the page must pick up the new one.
@@ -117,7 +119,7 @@ function Editor({
         setAttachments((list) =>
           list.map((a) => {
             const fresh = latest.attachments.find((x) => x.id === a.id);
-            return fresh ? { ...a, transcript: fresh.transcript, durationMs: fresh.durationMs } : a;
+            return fresh ? { ...a, transcript: fresh.transcript, document: fresh.document, durationMs: fresh.durationMs } : a;
           }),
         );
         reloadWorker();

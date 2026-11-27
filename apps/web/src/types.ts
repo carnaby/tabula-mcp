@@ -135,6 +135,16 @@ export type TranscriptState =
       status: 'done'; language: string | null; model: string; segments: TranscriptSegment[]; createdAt: string;
       diarization: Diarization | null; speakers: Record<string, SpeakerName>; again: TranscribingAgain | null;
     };
+/** A document's text: not read yet, being read, or stored (a text file is read at upload; PDF and Office go through Fornax). */
+export type DocumentState =
+  | { status: 'none' }
+  | ({ status: 'queued' | 'running' | 'failed'; attempts: number; error: string | null; retryAt: string | null; note?: string | null } & TranscriptProgress)
+  | {
+      status: 'done'; source: 'fornax' | 'file'; model: string | null; pages: number | null; tables: number | null;
+      characters: number; truncated: boolean; createdAt: string;
+    };
+/** The stored text of a document (GET /attachments/:id/document). */
+export type DocumentTextView = { text: string; truncated: boolean; characters: number };
 /** The Fornax worker as Fornax reports it; job counts are of open reports. */
 export type WorkerStatus = {
   /** False when the server has no TABULA_FORNAX_URL: recordings are not transcribed. */
@@ -169,6 +179,8 @@ export type Attachment = {
   url: string | null;
   /** Video and audio: the transcript or its state; null (or absent) for photos and frames. */
   transcript?: TranscriptState | null;
+  /** Documents Tabula can read: the text state; null (or absent) for other types. */
+  document?: DocumentState | null;
 };
 export type Report = {
   id: string;
@@ -197,7 +209,7 @@ export type ReportSort = 'createdAt' | 'updatedAt' | 'title' | 'status';
 export type WaitingTranscript = 'running' | 'queued' | 'failed' | 'done';
 /** Something that waits for the user on Home (GET /api/dashboard), oldest first. */
 export type WaitingItem = {
-  type: 'new_report' | 'triaged' | 'transcription_failed' | 'message_waiting';
+  type: 'new_report' | 'triaged' | 'transcription_failed' | 'document_failed' | 'message_waiting';
   /** The report or message. */
   id: string;
   ref: string;
@@ -210,7 +222,7 @@ export type WaitingItem = {
   /** Video, audio and documents still on disk: what closing deletes, so the close confirmation names them. */
   media: number;
   transcript: WaitingTranscript | null;
-  /** transcription_failed: the recording, its file name and the error. */
+  /** transcription_failed, document_failed: the recording or document, its file name and the error. */
   attachment_id?: string;
   file_name?: string;
   error?: string | null;

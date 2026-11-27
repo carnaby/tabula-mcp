@@ -589,6 +589,21 @@ div.file-group__head { cursor: default; }
 }
 .att-doc[data-focused] { border-color: var(--accent-strong); box-shadow: 0 0 0 2px var(--ring); }
 .att-doc__text { flex: 1; min-width: 0; display: grid; gap: 2px; font-size: var(--text-sm); }
+.att-doc { flex-wrap: wrap; }
+/* The reading state under the file name, and the exact text (plain text, never rendered as Markdown). */
+.att-doc .doc-status { flex-basis: 100%; padding: 0; }
+.doc-text {
+  flex-basis: 100%;
+  margin: 0;
+  max-height: 60vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 13px/1.6 var(--font-mono);
+  background: var(--surface-2);
+  border-radius: var(--radius-md);
+  padding: 8px 10px;
+}
 /* Opened on an attachment (#/reports/<id>?attachment=<id>): scrolled into view below the sticky top and editor bars. */
 .att, .att-doc, .att__frame-wrap { scroll-margin-top: 120px; }
 .att__thumb { display: block; aspect-ratio: 4 / 3; background: var(--surface-2); }
@@ -836,6 +851,7 @@ span.transcript__time { color: var(--text-subtle); }
   color: var(--text-muted);
 }
 .waiting-row__icon[data-type='new_report'] { background: var(--accent-soft); color: var(--accent-soft-fg); }
+.waiting-row__icon[data-type='document_failed'],
 .waiting-row__icon[data-type='transcription_failed'] { background: var(--danger-soft); color: var(--danger-soft-fg); }
 .waiting-row__body { flex: 1; min-width: 0; display: grid; gap: 4px; }
 .waiting-row__title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: inherit; text-decoration: none; }

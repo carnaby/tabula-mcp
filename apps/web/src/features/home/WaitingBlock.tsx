@@ -15,6 +15,7 @@ const KIND: Record<WaitingItem['type'], { icon: IconName; label: string }> = {
   new_report: { icon: 'inbox', label: 'New report' },
   triaged: { icon: 'bot', label: 'Triaged' },
   transcription_failed: { icon: 'alert', label: 'Transcription failed' },
+  document_failed: { icon: 'alert', label: 'Reading failed' },
   message_waiting: { icon: 'mail', label: 'Message' },
 };
 
@@ -89,9 +90,10 @@ function WaitingRow({
   const { confirm } = useConfirm();
   const [busy, setBusy] = useState(false);
   const kind = KIND[w.type];
+  const failedFile = w.type === 'transcription_failed' || w.type === 'document_failed';
   const open = w.type === 'message_waiting'
     ? href.message(w.id, href.home())
-    : w.type === 'transcription_failed' && w.attachment_id ? href.attachment(w.id, w.attachment_id, href.home()) : href.report(w.id, undefined, href.home());
+    : failedFile && w.attachment_id ? href.attachment(w.id, w.attachment_id, href.home()) : href.report(w.id, undefined, href.home());
 
   const copy = async () => {
     if (prompt === undefined) return;
@@ -123,7 +125,8 @@ function WaitingRow({
     if (!w.attachment_id) return;
     setBusy(true);
     try {
-      await api.retryTranscript(w.attachment_id);
+      if (w.type === 'document_failed') await api.retryDocument(w.attachment_id);
+      else await api.retryTranscript(w.attachment_id);
       invalidate('reports');
       notify('Sent to the worker again');
     } catch (e) {
@@ -147,7 +150,7 @@ function WaitingRow({
               ? <Badge tone="neutral">Transcription not enabled</Badge>
               : <Badge tone={TRANSCRIPT[w.transcript].tone}>{TRANSCRIPT[w.transcript].label}</Badge>
           )}
-          {w.type === 'transcription_failed' && <span className="t-subtle t-truncate" title={w.error ?? undefined}>{w.file_name}</span>}
+          {failedFile && <span className="t-subtle t-truncate" title={w.error ?? undefined}>{w.file_name}</span>}
           {w.type === 'message_waiting' && w.from && (
             <span className="waiting-row__from t-subtle" title={senderTitle({ from: w.from, via: w.via, sender: w.sender })}>
               <span className="t-truncate">from {senderText({ from: w.from, via: w.via, sender: w.sender })}</span>
@@ -162,7 +165,7 @@ function WaitingRow({
         <ButtonLink size="sm" href={open} aria-label={`Open: ${w.title}`}>Open</ButtonLink>
         {w.type === 'new_report' && <Button size="sm" icon="copy" disabled={prompt === undefined} aria-label={`Copy for Claude: ${w.title}`} onClick={() => void copy()}>Copy for Claude</Button>}
         {w.type === 'triaged' && <Button size="sm" icon="check" loading={busy} aria-label={`Mark done: ${w.title}`} onClick={() => void markDone()}>Mark done</Button>}
-        {w.type === 'transcription_failed' && <Button size="sm" icon="refresh" loading={busy} aria-label={`Try again: ${w.title}${w.file_name ? ` (${w.file_name})` : ''}`} onClick={() => void retry()}>Try again</Button>}
+        {failedFile && <Button size="sm" icon="refresh" loading={busy} aria-label={`Try again: ${w.title}${w.file_name ? ` (${w.file_name})` : ''}`} onClick={() => void retry()}>Try again</Button>}
       </div>
     </li>
   );

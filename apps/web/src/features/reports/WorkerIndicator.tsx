@@ -7,7 +7,7 @@ export type WorkerTone = 'idle' | 'busy' | 'waiting' | 'offline';
 export function workerSummary(s: WorkerStatus): { tone: WorkerTone; label: string } {
   if (s.online === null) return { tone: 'offline', label: 'Fornax unreachable' };
   if (s.online) {
-    if (s.running > 0) return { tone: 'busy', label: s.queued > 0 ? `Transcribing · ${s.queued} waiting` : 'Transcribing' };
+    if (s.running > 0) return { tone: 'busy', label: s.queued > 0 ? `Working · ${s.queued} waiting` : 'Working' };
     return { tone: 'idle', label: 'Worker' };
   }
   const waiting = s.queued + s.running;
@@ -15,9 +15,9 @@ export function workerSummary(s: WorkerStatus): { tone: WorkerTone; label: strin
 }
 
 const STATE_TEXT = {
-  unreachable: 'Fornax cannot be reached right now, so the worker\'s state is unknown. Recordings wait and are tried again.',
+  unreachable: 'Fornax cannot be reached right now, so the worker\'s state is unknown. Files wait and are tried again.',
   online: 'The Fornax worker is online.',
-  offline: 'The Fornax worker is offline. Recordings wait until it is back.',
+  offline: 'The Fornax worker is offline. Files wait until it is back.',
 };
 
 /**
@@ -34,7 +34,7 @@ export function WorkerIndicator({ status, align = 'start', className }: { status
       align={align}
       className={cx('worker-ind', className)}
       triggerClassName="worker-ind__trigger"
-      triggerLabel={`${label}. Transcription worker details`}
+      triggerLabel={`${label}. Fornax worker details`}
       triggerTitle={label}
       trigger={
         <>
@@ -45,7 +45,7 @@ export function WorkerIndicator({ status, align = 'start', className }: { status
     >
       {(_close, labelId) => (
         <div className="worker-ind__panel">
-          <p id={labelId} className="worker-ind__title">Transcription worker</p>
+          <p id={labelId} className="worker-ind__title">Fornax worker</p>
           <p>{state}{status.online !== null && status.offered === false && ' It does not offer transcription.'}</p>
           <dl className="worker-ind__counts">
             <div><dt>Waiting</dt><dd>{status.queued}</dd></div>

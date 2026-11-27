@@ -38,11 +38,11 @@ type Content = Array<{ type: string; text: string }>;
 const textOf = (r: { content?: unknown }) => (r.content as Content)[0]!.text;
 
 describe('MCP endpoint', () => {
-  it('exposes exactly the twenty-eight tools', async () => {
+  it('exposes exactly the twenty-nine tools', async () => {
     const client = await connect('/mcp', bearer);
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
-      'create_report', 'delete_file', 'deprecate', 'edit_transcript', 'find_notes', 'find_thoughts', 'get', 'get_frame', 'get_message', 'get_report', 'get_transcript',
+      'create_report', 'delete_file', 'deprecate', 'edit_transcript', 'find_notes', 'find_thoughts', 'get', 'get_document', 'get_frame', 'get_message', 'get_report', 'get_transcript',
       'list_files', 'list_messages', 'list_projects', 'list_reports', 'name_speakers', 'read_file', 'recall', 'remember', 'save_thought', 'search', 'send_message', 'setup_project',
       'update_message', 'update_report', 'update_thought', 'view_attachment', 'write_file',
     ]);
@@ -58,6 +58,7 @@ describe('MCP endpoint', () => {
     expect(ins).toContain('run `tabula status` before the first `tabula push`');
     expect(ins).toContain('find_notes');
     expect(ins).toContain('get_transcript');
+    expect(ins).toContain('get_document');
     expect(ins).toContain('name them with name_speakers and mention it in the triage');
     expect(ins).toMatch(/`tabula` command is not available.*write_file/s);
     expect(ins).toContain('tabula:d86d86e7');

@@ -466,7 +466,7 @@ export async function attachmentImage(db: Db, store: MediaStore, paths: FfmpegPa
   const a = await requireAttachment(db, id);
   if (a.kind === 'frame') return { attachment: a, image: await readAll(store, a.storageKey), mime: 'image/jpeg' };
   if (a.kind === 'document') {
-    throw badRequest(`attachment ${id} is a document (${a.fileName}); its content cannot be read yet: there is no image or text of it`);
+    throw badRequest(`attachment ${id} is a document (${a.fileName}); read its text with get_document`);
   }
   if (a.kind !== 'image') {
     throw badRequest(`attachment ${id} is ${a.kind === 'audio' ? 'an audio recording' : 'a video'}; use get_frame for a still from a video`);

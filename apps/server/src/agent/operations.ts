@@ -2,7 +2,10 @@ import { sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { AGENT_READ_ONLY, badRequest, DomainError, forbidden, notFound } from '../domain/errors.js';
 import { getFile, listFiles, type ProjectFile } from '../domain/files.js';
-import { isRecording, type TranscriptState, transcriptStates } from '../domain/jobs.js';
+import {
+  DOCUMENT_LIMITS, type DocumentState, documentHead, documentPrefixes, documentReader, documentStates, getDocumentText,
+} from '../domain/documents.js';
+import { isRecording, type PendingState, type TranscriptState, transcriptStates } from '../domain/jobs.js';
 import { createMemory, deprecateMemory, type Memory } from '../domain/memories.js';
 import { findMessageByRef } from '../domain/messages.js';
 import { findNotes, type Note, type NoteHit } from '../domain/notes.js';
@@ -188,7 +191,7 @@ const kindText = (a: Attachment): string =>
 
 /**
  * A photo or frame as an image with its details; a video or voice note as details and where its transcript is;
- * a document as its details only.
+ * a document as its details, the state of its text and the beginning of it.
  */
 async function attachmentBlocks(ctx: AgentContext, a: Attachment, report: Report): Promise<AgentBlock[]> {
   const isImage = a.kind === 'frame' || a.kind === 'image';
@@ -196,8 +199,13 @@ async function attachmentBlocks(ctx: AgentContext, a: Attachment, report: Report
   const m = isImage || !a.purgedAt ? requireMedia(ctx) : ctx.media;
   const view = { ...attachmentForAgent(a, m), report: refOf(report.id), report_title: report.title };
   if (a.kind === 'document') {
-    const note = a.purgedAt ? 'a document: its content cannot be read yet' : 'a document: its content cannot be read yet; the url downloads the file';
-    return [jsonBlock({ ...view, note })];
+    const state = (await documentStates(ctx.db, [a.id])).get(a.id);
+    const prefix = state?.status === 'done' && state.characters > 0 ? (await documentPrefixes(ctx.db, [a.id])).get(a.id) : undefined;
+    return [jsonBlock({
+      ...view,
+      document: documentForAgent(a, state, ctx.transcriptionEnabled !== false, { prefix }),
+      ...(documentReader(a) !== null ? { next: `call get_document with attachment_id "${refOf(a.id)}" for all of its text` } : {}),
+    })];
   }
   if (isImage) {
     const { image, mime } = await attachmentImage(ctx.db, m!.store, m!.paths, a.id);
@@ -421,16 +429,70 @@ function pendingText(s: TranscriptState | undefined, transcriptionEnabled = true
     return `it is being transcribed right now${done}; ask again in a minute`;
   }
   if (s.status === 'failed') return `the transcription failed (${s.error ?? 'unknown error'}); the user can retry it in the Tabula app`;
-  const queued = s.status === 'queued' ? s : null;
+  return waitingText(s.status === 'queued' ? s : null, 'recording');
+}
+
+/** A job waiting for Fornax (or for its next try after a failed submit), for a recording or a document. */
+function waitingText(queued: Extract<PendingState, { status: 'queued' }> | null, noun: 'recording' | 'document'): string {
   // A failed submit waits for its next try (Fornax unreachable, an upload error).
   if (queued?.error) {
     const next = queued.retryAt ? `it is tried again at ${queued.retryAt}` : 'it is tried again within seconds';
-    return `waiting for Fornax: submitting the recording failed (${queued.error}); ${next}`;
+    return `waiting for Fornax: submitting the ${noun} failed (${queued.error}); ${next}`;
   }
   // Fornax's note starts with "waiting" and may already say that asking again changes nothing.
   const note = queued?.note?.replace(/^waiting\s*[:,]\s*/i, '') || null;
   if (note && /asking again changes nothing/i.test(note)) return `waiting for Fornax: ${note}`;
   return `waiting for Fornax${note ? `: ${note}` : ''}; ask again later`;
+}
+
+const mimeBase = (a: Attachment): string => (a.mime.split(';')[0] ?? '').trim().toLowerCase();
+
+/** Why a document has no text (yet), in words an agent can pass on. */
+function documentNote(a: Attachment, s: DocumentState | undefined, fornaxEnabled: boolean): string {
+  const reader = documentReader(a);
+  if (reader === null) {
+    return `its content cannot be read: Tabula reads PDF, Office (DOCX, XLSX, PPTX), text and Markdown documents, not this type${a.purgedAt ? '' : '; the url downloads the file'}`;
+  }
+  if (reader === 'fornax' && !fornaxEnabled) {
+    return 'its content cannot be read: reading PDF and Office documents needs Fornax, which is not enabled on this server (no TABULA_FORNAX_URL)';
+  }
+  if (!s || s.status === 'none') {
+    return a.purgedAt ? 'the file was deleted before its text was stored' : 'it has not been read yet; the user can start it with "Read text" in the Tabula app';
+  }
+  if (s.status === 'running') return `it is being read right now${s.progress !== null ? ` (${s.progress} % done)` : ''}; ask again in a minute`;
+  if (s.status === 'failed') return `reading the document failed (${s.error ?? 'unknown error'}); the user can retry it in the Tabula app`;
+  if (s.status === 'queued') return waitingText(s, 'document');
+  return 'no text found in the document';
+}
+
+/**
+ * A document as get_report and get show it: the state of its text, and its beginning when `prefix` is given
+ * (the start of the stored text); with `readMore` a document shown without its beginning says where to read it.
+ */
+function documentForAgent(a: Attachment, s: DocumentState | undefined, fornaxEnabled: boolean, opts: { prefix?: string; readMore?: boolean }) {
+  if (s?.status !== 'done') {
+    const reader = documentReader(a);
+    const status = reader === null || (reader === 'fornax' && !fornaxEnabled) ? 'none' : (s?.status ?? 'none');
+    return { status, note: documentNote(a, s, fornaxEnabled) };
+  }
+  const counts = {
+    ...(s.pages !== null ? { pages: s.pages } : {}),
+    ...(s.tables !== null ? { tables: s.tables } : {}),
+    characters: s.characters,
+    ...(s.truncated ? { truncated: true as const } : {}),
+  };
+  if (s.characters === 0) return { status: 'done' as const, ...counts, note: documentNote(a, s, fornaxEnabled) };
+  const ref = refOf(a.id);
+  if (opts.prefix === undefined) {
+    return { status: 'done' as const, ...counts, ...(opts.readMore ? { more: `read its text with get_document with attachment_id "${ref}"` } : {}) };
+  }
+  const head = documentHead(opts.prefix, s.characters);
+  return {
+    status: 'done' as const, ...counts, text: head.text,
+    ...(head.next !== null
+      ? { more: `the document continues (${s.characters} characters): call get_document with attachment_id "${ref}" and offset ${head.next}` }
+      : {}),
+  };
 }
 
 function transcriptForAgent(a: Attachment, s: TranscriptState | undefined, transcriptionEnabled: boolean) {
@@ -502,9 +564,22 @@ export async function agentGetReport(ctx: AgentContext, id: string) {
   const r = await requireReportRef(ctx, id);
   const files = await listAttachments(ctx.db, r.id);
   const states = await transcriptStates(ctx.db, files.filter(isRecording).map((a) => a.id));
+  const documents = files.filter((a) => a.kind === 'document');
+  const texts = await documentStates(ctx.db, documents.map((a) => a.id));
+  // Only the first documents with a text show its beginning; the others say where to read it.
+  const shown = documents
+    .filter((a) => { const t = texts.get(a.id); return t?.status === 'done' && t.characters > 0; })
+    .slice(0, DOCUMENT_LIMITS.headsPerReport)
+    .map((a) => a.id);
+  const prefixes = await documentPrefixes(ctx.db, shown);
+  const fornaxEnabled = ctx.transcriptionEnabled !== false;
   return {
     ...reportForAgent(r),
-    attachments: files.map((a) => ({ ...attachmentForAgent(a, m), ...transcriptForAgent(a, states.get(a.id), ctx.transcriptionEnabled !== false) })),
+    attachments: files.map((a) => ({
+      ...attachmentForAgent(a, m),
+      ...transcriptForAgent(a, states.get(a.id), fornaxEnabled),
+      ...(a.kind === 'document' ? { document: documentForAgent(a, texts.get(a.id), fornaxEnabled, { prefix: prefixes.get(a.id), readMore: true }) } : {}),
+    })),
   };
 }
 
@@ -580,6 +655,37 @@ export async function agentGetTranscript(ctx: AgentContext, input: { attachment_
   ].join(' · ');
   const footer = part.next !== null ? [`[… part ends at character ${part.next} of ${lines.length} — call get_transcript again with offset: ${part.next}]`] : [];
   return [`[${head}]`, ...(view.header ? [view.header] : []), part.text || '(no speech in the recording)', ...footer].join('\n');
+}
+
+/** The text of a document, in parts of DOCUMENT_LIMITS.chunk characters cut at line breaks. */
+export async function agentGetDocument(ctx: AgentContext, input: { attachment_id: string; offset?: number }): Promise<string> {
+  const id = await resolveAttachmentId(ctx, input.attachment_id);
+  const a = await requireAttachment(ctx.db, id);
+  if (a.kind === 'video' || a.kind === 'audio') throw badRequest(`attachment ${id} is ${kindText(a)}; read its transcript with get_transcript`);
+  if (a.kind === 'image' || a.kind === 'frame') throw badRequest(`attachment ${id} is ${kindText(a)}; look at it with view_attachment`);
+  if (documentReader(a) === null) {
+    throw badRequest(`attachment ${id} is a document Tabula cannot read (${mimeBase(a)}); the url in get_report downloads it`);
+  }
+  const doc = await getDocumentText(ctx.db, id);
+  if (!doc) {
+    const s = (await documentStates(ctx.db, [id])).get(id);
+    throw notFound(`attachment ${id} has no text yet: ${documentNote(a, s, ctx.transcriptionEnabled !== false)}`);
+  }
+  const total = doc.text.length;
+  const offset = Math.max(0, Math.trunc(input.offset ?? 0));
+  if (offset > 0 && offset >= total) return `[offset ${offset} is past the end of the document (${total} characters)]`;
+  const part = sliceLines(doc.text, offset, DOCUMENT_LIMITS.chunk);
+  const head = [
+    `document ${a.fileName}`,
+    `report ${refOf(a.reportId)}`,
+    ...(doc.pages !== null ? [`${doc.pages} pages`] : []),
+    ...(doc.tables !== null ? [`${doc.tables} tables`] : []),
+    `${total} characters`,
+    ...(doc.truncated ? [`truncated: only the first ${DOCUMENT_LIMITS.chars} characters were kept`] : []),
+    ...(offset ? [`from character ${offset}`] : []),
+  ].join(' · ');
+  const footer = part.next !== null ? [`[… part ends at character ${part.next} of ${total} — call get_document again with offset: ${part.next}]`] : [];
+  return [`[${head}]`, part.text || '(no text found in the document)', ...footer].join('\n');
 }
 
 /** name_speakers: an agent names S1, S2 ... when the transcript makes clear who is who; the user's names stay. */

@@ -17,6 +17,12 @@ async function submitted(params: Record<string, unknown> = { diarize: true }) {
   return { client, job: await client.submit({ params, fileId: id }) };
 }
 
+async function submittedParse() {
+  const client = fornaxClient(cfg());
+  const { id } = await client.uploadFile('a.pdf', Readable.from([Buffer.from('%PDF-')]), 5);
+  return { client, job: await client.submit({ type: 'document-parse', input: 'document', params: { ocr: 'auto' }, fileId: id }) };
+}
+
 describe('fornaxClient', () => {
   it('streams the upload with the name and returns the file id', async () => {
     const client = fornaxClient(cfg());
@@ -46,6 +52,36 @@ describe('fornaxClient', () => {
     const j2 = await low.submit({ params: {}, fileId: f.id });
     expect(fake.jobs.get(j2.id)!.priority).toBe('low');
     expect(client).toBeDefined();
+  });
+
+  it('submits a document-parse job with its input name', async () => {
+    const client = fornaxClient(cfg());
+    const { id } = await client.uploadFile('a.pdf', Readable.from([Buffer.from('%PDF-')]), 5);
+    const job = await client.submit({ type: 'document-parse', input: 'document', params: { ocr: 'auto' }, fileId: id });
+    expect(fake.jobs.get(job.id)).toMatchObject({ type: 'document-parse', inputs: { document: id }, params: { ocr: 'auto' }, priority: 'high', group: 'tabula' });
+  });
+
+  it('returns an output as text, exactly', async () => {
+    const { client, job } = await submittedParse();
+    const md = '# Zápis\n\n- [ ] a & b\n> quote\n';
+    fake.setJob(job.id, { state: 'succeeded', files: new Map([['document.md', md]]) });
+    expect(await client.outputText(job.id, 'document.md')).toBe(md);
+  });
+
+  it('lists the outputs of a job with their meta, and takes an answer without them', async () => {
+    const { client, job } = await submittedParse();
+    expect((await client.job(job.id))!.outputs).toBeNull();
+    const meta = { path: 'text', kind: 'md', pages: 0, tables: 1, characters: 736, seconds: 20.4, peak_vram_mib: 0, docling: '2.151.1' };
+    fake.setJob(job.id, { state: 'succeeded', outputs: [{ name: 'document.md', kind: 'file', size: 736, meta }, { name: 'document.json', kind: 'file', size: 9, meta: 'x' as never }] });
+    expect((await client.job(job.id))!.outputs).toEqual([{ name: 'document.md', meta }, { name: 'document.json', meta: null }]);
+  });
+
+  it('tells the size limit of an input from /api/types, null when the type is not offered', async () => {
+    const client = fornaxClient(cfg());
+    expect(await client.inputLimitMb('document-parse', 'document')).toBe(200);
+    expect(await client.inputLimitMb('transcribe', 'audio')).toBe(2048);
+    fake.worker.parses = false;
+    expect(await client.inputLimitMb('document-parse', 'document')).toBeNull();
   });
 
   it('maps progress and the change value of a job', async () => {

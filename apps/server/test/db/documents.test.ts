@@ -39,7 +39,7 @@ async function document(opts: { mime?: string; ext?: string; body?: Buffer | nul
 
 describe('document text', () => {
   it('reads a text file exactly, without the BOM', async () => {
-    const a = await document({ body: Buffer.from('﻿# Zápis\r\n\n- [ ] úloha & ďalšia\n', 'utf8') });
+    const a = await document({ body: Buffer.from('\uFEFF# Zápis\r\n\n- [ ] úloha & ďalšia\n', 'utf8') });
     expect(await readTextFile(store, a.storageKey)).toEqual({ text: '# Zápis\r\n\n- [ ] úloha & ďalšia\n', truncated: false });
   });
 

@@ -2,16 +2,35 @@ import { and, asc, eq, inArray, isNotNull, isNull, lte, notInArray } from 'drizz
 import { z } from 'zod';
 import type { Db } from '../db/client.js';
 import { projects, reportAttachments, reportJobs, reports } from '../db/schema.js';
+import { storeParsedDocument } from '../domain/documents.js';
 import { DomainError, loggableError } from '../domain/errors.js';
-import { cleanError, MAX_ATTEMPTS, MEDIA_GONE, type Progress, retryDelayMs, storeTranscript, type TranscriptInput } from '../domain/jobs.js';
+import {
+  cleanError, DOCUMENT_GONE, type JobKind, MAX_ATTEMPTS, MEDIA_GONE, type Progress, retryDelayMs, storeTranscript, type TranscriptInput,
+} from '../domain/jobs.js';
 import type { MediaStore } from '../media/store.js';
 import { type FornaxClient, FornaxError, type FornaxJob } from './client.js';
 
 export const FORNAX_CANCELED = 'the job was canceled in Fornax';
 export const FORNAX_FORGOT = 'Fornax no longer knows this job';
-const TRANSCRIPT_OUTPUT = 'transcript.json';
+/** What Fornax does with each kind of job: its job type, the name of its input and output, what it reads. */
+const KINDS: Record<JobKind, { type: string; input: string; output: string; what: 'recording' | 'document'; gone: string }> = {
+  transcribe: { type: 'transcribe', input: 'audio', output: 'transcript.json', what: 'recording', gone: MEDIA_GONE },
+  parse: { type: 'document-parse', input: 'document', output: 'document.md', what: 'document', gone: DOCUMENT_GONE },
+};
+/** How the logs and errors name the work of a job (a transcription's texts stay as they always were). */
+const WORDS: Record<JobKind, { work: string; failed: string; unreadable: string; changed: string }> = {
+  transcribe: {
+    work: 'a transcription', failed: 'the transcription failed', unreadable: 'the recording could not be read', changed: 'the transcription',
+  },
+  parse: {
+    work: 'the reading of a document', failed: 'reading it failed', unreadable: 'the document file could not be read',
+    changed: 'the reading of the document',
+  },
+};
 /** Fornax takes an initial prompt of up to 1000 characters. */
 const PROMPT_MAX = 1000;
+/** The largest value of an integer column. */
+const INT_MAX = 2_147_483_647;
 
 type LogFn = (obj: object, msg: string) => void;
 export type SyncLog = { info: LogFn; warn: LogFn; error: LogFn };
@@ -55,9 +74,27 @@ function transcriptInput(raw: unknown): TranscriptInput {
   };
 }
 
-type Claimed = { id: string; attempts: number; attachmentId: string; storageKey: string; purgedAt: Date | null; project: string | null };
+/**
+ * What Fornax says about the text of a document (the `meta` of its output document.md): the page and table counts
+ * when they are whole numbers a column holds, and the docling version as the model. Anything else is left out.
+ */
+function documentMeta(meta: Record<string, unknown> | null): { model: string | null; pages: number | null; tables: number | null } {
+  const count = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= INT_MAX ? v : null);
+  const docling = meta?.docling;
+  return {
+    model: typeof docling === 'string' && /^[\x20-\x7e]{1,100}$/.test(docling) ? `docling ${docling}` : null,
+    pages: count(meta?.pages),
+    tables: count(meta?.tables),
+  };
+}
+
+type Claimed = {
+  id: string; kind: JobKind; attempts: number; attachmentId: string; storageKey: string; purgedAt: Date | null; project: string | null;
+};
 /** A job Fornax works on, as last stored here; `fornaxChange` also as last seen (kept in memory between stored states). */
-type Followed = { id: string; fornaxJobId: string; fornaxChange: string | null; status: 'queued' | 'running'; note: string | null } & Progress;
+type Followed = {
+  id: string; kind: JobKind; fornaxJobId: string; fornaxChange: string | null; status: 'queued' | 'running'; note: string | null;
+} & Progress;
 
 const NO_PROGRESS: Progress = { progress: null, progressMessage: null };
 
@@ -77,11 +114,12 @@ function progressOf(job: FornaxJob): Progress {
 }
 
 /**
- * Moves transcription jobs to Fornax and back. Submitting: a due queued job is claimed (FOR UPDATE SKIP LOCKED, then
- * `submitting` marks it outside the transaction), its recording is uploaded, the job submitted, and the Fornax id
- * saved. Following: each job with a Fornax id is asked about until Fornax finishes it; the transcript is then fetched
- * and stored. Every write after a call to Fornax checks that the row is still the job the call was about (it may have
- * been retried, transcribed again, or failed because its recording was deleted meanwhile).
+ * Moves jobs to Fornax and back: transcriptions of recordings and readings of documents (`KINDS`). Submitting: a due
+ * queued job is claimed (FOR UPDATE SKIP LOCKED, then `submitting` marks it outside the transaction), its file is
+ * uploaded, the job submitted, and the Fornax id saved. Following: each job with a Fornax id is asked about until Fornax
+ * finishes it; the transcript or the text is then fetched and stored. Every write after a call to Fornax checks that the
+ * row is still the job the call was about (it may have been retried, transcribed again, or failed because its file was
+ * deleted meanwhile).
  */
 export function createFornaxSync(deps: { db: Db; store: MediaStore; client: FornaxClient; log: SyncLog; timing?: Partial<SyncTiming> }) {
   const { db, store, client, log } = deps;
@@ -116,7 +154,7 @@ export function createFornaxSync(deps: { db: Db; store: MediaStore; client: Forn
       await tx.update(reportJobs).set({ submitting: true, updatedAt: now }).where(eq(reportJobs.id, next.id));
       const [row] = await tx
         .select({
-          id: reportJobs.id, attempts: reportJobs.attempts, attachmentId: reportJobs.attachmentId,
+          id: reportJobs.id, kind: reportJobs.kind, attempts: reportJobs.attempts, attachmentId: reportJobs.attachmentId,
           storageKey: reportAttachments.storageKey, purgedAt: reportAttachments.purgedAt, project: projects.name,
         })
         .from(reportJobs)
@@ -152,7 +190,9 @@ export function createFornaxSync(deps: { db: Db; store: MediaStore; client: Forn
       .set({ submitting: false, note, runAfter: new Date(now.getTime() + AUTH_RETRY_MS), updatedAt: now })
       .where(stillClaimed(job.id))
       .returning({ id: reportJobs.id });
-    if (row) log.warn({ job: job.id, err: loggableError(e) }, 'Fornax does not accept the token; the recording waits and is submitted again later');
+    if (row) {
+      log.warn({ job: job.id, err: loggableError(e) }, `Fornax does not accept the token; the ${KINDS[job.kind].what} waits and is submitted again later`);
+    }
   }
 
   /** A failed upload or submit: back to the queue after a back-off, or failed after the last attempt or a refusal. */
@@ -170,15 +210,31 @@ export function createFornaxSync(deps: { db: Db; store: MediaStore; client: Forn
       .where(stillClaimed(job.id));
     log.warn(
       { job: job.id, attempts, err: loggableError(e) },
-      final ? 'could not submit a recording to Fornax; the transcription failed' : 'could not submit a recording to Fornax; trying again later',
+      `could not submit a ${KINDS[job.kind].what} to Fornax; ${final ? WORDS[job.kind].failed : 'trying again later'}`,
     );
+  }
+
+  /** The size limit of a document in Fornax, in MB; null (upload anyway) when there is none or it cannot be read. */
+  async function documentLimitMb(job: Claimed): Promise<number | null> {
+    try {
+      return await client.inputLimitMb(KINDS.parse.type, KINDS.parse.input);
+    } catch (e) {
+      log.warn({ job: job.id, err: loggableError(e) }, 'could not read the size limit of documents in Fornax; uploading the document anyway');
+      return null;
+    }
   }
 
   /** `clock`: an upload may take hours, so every write takes the time anew. */
   async function submit(job: Claimed, clock: () => Date): Promise<void> {
     if (stopping.signal.aborted) return release(job, clock());
+    const kind = KINDS[job.kind];
     const size = job.purgedAt ? null : await store.size(job.storageKey);
-    if (size === null) return failClaimed(job, MEDIA_GONE, clock());
+    if (size === null) return failClaimed(job, kind.gone, clock());
+    if (job.kind === 'parse') {
+      // Fornax would refuse a larger document only after the whole upload.
+      const maxMb = await documentLimitMb(job);
+      if (maxMb !== null && size > maxMb * 1024 * 1024) return failClaimed(job, `the document is larger than Fornax takes (${maxMb} MB)`, clock());
+    }
     let submitted: FornaxJob;
     // A fresh stream for every attempt: a stream an attempt read cannot be sent again.
     const body = store.open(job.storageKey);
@@ -191,14 +247,18 @@ export function createFornaxSync(deps: { db: Db; store: MediaStore; client: Forn
       // The name carries the extension Fornax checks, not the user's file name.
       const name = job.storageKey.slice(job.storageKey.lastIndexOf('/') + 1);
       const file = await client.uploadFile(name, body, size, stopping.signal);
-      const params = { diarize: true, ...(job.project ? { initial_prompt: [...job.project].slice(0, PROMPT_MAX).join('') } : {}) };
-      submitted = await client.submit({ params, fileId: file.id }, stopping.signal);
+      const params = job.kind === 'parse'
+        ? { ocr: 'auto' }
+        : { diarize: true, ...(job.project ? { initial_prompt: [...job.project].slice(0, PROMPT_MAX).join('') } : {}) };
+      submitted = await client.submit({ params, fileId: file.id, type: kind.type, input: kind.input }, stopping.signal);
     } catch (e) {
       // Stopped: the abort is no failure of Fornax and costs no attempt.
       if (stopping.signal.aborted && !(e instanceof FornaxError)) return release(job, clock());
       // The code only: the error's message holds the file's path on this host.
       if (e instanceof FornaxError && e.auth && !readError) return submitRefused(job, e, clock());
-      const failure = readError ? new Error(`the recording could not be read (${(readError as NodeJS.ErrnoException).code ?? 'read error'})`, { cause: e }) : e;
+      const failure = readError
+        ? new Error(`${WORDS[job.kind].unreadable} (${(readError as NodeJS.ErrnoException).code ?? 'read error'})`, { cause: e })
+        : e;
       return submitFailed(job, failure, clock());
     } finally {
       body.destroy();
@@ -212,8 +272,8 @@ export function createFornaxSync(deps: { db: Db; store: MediaStore; client: Forn
       })
       .where(stillClaimed(job.id))
       .returning({ id: reportJobs.id });
-    if (saved.length) log.info({ job: job.id, fornax: submitted.id }, 'submitted a recording to Fornax');
-    else log.warn({ job: job.id, fornax: submitted.id }, 'the transcription changed while it was submitted to Fornax; its Fornax job is not followed');
+    if (saved.length) log.info({ job: job.id, fornax: submitted.id }, `submitted a ${kind.what} to Fornax`);
+    else log.warn({ job: job.id, fornax: submitted.id }, `${WORDS[job.kind].changed} changed while it was submitted to Fornax; its Fornax job is not followed`);
   }
 
   /** Submit every due job, one after another. */
@@ -227,7 +287,7 @@ export function createFornaxSync(deps: { db: Db; store: MediaStore; client: Forn
         await submit(job, clock);
       } catch (e) {
         // A database error after the claim: the job stays marked until the next start of the sync takes it back.
-        log.error({ job: job.id, err: loggableError(e) }, 'could not submit a recording to Fornax');
+        log.error({ job: job.id, err: loggableError(e) }, `could not submit a ${KINDS[job.kind].what} to Fornax`);
       }
     }
   }
@@ -236,8 +296,8 @@ export function createFornaxSync(deps: { db: Db; store: MediaStore; client: Forn
   const followedJobs = (): Promise<Followed[]> =>
     db
       .select({
-        id: reportJobs.id, fornaxJobId: reportJobs.fornaxJobId, fornaxChange: reportJobs.fornaxChange, status: reportJobs.status, note: reportJobs.note,
-        progress: reportJobs.progress, progressMessage: reportJobs.progressMessage,
+        id: reportJobs.id, kind: reportJobs.kind, fornaxJobId: reportJobs.fornaxJobId, fornaxChange: reportJobs.fornaxChange, status: reportJobs.status,
+        note: reportJobs.note, progress: reportJobs.progress, progressMessage: reportJobs.progressMessage,
       })
       .from(reportJobs)
       .where(and(inArray(reportJobs.status, ['queued', 'running']), isNotNull(reportJobs.fornaxJobId))) as Promise<Followed[]>;
@@ -253,11 +313,12 @@ export function createFornaxSync(deps: { db: Db; store: MediaStore; client: Forn
       .where(stillFollowed(job));
   }
 
-  /** Fornax finished: fetch the transcript and store it, unless the job changed here meanwhile. */
-  async function finish(job: Followed, now: Date, signal?: AbortSignal): Promise<void> {
+  /** Fornax finished: fetch the transcript or the text and store it, unless the job changed here meanwhile. */
+  async function finish(job: Followed, seen: FornaxJob, now: Date, signal?: AbortSignal): Promise<void> {
+    if (job.kind === 'parse') return finishDocument(job, seen, now, signal);
     let input: TranscriptInput;
     try {
-      input = transcriptInput(await client.output(job.fornaxJobId, TRANSCRIPT_OUTPUT, signal));
+      input = transcriptInput(await client.output(job.fornaxJobId, KINDS.transcribe.output, signal));
     } catch (e) {
       if (e instanceof FornaxError && e.permanent) return failFollowed(job, `the transcript could not be fetched from Fornax: ${e.message}`, now);
       if (e instanceof DomainError) return failFollowed(job, `the transcript from Fornax could not be stored: ${e.message}`, now);
@@ -277,6 +338,32 @@ export function createFornaxSync(deps: { db: Db; store: MediaStore; client: Forn
     }
   }
 
+  /** The text of a document: document.md as it came, with the counts and the model from its meta in Fornax's answer. */
+  async function finishDocument(job: Followed, seen: FornaxJob, now: Date, signal?: AbortSignal): Promise<void> {
+    const output = KINDS.parse.output;
+    let text: string;
+    try {
+      text = await client.outputText(job.fornaxJobId, output, signal);
+    } catch (e) {
+      if (e instanceof FornaxError && e.permanent) return failFollowed(job, `the text of the document could not be fetched from Fornax: ${e.message}`, now);
+      // Fornax unreachable: the next poll tries again.
+      throw e;
+    }
+    const meta = documentMeta(seen.outputs?.find((o) => o.name === output)?.meta ?? null);
+    try {
+      const stored = await db.transaction(async (tx) => {
+        const [row] = await tx.select({ id: reportJobs.id }).from(reportJobs).where(stillFollowed(job)).for('update');
+        if (!row) return null;
+        return storeParsedDocument(tx, job.id, { text, ...meta }, now);
+      });
+      // Never the text itself: only how long it is.
+      if (stored) log.info({ job: job.id, fornax: job.fornaxJobId, characters: stored.characters }, 'stored the text of a document from Fornax');
+    } catch (e) {
+      if (e instanceof DomainError) return failFollowed(job, `the text from Fornax could not be stored: ${e.message}`, now);
+      throw e;
+    }
+  }
+
   /** Apply what Fornax says about a job. Returns false when the job needs no more following. */
   async function apply(job: Followed, seen: FornaxJob | null, now: Date, signal?: AbortSignal): Promise<boolean> {
     if (!seen) {
@@ -285,7 +372,7 @@ export function createFornaxSync(deps: { db: Db; store: MediaStore; client: Forn
     }
     switch (seen.state) {
       case 'succeeded':
-        await finish(job, now, signal);
+        await finish(job, seen, now, signal);
         return false;
       case 'failed':
         await failFollowed(job, seen.error ?? 'the job failed in Fornax', now);
@@ -336,7 +423,7 @@ export function createFornaxSync(deps: { db: Db; store: MediaStore; client: Forn
       } catch (e) {
         if (stopping.signal.aborted) return;
         if (e instanceof FornaxError && e.auth) await followRefused(job, e, now);
-        log.warn({ job: job.id, fornax: job.fornaxJobId, err: loggableError(e) }, 'could not follow a transcription in Fornax; asking again later');
+        log.warn({ job: job.id, fornax: job.fornaxJobId, err: loggableError(e) }, `could not follow ${WORDS[job.kind].work} in Fornax; asking again later`);
       }
     }
   }
@@ -361,7 +448,7 @@ export function createFornaxSync(deps: { db: Db; store: MediaStore; client: Forn
       try {
         const seen = await client.job(job.fornaxJobId, { wait: timing.waitS, ...(job.fornaxChange ? { change: job.fornaxChange } : {}), signal });
         const more = await apply(job, seen, new Date(), signal);
-        if (failing) log.info({ job: job.id, fornax: job.fornaxJobId }, 'following a transcription in Fornax works again');
+        if (failing) log.info({ job: job.id, fornax: job.fornaxJobId }, `following ${WORDS[job.kind].work} in Fornax works again`);
         failing = false;
         if (!more) return;
       } catch (e) {
@@ -370,7 +457,7 @@ export function createFornaxSync(deps: { db: Db; store: MediaStore; client: Forn
         if (!failing) {
           log.warn(
             { job: job.id, fornax: job.fornaxJobId, err: loggableError(e) },
-            'could not follow a transcription in Fornax; asking again every few seconds (logged again once it works)',
+            `could not follow ${WORDS[job.kind].work} in Fornax; asking again every few seconds (logged again once it works)`,
           );
         }
         failing = true;
@@ -388,7 +475,7 @@ export function createFornaxSync(deps: { db: Db; store: MediaStore; client: Forn
       if (followers.has(job.fornaxJobId) || stopping.signal.aborted) continue;
       const stop = new AbortController();
       const done = follow(job, AbortSignal.any([stopping.signal, stop.signal]))
-        .catch((e: unknown) => log.error({ job: job.id, err: loggableError(e) }, 'following a transcription in Fornax stopped'))
+        .catch((e: unknown) => log.error({ job: job.id, err: loggableError(e) }, `following ${WORDS[job.kind].work} in Fornax stopped`))
         .finally(() => followers.delete(job.fornaxJobId));
       followers.set(job.fornaxJobId, { stop, done });
     }

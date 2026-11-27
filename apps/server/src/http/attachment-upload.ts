@@ -1,7 +1,7 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { Config } from '../config.js';
 import type { Db } from '../db/client.js';
-import { badRequest, conflict } from '../domain/errors.js';
+import { badRequest, conflict, loggableError } from '../domain/errors.js';
 import { addAttachment, type Attachment, CLOSED_REPORT, type Editor, requireReport } from '../domain/reports.js';
 import type { MediaStore } from '../media/store.js';
 
@@ -46,5 +46,9 @@ export async function receiveAttachment(
     reply.header('connection', 'close');
     throw e;
   }
-  return addAttachment(deps.db, deps.store, deps.config.media, reportId, file, name, editor);
+  return addAttachment(deps.db, deps.store, deps.config.media, reportId, file, name, editor, {
+    fornax: deps.config.fornax !== undefined,
+    onError: (e, attachment) =>
+      req.log.error({ err: loggableError(e), attachment }, 'could not store the text of a document or queue it for Fornax; the next start of the server does it'),
+  });
 }

@@ -5,6 +5,7 @@ import { reportAttachments, reports } from '../db/schema.js';
 import { downscaleImage, extractFrame, type FfmpegPaths, hasAudioStream, NoFrameError, probeDurationMs, remuxWebm } from '../media/ffmpeg.js';
 import type { MediaStore, StoredFile } from '../media/store.js';
 import { badRequest, conflict, notFound, unavailable } from './errors.js';
+import { documentReader, enqueueParse, storeFileText } from './documents.js';
 import { enqueueTranscription, failPendingJobs } from './jobs.js';
 import { matchesPrefix, type Page, type PageQuery, pageWindow, prefixTsQuery } from './paging.js';
 import { dateTitle } from '@tabula/shared/report-title';
@@ -294,6 +295,7 @@ export async function addAttachment(
   upload: StoredFile,
   fileName: string | undefined,
   editor: Editor,
+  opts: { fornax?: boolean; onError?: (e: unknown, attachmentId: string) => void } = {},
 ): Promise<Attachment> {
   let file = upload;
   try {
@@ -330,6 +332,14 @@ export async function addAttachment(
     }
     // After the row is safe: a failure here must not delete the stored file.
     if (transcribe) await enqueueTranscription(db, row.id);
+    // Reading a document is best effort: the upload is done, and the next start of the server fills in what is missing.
+    try {
+      const reader = documentReader(row);
+      if (reader === 'file') await storeFileText(db, store, row);
+      else if (reader === 'fornax' && opts.fornax) await enqueueParse(db, row.id);
+    } catch (e) {
+      opts.onError?.(e, row.id);
+    }
     return row;
   } catch (e) {
     await store.discard(file.tmpPath);
